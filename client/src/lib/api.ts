@@ -561,6 +561,18 @@ export const api = {
   runPlanBackground: (planId: number) =>
     request<{ run_id: number; plan_id: number }>('POST', `/test-plans/${planId}/run-background`, { trigger_type: 'retest' }),
 
+  // Delete plan runs
+  deletePlanRun: (runId: number) =>
+    request<{ success: boolean }>('DELETE', `/test-plans/runs/${runId}`),
+  deleteAllPlanRuns: (before?: string) =>
+    request<{ success: boolean; deleted: number }>('DELETE', `/test-plans/runs${before ? `?before=${encodeURIComponent(before)}` : ''}`),
+
+  // Delete legacy history runs
+  deleteHistoryRun: (runId: number) =>
+    request<{ success: boolean }>('DELETE', `/history/${runId}`),
+  deleteAllHistoryRuns: (before?: string) =>
+    request<{ success: boolean; deleted: number }>('DELETE', `/history${before ? `?before=${encodeURIComponent(before)}` : ''}`),
+
   // Global plan run history
   listAllPlanRuns: (options?: { pieceName?: string; limit?: number; offset?: number }) => {
     const params = new URLSearchParams();

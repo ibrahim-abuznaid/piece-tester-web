@@ -876,6 +876,28 @@ export function updateResolvedIssueNote(id: number, note: string): void {
   getDb().run('UPDATE resolved_issues SET note = ? WHERE id = ?', [note, id]);
 }
 
+export function deletePlanRun(id: number): boolean {
+  return getDb().run('DELETE FROM test_plan_runs WHERE id = ?', [id]).changes > 0;
+}
+
+export function deleteAllPlanRuns(before?: string): number {
+  if (before) {
+    return getDb().run('DELETE FROM test_plan_runs WHERE started_at < ?', [before]).changes;
+  }
+  return getDb().run('DELETE FROM test_plan_runs').changes;
+}
+
+export function deleteTestRun(id: number): boolean {
+  return getDb().run('DELETE FROM test_runs WHERE id = ?', [id]).changes > 0;
+}
+
+export function deleteAllTestRuns(before?: string): number {
+  if (before) {
+    return getDb().run('DELETE FROM test_runs WHERE started_at < ?', [before]).changes;
+  }
+  return getDb().run('DELETE FROM test_runs').changes;
+}
+
 export function updatePlanRun(id: number, updates: Partial<{
   status: string;
   current_step_id: string | null;

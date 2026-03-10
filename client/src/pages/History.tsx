@@ -1,11 +1,11 @@
-import { useState } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { api, type PlanRunRecord, type StepResult } from '../lib/api';
 import TestResultBadge from '../components/TestResultBadge';
 import {
   ChevronDown, ChevronRight, Clock, CheckCircle, XCircle,
   Loader2, SkipForward, MessageSquare, Play, Calendar,
-  Filter, RefreshCw,
+  Filter, RefreshCw, Trash2,
 } from 'lucide-react';
 
 type TabId = 'plan-runs' | 'legacy-runs';
@@ -76,6 +76,40 @@ function PlanRunHistory({ pieceFilter }: { pieceFilter: string }) {
   });
 
   const [expandedRun, setExpandedRun] = useState<number | null>(null);
+  const [showClearMenu, setShowClearMenu] = useState(false);
+  const [deletingId, setDeletingId] = useState<number | null>(null);
+  const clearMenuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    function onClickOutside(e: MouseEvent) {
+      if (clearMenuRef.current && !clearMenuRef.current.contains(e.target as Node)) {
+        setShowClearMenu(false);
+      }
+    }
+    document.addEventListener('mousedown', onClickOutside);
+    return () => document.removeEventListener('mousedown', onClickOutside);
+  }, []);
+
+  async function handleDeleteRun(runId: number) {
+    setDeletingId(runId);
+    try {
+      await api.deletePlanRun(runId);
+      if (expandedRun === runId) setExpandedRun(null);
+      refetch();
+    } finally {
+      setDeletingId(null);
+    }
+  }
+
+  async function handleClearBefore(days: number | null) {
+    setShowClearMenu(false);
+    const label = days === null ? 'all plan run logs' : `plan run logs older than ${days} days`;
+    if (!window.confirm(`Delete ${label}? This cannot be undone.`)) return;
+    const before = days !== null ? daysAgoISO(days) : undefined;
+    await api.deleteAllPlanRuns(before);
+    setExpandedRun(null);
+    refetch();
+  }
 
   if (isLoading) return <div className="text-gray-400">Loading plan runs...</div>;
 
@@ -84,16 +118,11 @@ function PlanRunHistory({ pieceFilter }: { pieceFilter: string }) {
     r.target_action.toLowerCase().includes(pieceFilter.toLowerCase())
   );
 
-  if (filteredRuns.length === 0) {
-    return <p className="text-gray-500">No plan runs yet. Run test plans from a piece's detail page.</p>;
-  }
-
-  // Group runs by date
   const grouped = groupByDate(filteredRuns);
 
   return (
     <div className="space-y-6">
-      {/* Summary stats */}
+      {/* Summary stats + controls */}
       {(() => {
         const total = filteredRuns.length;
         const completed = filteredRuns.filter(r => r.status === 'completed').length;
@@ -108,9 +137,52 @@ function PlanRunHistory({ pieceFilter }: { pieceFilter: string }) {
             <button onClick={() => refetch()} className="text-gray-500 hover:text-gray-300 ml-2">
               <RefreshCw size={12} />
             </button>
+
+            {/* Clear logs dropdown */}
+            <div className="relative ml-auto" ref={clearMenuRef}>
+              <button
+                onClick={() => setShowClearMenu(v => !v)}
+                disabled={total === 0}
+                className="flex items-center gap-1.5 px-2.5 py-1 text-xs rounded border border-gray-700 text-gray-400 hover:text-red-400 hover:border-red-500/50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+              >
+                <Trash2 size={11} />
+                Clear Logs
+                <ChevronDown size={10} className={`transition-transform ${showClearMenu ? 'rotate-180' : ''}`} />
+              </button>
+              {showClearMenu && (
+                <div className="absolute right-0 top-full mt-1 w-48 bg-gray-900 border border-gray-700 rounded-lg shadow-xl z-20 overflow-hidden">
+                  <div className="px-3 py-2 text-[10px] text-gray-500 border-b border-gray-800 uppercase tracking-wider">Delete range</div>
+                  {[
+                    { label: 'Older than 7 days', days: 7 },
+                    { label: 'Older than 30 days', days: 30 },
+                    { label: 'Older than 90 days', days: 90 },
+                  ].map(opt => (
+                    <button
+                      key={opt.days}
+                      onClick={() => handleClearBefore(opt.days)}
+                      className="w-full text-left px-3 py-2 text-xs text-gray-300 hover:bg-gray-800 hover:text-red-400 transition-colors"
+                    >
+                      {opt.label}
+                    </button>
+                  ))}
+                  <div className="border-t border-gray-800">
+                    <button
+                      onClick={() => handleClearBefore(null)}
+                      className="w-full text-left px-3 py-2 text-xs text-red-400 hover:bg-red-500/10 transition-colors font-medium"
+                    >
+                      Delete all logs
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
         );
       })()}
+
+      {filteredRuns.length === 0 && (
+        <p className="text-gray-500">No plan runs yet. Run test plans from a piece's detail page.</p>
+      )}
 
       {grouped.map(([dateLabel, dateRuns]) => (
         <div key={dateLabel}>
@@ -122,6 +194,8 @@ function PlanRunHistory({ pieceFilter }: { pieceFilter: string }) {
                 run={run}
                 expanded={expandedRun === run.id}
                 onToggle={() => setExpandedRun(expandedRun === run.id ? null : run.id)}
+                onDelete={() => handleDeleteRun(run.id)}
+                isDeleting={deletingId === run.id}
               />
             ))}
           </div>
@@ -131,7 +205,13 @@ function PlanRunHistory({ pieceFilter }: { pieceFilter: string }) {
   );
 }
 
-function PlanRunCard({ run, expanded, onToggle }: { run: PlanRunRecord; expanded: boolean; onToggle: () => void }) {
+function PlanRunCard({ run, expanded, onToggle, onDelete, isDeleting }: {
+  run: PlanRunRecord;
+  expanded: boolean;
+  onToggle: () => void;
+  onDelete: () => void;
+  isDeleting?: boolean;
+}) {
   const statusIcon = run.status === 'completed' ? <CheckCircle size={14} className="text-green-400" />
     : run.status === 'failed' ? <XCircle size={14} className="text-red-400" />
     : run.status === 'running' ? <Loader2 size={14} className="text-blue-400 animate-spin" />
@@ -158,10 +238,10 @@ function PlanRunCard({ run, expanded, onToggle }: { run: PlanRunRecord; expanded
     : null;
 
   return (
-    <div className={`border rounded-lg ${statusBorder} bg-gray-900 overflow-hidden`}>
-      <button
+    <div className={`border rounded-lg ${statusBorder} bg-gray-900 overflow-hidden ${isDeleting ? 'opacity-50' : ''}`}>
+      <div
         onClick={onToggle}
-        className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-gray-800/50 transition-colors"
+        className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-gray-800/50 transition-colors cursor-pointer"
       >
         {statusIcon}
         <div className="flex-1 min-w-0">
@@ -198,8 +278,18 @@ function PlanRunCard({ run, expanded, onToggle }: { run: PlanRunRecord; expanded
           <span>{formatTime(run.started_at)}</span>
         </div>
 
+        {/* Delete button */}
+        <button
+          onClick={(e) => { e.stopPropagation(); onDelete(); }}
+          disabled={isDeleting}
+          className="p-1 rounded text-gray-600 hover:text-red-400 hover:bg-red-500/10 transition-colors disabled:opacity-40"
+          title="Delete this run"
+        >
+          {isDeleting ? <Loader2 size={12} className="animate-spin" /> : <Trash2 size={12} />}
+        </button>
+
         {expanded ? <ChevronDown size={14} className="text-gray-500" /> : <ChevronRight size={14} className="text-gray-500" />}
-      </button>
+      </div>
 
       {expanded && (
         <div className="border-t border-gray-800/50 px-4 py-3 space-y-1">
@@ -272,12 +362,25 @@ function StepResultRow({ sr, idx }: { sr: StepResult; idx: number }) {
 // ══════════════════════════════════════════════════════════════
 
 function LegacyRunHistory({ pieceFilter }: { pieceFilter: string }) {
-  const { data: runs, isLoading } = useQuery({
+  const { data: runs, isLoading, refetch } = useQuery({
     queryKey: ['history', pieceFilter],
     queryFn: () => api.listHistory(50),
   });
   const [expandedRun, setExpandedRun] = useState<number | null>(null);
   const [runDetail, setRunDetail] = useState<any>(null);
+  const [showClearMenu, setShowClearMenu] = useState(false);
+  const [deletingId, setDeletingId] = useState<number | null>(null);
+  const clearMenuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    function onClickOutside(e: MouseEvent) {
+      if (clearMenuRef.current && !clearMenuRef.current.contains(e.target as Node)) {
+        setShowClearMenu(false);
+      }
+    }
+    document.addEventListener('mousedown', onClickOutside);
+    return () => document.removeEventListener('mousedown', onClickOutside);
+  }, []);
 
   async function toggleExpand(runId: number) {
     if (expandedRun === runId) {
@@ -290,17 +393,89 @@ function LegacyRunHistory({ pieceFilter }: { pieceFilter: string }) {
     setRunDetail(data);
   }
 
+  async function handleDeleteRun(runId: number) {
+    setDeletingId(runId);
+    try {
+      await api.deleteHistoryRun(runId);
+      if (expandedRun === runId) { setExpandedRun(null); setRunDetail(null); }
+      refetch();
+    } finally {
+      setDeletingId(null);
+    }
+  }
+
+  async function handleClearBefore(days: number | null) {
+    setShowClearMenu(false);
+    const label = days === null ? 'all legacy run logs' : `legacy run logs older than ${days} days`;
+    if (!window.confirm(`Delete ${label}? This cannot be undone.`)) return;
+    const before = days !== null ? daysAgoISO(days) : undefined;
+    await api.deleteAllHistoryRuns(before);
+    setExpandedRun(null);
+    setRunDetail(null);
+    refetch();
+  }
+
   if (isLoading) return <div className="text-gray-400">Loading history...</div>;
 
-  if (!runs?.length) {
-    return <p className="text-gray-500">No legacy test runs. These are from the old single-action test runner.</p>;
-  }
+  const total = runs?.length ?? 0;
 
   return (
     <div className="space-y-2">
-      {runs.map((run: any) => (
-        <div key={run.id} className="bg-gray-900 border border-gray-800 rounded-lg overflow-hidden">
-          <button onClick={() => toggleExpand(run.id)} className="w-full flex items-center justify-between px-4 py-3 hover:bg-gray-800/50 transition-colors text-left">
+      {/* Controls row */}
+      <div className="flex items-center mb-2">
+        <span className="text-sm text-gray-500">{total} run{total !== 1 ? 's' : ''}</span>
+        <div className="relative ml-auto" ref={clearMenuRef}>
+          <button
+            onClick={() => setShowClearMenu(v => !v)}
+            disabled={total === 0}
+            className="flex items-center gap-1.5 px-2.5 py-1 text-xs rounded border border-gray-700 text-gray-400 hover:text-red-400 hover:border-red-500/50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+          >
+            <Trash2 size={11} />
+            Clear Logs
+            <ChevronDown size={10} className={`transition-transform ${showClearMenu ? 'rotate-180' : ''}`} />
+          </button>
+          {showClearMenu && (
+            <div className="absolute right-0 top-full mt-1 w-48 bg-gray-900 border border-gray-700 rounded-lg shadow-xl z-20 overflow-hidden">
+              <div className="px-3 py-2 text-[10px] text-gray-500 border-b border-gray-800 uppercase tracking-wider">Delete range</div>
+              {[
+                { label: 'Older than 7 days', days: 7 },
+                { label: 'Older than 30 days', days: 30 },
+                { label: 'Older than 90 days', days: 90 },
+              ].map(opt => (
+                <button
+                  key={opt.days}
+                  onClick={() => handleClearBefore(opt.days)}
+                  className="w-full text-left px-3 py-2 text-xs text-gray-300 hover:bg-gray-800 hover:text-red-400 transition-colors"
+                >
+                  {opt.label}
+                </button>
+              ))}
+              <div className="border-t border-gray-800">
+                <button
+                  onClick={() => handleClearBefore(null)}
+                  className="w-full text-left px-3 py-2 text-xs text-red-400 hover:bg-red-500/10 transition-colors font-medium"
+                >
+                  Delete all logs
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {total === 0 && (
+        <p className="text-gray-500">No legacy test runs. These are from the old single-action test runner.</p>
+      )}
+
+      {(runs || []).map((run: any) => (
+        <div
+          key={run.id}
+          className={`bg-gray-900 border border-gray-800 rounded-lg overflow-hidden transition-opacity ${deletingId === run.id ? 'opacity-50' : ''}`}
+        >
+          <div
+            onClick={() => toggleExpand(run.id)}
+            className="w-full flex items-center justify-between px-4 py-3 hover:bg-gray-800/50 transition-colors cursor-pointer"
+          >
             <div className="flex items-center gap-3">
               {expandedRun === run.id ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
               <span className="text-sm font-medium">Run #{run.id}</span>
@@ -316,8 +491,16 @@ function LegacyRunHistory({ pieceFilter }: { pieceFilter: string }) {
               <span className="text-red-400">{run.failed} failed</span>
               <span className="text-orange-400">{run.errors} errors</span>
               <span>{formatDate(run.started_at)}</span>
+              <button
+                onClick={(e) => { e.stopPropagation(); handleDeleteRun(run.id); }}
+                disabled={deletingId === run.id}
+                className="p-1 rounded text-gray-600 hover:text-red-400 hover:bg-red-500/10 transition-colors disabled:opacity-40"
+                title="Delete this run"
+              >
+                {deletingId === run.id ? <Loader2 size={12} className="animate-spin" /> : <Trash2 size={12} />}
+              </button>
             </div>
-          </button>
+          </div>
 
           {expandedRun === run.id && runDetail && (
             <div className="border-t border-gray-800 px-4 py-3 space-y-2">
@@ -353,6 +536,12 @@ function formatDate(iso: string) {
 
 function formatTime(iso: string) {
   try { return new Date(iso).toLocaleTimeString(); } catch { return iso; }
+}
+
+function daysAgoISO(days: number): string {
+  const d = new Date();
+  d.setDate(d.getDate() - days);
+  return d.toISOString();
 }
 
 function groupByDate(runs: PlanRunRecord[]): [string, PlanRunRecord[]][] {

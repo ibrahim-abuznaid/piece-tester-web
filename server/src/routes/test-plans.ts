@@ -138,6 +138,20 @@ router.post('/:id/run-background', async (req, res) => {
   res.json({ run_id: latest?.id ?? null, plan_id: planId });
 });
 
+// ── Delete all plan runs (optionally before a date) ──
+router.delete('/runs', (req, res) => {
+  const before = req.query.before as string | undefined;
+  const count = db.deleteAllPlanRuns(before);
+  res.json({ success: true, deleted: count });
+});
+
+// ── Delete a single plan run ──
+router.delete('/runs/:runId', (req, res) => {
+  const ok = db.deletePlanRun(parseInt(req.params.runId));
+  if (!ok) return res.status(404).json({ error: 'Run not found' });
+  res.json({ success: true });
+});
+
 // ── Get a plan run ──
 router.get('/runs/:runId', (req, res) => {
   const run = db.getPlanRun(parseInt(req.params.runId));

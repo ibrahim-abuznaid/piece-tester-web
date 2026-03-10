@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { listTestRuns, getTestRun, listTestResults } from '../db/queries.js';
+import { listTestRuns, getTestRun, listTestResults, deleteTestRun, deleteAllTestRuns } from '../db/queries.js';
 
 const router = Router();
 
@@ -18,6 +18,20 @@ router.get('/:runId', (req, res) => {
   if (!run) return res.status(404).json({ error: 'Run not found' });
   const results = listTestResults(runId);
   res.json({ ...run, results });
+});
+
+// Delete all legacy runs (optionally before a date)
+router.delete('/', (req, res) => {
+  const before = req.query.before as string | undefined;
+  const count = deleteAllTestRuns(before);
+  res.json({ success: true, deleted: count });
+});
+
+// Delete a single legacy run (cascades to test_results)
+router.delete('/:runId', (req, res) => {
+  const ok = deleteTestRun(parseInt(req.params.runId));
+  if (!ok) return res.status(404).json({ error: 'Run not found' });
+  res.json({ success: true });
 });
 
 export default router;
