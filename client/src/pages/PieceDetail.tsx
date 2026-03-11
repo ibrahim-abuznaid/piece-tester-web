@@ -135,7 +135,10 @@ export default function PieceDetail() {
     setRestoredFromDb(true);
   }, [localConn, restoredFromDb]);
 
-  // ── Load existing plans for all actions ──
+  // Track which actions have active background AI jobs
+  const [activeAiJobs, setActiveAiJobs] = useState<Record<string, { status: string; startedAt: number }>>({});
+
+  // ── Load existing plans for all actions + check for running AI jobs ──
   useEffect(() => {
     if (!name) return;
     (async () => {
@@ -145,13 +148,17 @@ export default function PieceDetail() {
         const enabled = new Set(enabledActions);
         for (const p of plans) {
           planMap[p.target_action] = p;
-          enabled.add(p.target_action); // auto-select actions with plans
+          enabled.add(p.target_action);
         }
         setActionPlans(planMap);
         setEnabledActions(enabled);
       } catch {
         // No plans yet
       }
+      try {
+        const jobs = await api.getAiPlanJobs(name);
+        setActiveAiJobs(jobs);
+      } catch { /* non-critical */ }
     })();
   }, [name]);
 
@@ -390,6 +397,13 @@ export default function PieceDetail() {
     if (plan) {
       setEnabledActions(prev => { const next = new Set(prev); next.add(actionName); return next; });
     }
+    // Clear active job indicator when plan arrives
+    setActiveAiJobs(prev => {
+      if (!prev[actionName]) return prev;
+      const next = { ...prev };
+      delete next[actionName];
+      return next;
+    });
   }, []);
 
   function toggleAction(actionName: string) {
@@ -620,7 +634,7 @@ export default function PieceDetail() {
           {localConn ? (
             <ConnectedCard
               conn={localConn}
-              onDelete={() => { if (confirm('Remove active connection?')) deleteConnMut.mutate(); }}
+              onDelete={() => { if (confirm('Remove active connection?')) deleteConnMut.mutate(undefined); }}
               onNext={() => setStep('configure')}
               inactiveConns={inactiveConns}
               onActivate={(id) => activateConnMut.mutate(id)}
@@ -767,6 +781,8 @@ export default function PieceDetail() {
               const hasPlan = !!actionPlans[actionName];
               const planStatus = actionPlans[actionName]?.status;
               const isPlanOpen = planAction === actionName;
+              const jobStatus = activeAiJobs[actionName]?.status;
+              const hasActiveJob = jobStatus === 'running' || jobStatus === 'pending';
               const autoAction = autoConfig?.actions?.find((a: any) => a.actionName === actionName);
               const rawProps = Object.entries(actionMeta.props || {}).filter(
                 ([, pDef]: [string, any]) => !['OAUTH2', 'SECRET_TEXT', 'BASIC_AUTH', 'CUSTOM_AUTH', 'MARKDOWN'].includes(pDef?.type)
@@ -810,8 +826,15 @@ export default function PieceDetail() {
                     </button>
 
                     <div className="flex items-center gap-2">
+                      {/* Active AI job indicator */}
+                      {hasActiveJob && (
+                        <span className="text-[10px] px-2 py-0.5 rounded flex items-center gap-1 bg-purple-500/20 text-purple-400 animate-pulse">
+                          <Loader2 size={10} className="animate-spin" /> {jobStatus === 'pending' ? 'Queued...' : 'Creating...'}
+                        </span>
+                      )}
+
                       {/* Plan status badge */}
-                      {hasPlan && (
+                      {hasPlan && !hasActiveJob && (
                         <span className={`text-[10px] px-2 py-0.5 rounded flex items-center gap-1 ${
                           planStatus === 'approved'
                             ? 'bg-green-500/20 text-green-400'
@@ -848,7 +871,7 @@ export default function PieceDetail() {
                               : 'bg-purple-500/20 text-purple-400 hover:bg-purple-500/30'
                           }`}
                         >
-                          <Brain size={10} /> {hasPlan ? 'View Plan' : 'AI Test'}
+                          <Brain size={10} /> {hasPlan ? 'View Plan' : hasActiveJob ? 'View Progress' : 'AI Test'}
                         </button>
                       )}
                     </div>

@@ -88,22 +88,67 @@ export default function TestPlanView({
   const controllerRef = useRef<AbortController | null>(null);
   const logEndRef = useRef<HTMLDivElement>(null);
 
-  // Load existing plan + lessons for this piece
+  // Load existing plan + lessons, and check for active background jobs
   useEffect(() => {
+    let cancelled = false;
     (async () => {
       try {
         const existing = await api.getTestPlanByAction(pieceName, actionName);
-        setPlan(existing);
-        setEditedSteps(existing.steps);
+        if (!cancelled) { setPlan(existing); setEditedSteps(existing.steps); }
       } catch {
         // No plan exists yet
       }
       try {
         const ls = await api.getLessons(pieceName);
-        setLessons(ls);
+        if (!cancelled) setLessons(ls);
       } catch { /* non-critical */ }
-      setLoading(false);
+      if (!cancelled) setLoading(false);
+
+      // Check for a running background job and reconnect
+      try {
+        const jobs = await api.getAiPlanJobs(pieceName);
+        if (cancelled) return;
+        const activeJob = jobs[actionName];
+        if (activeJob && activeJob.status === 'running') {
+          setCreating(true);
+          setShowLogs(true);
+
+          const callbacks: PlanStreamCallbacks = {
+            onLog: (log) => { if (!cancelled) setAgentLogs(prev => [...prev, log]); },
+            onResult: (result) => {
+              if (cancelled) return;
+              const hasUnfilledHuman = result.steps.some(
+                (s: any) => s.type === 'human_input' && !s.savedHumanResponse
+              );
+              const newPlan: TestPlan = {
+                id: result.planId,
+                piece_name: pieceName,
+                target_action: actionName,
+                steps: result.steps,
+                status: result.status as 'draft' | 'approved',
+                agent_memory: result.agentMemory || '',
+                automation_status: hasUnfilledHuman ? 'requires_human' : 'fully_automated',
+                created_at: new Date().toISOString(),
+                updated_at: new Date().toISOString(),
+              };
+              setPlan(newPlan);
+              setEditedSteps(result.steps);
+              onPlanChange?.(newPlan);
+              if (result.autoTestPassed) setAutoTestPassed(true);
+            },
+            onPlanProgress: (progress) => {
+              if (!cancelled && progress.stepResults) setAutoTestResults([...progress.stepResults]);
+            },
+            onError: (msg) => { if (!cancelled) setAgentLogs(prev => [...prev, { timestamp: Date.now(), type: 'error', message: msg }]); },
+            onDone: () => { if (!cancelled) { setCreating(false); refreshLessons(); } },
+          };
+
+          controllerRef.current = api.subscribeAiPlanJob(pieceName, actionName, callbacks);
+        }
+      } catch { /* non-critical */ }
     })();
+
+    return () => { cancelled = true; };
   }, [pieceName, actionName]);
 
   // Auto-scroll logs

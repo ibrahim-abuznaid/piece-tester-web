@@ -332,6 +332,47 @@ function streamAiPlan(
 }
 
 /**
+ * Subscribe to an already-running AI plan background job.
+ * Replays buffered events and streams live events until completion.
+ */
+function subscribeAiPlanJob(
+  pieceName: string,
+  actionName: string,
+  callbacks: PlanStreamCallbacks,
+): AbortController {
+  const controller = new AbortController();
+  const url = `${BASE}/pieces/${encodeURIComponent(pieceName)}/actions/${encodeURIComponent(actionName)}/ai-plan/subscribe`;
+
+  (async () => {
+    try {
+      const response = await fetch(url, { signal: controller.signal });
+      if (!response.ok) {
+        if (response.status === 404) {
+          callbacks.onDone();
+          return;
+        }
+        const errText = await response.text();
+        callbacks.onError(`HTTP ${response.status}: ${errText}`);
+        callbacks.onDone();
+        return;
+      }
+      await readSSE(response, {
+        log: (d: any) => callbacks.onLog(d),
+        result: (d: any) => callbacks.onResult(d),
+        plan_progress: (d: any) => callbacks.onPlanProgress?.(d),
+        error: (d: any) => callbacks.onError(d.message || 'Unknown error'),
+        done: () => callbacks.onDone(),
+      });
+      callbacks.onDone();
+    } catch (err: any) {
+      if (err.name !== 'AbortError') { callbacks.onError(err.message); callbacks.onDone(); }
+    }
+  })();
+
+  return controller;
+}
+
+/**
  * Stream AI plan fix via SSE (POST with failed step results).
  */
 function streamAiPlanFix(
@@ -441,6 +482,68 @@ async function readSSE(response: Response, handlers: Record<string, (data: any) 
   }
 }
 
+// ── Batch Setup types ──
+
+export interface BatchQueueItemStatus {
+  pieceName: string;
+  pieceDisplayName: string;
+  actionName: string;
+  actionDisplayName: string;
+  status: 'pending' | 'running' | 'done' | 'error' | 'skipped';
+}
+
+export interface BatchStatus {
+  id: string;
+  status: 'running' | 'done' | 'cancelled';
+  startedAt: number;
+  completedAt?: number;
+  currentIndex: number;
+  totalItems: number;
+  items: BatchQueueItemStatus[];
+  stats: { pending: number; running: number; done: number; error: number; skipped: number };
+}
+
+export interface BatchStreamCallbacks {
+  onItemUpdate: (data: BatchQueueItemStatus & { index: number }) => void;
+  onLog: (data: { index: number; pieceName: string; actionName: string; log: AgentLogEntry }) => void;
+  onPlanCreated: (data: { index: number; pieceName: string; actionName: string; planId: number; steps: TestPlanStep[]; status: string }) => void;
+  onPlanApproved: (data: { index: number; pieceName: string; actionName: string; planId: number }) => void;
+  onBatchDone: (data: { status: string }) => void;
+  onError: (message: string) => void;
+}
+
+function subscribeBatchSetup(callbacks: BatchStreamCallbacks): AbortController {
+  const controller = new AbortController();
+  const url = `${BASE}/batch-setup/subscribe`;
+
+  (async () => {
+    try {
+      const response = await fetch(url, { signal: controller.signal });
+      if (!response.ok) {
+        if (response.status === 404) {
+          callbacks.onBatchDone({ status: 'no_queue' });
+          return;
+        }
+        const errText = await response.text();
+        callbacks.onError(`HTTP ${response.status}: ${errText}`);
+        return;
+      }
+      await readSSE(response, {
+        item_update: (d: any) => callbacks.onItemUpdate(d),
+        log: (d: any) => callbacks.onLog(d),
+        plan_created: (d: any) => callbacks.onPlanCreated(d),
+        plan_approved: (d: any) => callbacks.onPlanApproved(d),
+        batch_done: (d: any) => callbacks.onBatchDone(d),
+        error: (d: any) => callbacks.onError(d.message || 'Unknown error'),
+      });
+    } catch (err: any) {
+      if (err.name !== 'AbortError') { callbacks.onError(err.message); }
+    }
+  })();
+
+  return controller;
+}
+
 export const api = {
   // Settings
   getSettings: () => request<any>('GET', '/settings'),
@@ -508,6 +611,11 @@ export const api = {
   respondToPlanRun: (runId: number, data: { stepId: string; approved?: boolean; humanResponse?: string }) =>
     request<any>('POST', `/test-plans/runs/${runId}/respond`, data),
 
+  // AI Plan Jobs (background)
+  getAiPlanJobs: (pieceName: string) =>
+    request<Record<string, { status: string; startedAt: number }>>('GET', `/pieces/${encodeURIComponent(pieceName)}/ai-plan-jobs`),
+  subscribeAiPlanJob: subscribeAiPlanJob,
+
   // Piece Lessons
   getLessons: (pieceName: string) => request<{ id: number; lesson: string; source: string; created_at: string }[]>('GET', `/pieces/${encodeURIComponent(pieceName)}/lessons`),
   addLesson: (pieceName: string, lesson: string) => request<{ id: number; lesson: string; source: string; created_at: string }>('POST', `/pieces/${encodeURIComponent(pieceName)}/lessons`, { lesson }),
@@ -572,6 +680,13 @@ export const api = {
     request<{ success: boolean }>('DELETE', `/history/${runId}`),
   deleteAllHistoryRuns: (before?: string) =>
     request<{ success: boolean; deleted: number }>('DELETE', `/history${before ? `?before=${encodeURIComponent(before)}` : ''}`),
+
+  // Batch Setup
+  startBatchSetup: (pieceNames: string[]) =>
+    request<{ id: string; totalItems: number; pendingItems: number; skippedItems: number }>('POST', '/batch-setup/start', { pieceNames }),
+  getBatchStatus: () => request<BatchStatus | null>('GET', '/batch-setup/status'),
+  subscribeBatchSetup,
+  cancelBatchSetup: () => request<{ success: boolean }>('POST', '/batch-setup/cancel'),
 
   // Global plan run history
   listAllPlanRuns: (options?: { pieceName?: string; limit?: number; offset?: number }) => {

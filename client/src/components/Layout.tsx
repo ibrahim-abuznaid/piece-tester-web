@@ -1,5 +1,5 @@
 import { NavLink, Outlet } from 'react-router-dom';
-import { LayoutDashboard, Puzzle, Link2, Play, ScrollText, CalendarClock, BarChart3, Settings } from 'lucide-react';
+import { LayoutDashboard, Puzzle, Link2, Play, ScrollText, CalendarClock, BarChart3, Settings, ListChecks } from 'lucide-react';
 
 const nav = [
   { to: '/', label: 'Dashboard', icon: LayoutDashboard },
@@ -9,6 +9,7 @@ const nav = [
   { to: '/history', label: 'Test Logs', icon: ScrollText },
   { to: '/schedules', label: 'Schedules', icon: CalendarClock },
   { to: '/reports', label: 'Reports', icon: BarChart3 },
+  { to: '/batch-setup', label: 'Batch Setup', icon: ListChecks },
   { to: '/settings', label: 'Settings', icon: Settings },
 ];
 

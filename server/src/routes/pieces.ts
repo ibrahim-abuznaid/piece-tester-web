@@ -6,6 +6,7 @@ import { configureActionWithAi, fixActionWithAi, createTestPlanWithAi, fixTestPl
 import { createTestPlan, getTestPlanByAction, updateTestPlan, getLessonsForPiece, deleteLesson, addLesson } from '../db/queries.js';
 import { executePlan } from '../services/plan-executor.js';
 import { extractAndStoreLessons } from '../services/lesson-extractor.js';
+import { getJob, createJob, emitJobEvent, completeJob, getActiveJobsForPiece, subscribeToJobWithCleanup, type PlanJob } from '../services/plan-jobs.js';
 
 const router = Router();
 
@@ -138,162 +139,178 @@ router.post('/:name/actions/:action/ai-fix', async (req, res) => {
   res.end();
 });
 
-// ── AI test plan creation via SSE ──
-router.get('/:name/actions/:action/ai-plan', async (req, res) => {
-  req.setTimeout(600_000); // 10 min: plan creation + auto-test + up to 2 fix attempts
-  const sendEvent = setupSSE(res);
+// ── Background job runner for AI plan creation ──
+function runPlanJobInBackground(job: PlanJob, pieceName: string, actionName: string, previousMemory?: string) {
+  (async () => {
+    try {
+      const client = createClient();
+      const piece = await client.getPieceMetadata(pieceName);
 
-  const ac = new AbortController();
-  res.on('close', () => { ac.abort(); console.log(`[ai-plan] Client disconnected for ${req.params.action}, aborting agent.`); });
+      if (!piece.actions[actionName]) {
+        emitJobEvent(job, 'error', { message: `Action "${actionName}" not found` });
+        emitJobEvent(job, 'done', {});
+        completeJob(job, 'error');
+        return;
+      }
 
-  try {
-    const client = createClient();
-    const piece = await client.getPieceMetadata(req.params.name);
-    const actionName = req.params.action;
+      const onLog = (log: AgentLogEntry) => emitJobEvent(job, 'log', log);
 
-    if (!piece.actions[actionName]) {
-      sendEvent('error', { message: `Action "${actionName}" not found` });
-      res.end();
-      return;
-    }
+      // ── Step 1: Create plan ──
+      const planResult = await createTestPlanWithAi(piece, actionName, onLog, previousMemory || undefined);
 
-    const previousMemory = req.query.memory as string | undefined;
-    const onLog = (log: AgentLogEntry) => { if (!ac.signal.aborted) sendEvent('log', log); };
+      const saved = createTestPlan({
+        piece_name: pieceName,
+        target_action: actionName,
+        steps: JSON.stringify(planResult.steps),
+        status: 'draft',
+        agent_memory: planResult.agentMemory || '',
+      });
 
-    // ── Step 1: Create plan ──
-    const planResult = await createTestPlanWithAi(piece, actionName, onLog, previousMemory || undefined, ac.signal);
+      emitJobEvent(job, 'result', {
+        planId: saved.id,
+        steps: planResult.steps,
+        note: planResult.note,
+        agentMemory: planResult.agentMemory,
+        status: 'draft',
+      });
 
-    if (ac.signal.aborted) {
-      console.log(`[ai-plan] Agent for ${actionName} aborted, skipping DB save.`);
-      res.end();
-      return;
-    }
+      // ── Step 2: Auto-test the plan ──
+      const hasHumanInputSteps = planResult.steps.some((s: any) => s.type === 'human_input');
 
-    // Save to DB
-    const saved = createTestPlan({
-      piece_name: req.params.name,
-      target_action: actionName,
-      steps: JSON.stringify(planResult.steps),
-      status: 'draft',
-      agent_memory: planResult.agentMemory || '',
-    });
+      if (!hasHumanInputSteps && planResult.steps.length > 0) {
+        const MAX_FIX_ATTEMPTS = 3;
+        let currentSteps = planResult.steps;
+        let currentMemory = planResult.agentMemory;
+        let autoTestPassed = false;
 
-    // Send initial plan so the client can display it immediately
-    sendEvent('result', {
-      planId: saved.id,
-      steps: planResult.steps,
-      note: planResult.note,
-      agentMemory: planResult.agentMemory,
-      status: 'draft',
-    });
+        for (let attempt = 0; attempt <= MAX_FIX_ATTEMPTS; attempt++) {
+          onLog({ timestamp: Date.now(), type: 'thinking', message: `Auto-testing plan (attempt ${attempt + 1}/${MAX_FIX_ATTEMPTS + 1})...` });
 
-    // ── Step 2: Auto-test the plan ──
-    // Only skip if the plan needs genuine human input — approval steps run automatically in auto_test.
-    const hasHumanInputSteps = planResult.steps.some(s => s.type === 'human_input');
+          const finalRun = await executePlan(saved.id, (progress) => {
+            emitJobEvent(job, 'plan_progress', progress);
+          }, 'auto_test');
 
-    if (!hasHumanInputSteps && planResult.steps.length > 0) {
-      const MAX_FIX_ATTEMPTS = 3; // 4 total executions max (1 initial + 3 fix attempts)
-      let currentSteps = planResult.steps;
-      let currentMemory = planResult.agentMemory;
-      let autoTestPassed = false;
+          if (finalRun.status === 'completed') {
+            onLog({ timestamp: Date.now(), type: 'done', message: 'Auto-test passed! Plan is verified and working.' });
+            autoTestPassed = true;
+            updateTestPlan(saved.id, { status: 'approved' });
 
-      for (let attempt = 0; attempt <= MAX_FIX_ATTEMPTS; attempt++) {
-        if (ac.signal.aborted) break;
+            if (attempt > 0) {
+              const stepsBeforeFix = planResult.steps;
+              const firstFailedResults = JSON.parse(finalRun.step_results || '[]');
+              extractAndStoreLessons(
+                pieceName, piece.displayName,
+                stepsBeforeFix, firstFailedResults, currentSteps,
+              ).then(lessons => {
+                if (lessons.length > 0) {
+                  console.log(`[lessons] Extracted ${lessons.length} lesson(s) for ${pieceName} from auto-fix.`);
+                }
+              }).catch(() => {});
+            }
 
-        onLog({ timestamp: Date.now(), type: 'thinking', message: `Auto-testing plan (attempt ${attempt + 1}/${MAX_FIX_ATTEMPTS + 1})...` });
-
-        const finalRun = await executePlan(saved.id, (progress) => {
-          if (!ac.signal.aborted) sendEvent('plan_progress', progress);
-        }, 'auto_test');
-
-        if (ac.signal.aborted) break;
-
-        if (finalRun.status === 'completed') {
-          onLog({ timestamp: Date.now(), type: 'done', message: 'Auto-test passed! Plan is verified and working.' });
-          autoTestPassed = true;
-
-          // Auto-approve since it passed
-          updateTestPlan(saved.id, { status: 'approved' });
-
-          // If the plan required fixes before passing, extract lessons asynchronously
-          if (attempt > 0) {
-            const stepsBeforeFix = planResult.steps;
-            const firstFailedResults = JSON.parse(finalRun.step_results || '[]');
-            extractAndStoreLessons(
-              req.params.name, piece.displayName,
-              stepsBeforeFix, firstFailedResults, currentSteps,
-            ).then(lessons => {
-              if (lessons.length > 0) {
-                console.log(`[lessons] Extracted ${lessons.length} lesson(s) for ${req.params.name} from auto-fix.`);
-              }
-            }).catch(() => {});
+            emitJobEvent(job, 'result', {
+              planId: saved.id,
+              steps: currentSteps,
+              note: planResult.note,
+              agentMemory: currentMemory,
+              status: 'approved',
+              autoTestPassed: true,
+              autoTestAttempts: attempt + 1,
+            });
+            break;
           }
 
-          sendEvent('result', {
-            planId: saved.id,
-            steps: currentSteps,
-            note: planResult.note,
-            agentMemory: currentMemory,
-            status: 'approved',
-            autoTestPassed: true,
-            autoTestAttempts: attempt + 1,
+          if (attempt >= MAX_FIX_ATTEMPTS) {
+            onLog({ timestamp: Date.now(), type: 'error', message: `Auto-test still failing after ${MAX_FIX_ATTEMPTS + 1} attempt(s). You can run "Fix with AI" manually.` });
+            break;
+          }
+
+          onLog({ timestamp: Date.now(), type: 'thinking', message: 'Auto-test failed, running AI fix agent...' });
+          const stepResults = JSON.parse(finalRun.step_results || '[]');
+
+          const fixResult = await fixTestPlanWithAi(
+            piece, actionName, currentSteps, stepResults, currentMemory, onLog,
+          );
+
+          updateTestPlan(saved.id, {
+            steps: JSON.stringify(fixResult.steps),
+            agent_memory: fixResult.agentMemory || currentMemory || '',
           });
-          break;
+
+          currentSteps = fixResult.steps;
+          currentMemory = fixResult.agentMemory || currentMemory;
+
+          emitJobEvent(job, 'result', {
+            planId: saved.id,
+            steps: fixResult.steps,
+            note: fixResult.note || planResult.note,
+            agentMemory: fixResult.agentMemory,
+            status: 'draft',
+          });
         }
 
-        if (attempt >= MAX_FIX_ATTEMPTS) {
-          onLog({ timestamp: Date.now(), type: 'error', message: `Auto-test still failing after ${MAX_FIX_ATTEMPTS + 1} attempt(s). You can run "Fix with AI" manually.` });
-          break;
+        if (!autoTestPassed) {
+          console.log(`[ai-plan] Auto-test did not pass for ${actionName} after all attempts.`);
         }
-
-        // ── Auto-fix ──
-        onLog({ timestamp: Date.now(), type: 'thinking', message: 'Auto-test failed, running AI fix agent...' });
-        const stepResults = JSON.parse(finalRun.step_results || '[]');
-
-        const fixResult = await fixTestPlanWithAi(
-          piece, actionName, currentSteps, stepResults, currentMemory, onLog, ac.signal,
-        );
-
-        if (ac.signal.aborted) break;
-
-        // Persist fixed steps
-        updateTestPlan(saved.id, {
-          steps: JSON.stringify(fixResult.steps),
-          agent_memory: fixResult.agentMemory || currentMemory || '',
-        });
-
-        currentSteps = fixResult.steps;
-        currentMemory = fixResult.agentMemory || currentMemory;
-
-        // Send updated plan so client sees the fixed version
-        sendEvent('result', {
-          planId: saved.id,
-          steps: fixResult.steps,
-          note: fixResult.note || planResult.note,
-          agentMemory: fixResult.agentMemory,
-          status: 'draft',
-        });
+      } else if (hasHumanInputSteps) {
+        onLog({ timestamp: Date.now(), type: 'thinking', message: 'Plan has human_input steps — skipping auto-test (requires manual input).' });
       }
 
-      if (!autoTestPassed && !ac.signal.aborted) {
-        // Keep draft status, user can fix manually
-        console.log(`[ai-plan] Auto-test did not pass for ${actionName} after all attempts.`);
-      }
-    } else if (hasHumanInputSteps) {
-      onLog({ timestamp: Date.now(), type: 'thinking', message: 'Plan has human_input steps — skipping auto-test (requires manual input).' });
+      emitJobEvent(job, 'done', {});
+      completeJob(job, 'done');
+    } catch (err: any) {
+      console.error(`[ai-plan] Background job error for ${actionName}:`, err.message);
+      emitJobEvent(job, 'error', { message: err.message || 'Unknown error' });
+      emitJobEvent(job, 'done', {});
+      completeJob(job, 'error');
     }
+  })();
+}
 
-    if (!ac.signal.aborted) sendEvent('done', {});
-  } catch (err: any) {
-    if (ac.signal.aborted) {
-      console.log(`[ai-plan] Agent for ${req.params.action} aborted (client disconnect).`);
-    } else {
-      console.error('[ai-plan] SSE error:', err.message);
-      sendEvent('error', { message: err.message || 'Unknown error' });
-    }
+// ── AI test plan creation via SSE (background job) ──
+router.get('/:name/actions/:action/ai-plan', async (req, res) => {
+  req.setTimeout(600_000);
+  const sendEvent = setupSSE(res);
+  const pieceName = req.params.name;
+  const actionName = req.params.action;
+
+  let existingJob = getJob(pieceName, actionName);
+
+  if (existingJob && existingJob.status === 'running') {
+    // Job already running — subscribe to it (replays buffered events)
+    console.log(`[ai-plan] Client reconnecting to running job for ${actionName}`);
+    const unsubscribe = subscribeToJobWithCleanup(existingJob, sendEvent, () => res.end());
+    res.on('close', () => { unsubscribe(); console.log(`[ai-plan] Client disconnected from ${actionName} (job continues)`); });
+    return;
   }
 
-  res.end();
+  // Start new background job
+  const previousMemory = req.query.memory as string | undefined;
+  const job = createJob(pieceName, actionName);
+  runPlanJobInBackground(job, pieceName, actionName, previousMemory);
+
+  // Subscribe this client to the job
+  const unsubscribe = subscribeToJobWithCleanup(job, sendEvent, () => res.end());
+  res.on('close', () => { unsubscribe(); console.log(`[ai-plan] Client disconnected from ${actionName} (job continues in background)`); });
+});
+
+// ── Check active AI plan jobs for a piece ──
+router.get('/:name/ai-plan-jobs', (req, res) => {
+  res.json(getActiveJobsForPiece(req.params.name));
+});
+
+// ── Subscribe to an existing AI plan job (reconnect) ──
+router.get('/:name/actions/:action/ai-plan/subscribe', (req, res) => {
+  const job = getJob(req.params.name, req.params.action);
+  if (!job) {
+    res.status(404).json({ error: 'No active job for this action' });
+    return;
+  }
+
+  req.setTimeout(600_000);
+  const sendEvent = setupSSE(res);
+  const unsubscribe = subscribeToJobWithCleanup(job, sendEvent, () => res.end());
+  res.on('close', () => { unsubscribe(); });
 });
 
 // ── Fix failed test plan via SSE ──
