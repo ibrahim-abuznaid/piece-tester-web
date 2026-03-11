@@ -639,7 +639,13 @@ The executor resolves inputMapping at runtime, so step 2 always gets the FRESH m
 - ALWAYS include agent_memory summarizing your research findings and decisions
 - The test step MUST have ALL required fields filled
 - Keep plans concise: typically 2-4 steps (setup + test, maybe verify)
-- ALWAYS call set_test_plan at the end`;
+- ALWAYS call set_test_plan at the end
+
+## CRITICAL: Never Use Custom HTTP/API Calls in Plans
+**Do NOT create steps that use custom_api_call, http_request, raw HTTP actions, or any generic REST/webhook step.** These almost always fail because:
+- Authentication tokens are managed internally by each piece -- you cannot replicate them in custom HTTP steps
+- Custom API call actions bypass the piece connection handling
+- Always use the piece's own typed actions (e.g. use send_message_to_a_channel instead of a raw POST to Slack's API)`;
 
 const FIX_PLAN_SYSTEM_PROMPT = `You are an Activepieces test plan repair agent. A multi-step test plan FAILED during execution. Your job is to analyze the step results, diagnose why it failed, and produce a FIXED plan.
 
@@ -694,7 +700,10 @@ NEVER use JavaScript expressions like \`\${new Date().getTime()}\` -- they are s
 - Include DETAILED agent_memory explaining: what failed, why, and exactly what you changed
 - The agent_memory is persisted and shown to your future self -- make it useful
 - ALWAYS call set_test_plan at the end with the corrected steps
-- **Do NOT use requiresApproval: true on cleanup/delete steps.** Plans run unattended on schedules — no one is there to click Approve. Cleanup steps delete test resources YOU just created, so no human gate is needed. Set requiresApproval: false on all steps unless absolutely unavoidable.`;
+- **Do NOT use requiresApproval: true on cleanup/delete steps.** Plans run unattended on schedules — no one is there to click Approve. Cleanup steps delete test resources YOU just created, so no human gate is needed. Set requiresApproval: false on all steps unless absolutely unavoidable.
+
+## CRITICAL: Never Use Custom HTTP Calls in Plans
+**Do NOT create steps that use custom_api_call, http_request, raw HTTP actions, or generic REST/webhook steps.** These fail because auth tokens are managed internally by each piece -- you cannot replicate them in custom HTTP steps. Always use the piece's own typed actions instead (e.g. use the piece's send_message action instead of a raw POST to the API).`;
 
 // ══════════════════════════════════════════════════════════════
 // Public API: Create test plan
