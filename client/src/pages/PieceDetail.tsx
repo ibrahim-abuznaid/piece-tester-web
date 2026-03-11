@@ -604,25 +604,6 @@ export default function PieceDetail() {
         </div>
       </div>
 
-      {/* Batch queue notice */}
-      {Object.values(activeAiJobs).some(j => j.status === 'running' || j.status === 'pending') && (
-        <div className="mb-4 flex items-center gap-3 bg-purple-500/10 border border-purple-500/30 rounded-lg px-4 py-2.5 text-sm text-purple-300">
-          <Loader2 size={14} className="animate-spin flex-shrink-0" />
-          <span>
-            {Object.values(activeAiJobs).filter(j => j.status === 'running').length > 0
-              ? `AI is creating plans for ${Object.values(activeAiJobs).filter(j => j.status === 'running').length} action(s)...`
-              : `${Object.values(activeAiJobs).filter(j => j.status === 'pending').length} action(s) queued for AI plan creation`
-            }
-          </span>
-          <button
-            onClick={() => navigate('/batch-setup')}
-            className="ml-auto text-xs bg-purple-500/20 hover:bg-purple-500/30 px-2 py-1 rounded flex items-center gap-1"
-          >
-            <ListChecks size={11} /> View Batch
-          </button>
-        </div>
-      )}
-
       {/* Steps indicator */}
       <div className="flex items-center gap-2 mb-6">
         {[

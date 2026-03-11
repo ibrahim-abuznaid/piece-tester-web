@@ -642,10 +642,13 @@ The executor resolves inputMapping at runtime, so step 2 always gets the FRESH m
 - ALWAYS call set_test_plan at the end
 
 ## CRITICAL: Never Use Custom HTTP/API Calls in Plans
-**Do NOT create steps that use custom_api_call, http_request, raw HTTP actions, or any generic REST/webhook step.** These almost always fail because:
-- Authentication tokens are managed internally by each piece -- you cannot replicate them in custom HTTP steps
-- Custom API call actions bypass the piece connection handling
-- Always use the piece's own typed actions (e.g. use send_message_to_a_channel instead of a raw POST to Slack's API)`;
+**ABSOLUTELY NEVER create steps that use any of these actions:** custom_api_call, http_request, send_http_request, custom_action, api_call, raw_http, generic_api, webhook, http_post, http_get, make_request, or ANY action that sends a raw/custom HTTP request.
+These ALWAYS fail because:
+- Authentication tokens are managed internally by each piece -- you CANNOT replicate them in custom HTTP steps
+- Custom API call actions completely bypass the piece's connection handling and auth headers
+- The piece runtime does not inject credentials into custom HTTP actions
+- **Instead, ONLY use the piece's own named/typed actions** (e.g. use \`send_message\`, \`create_record\`, \`get_user\` -- never a raw POST/GET to the API)
+- If the piece does not have a built-in action for what you need, design the plan around what IS available -- do NOT work around it with custom HTTP calls`;
 
 const FIX_PLAN_SYSTEM_PROMPT = `You are an Activepieces test plan repair agent. A multi-step test plan FAILED during execution. Your job is to analyze the step results, diagnose why it failed, and produce a FIXED plan.
 
@@ -703,7 +706,7 @@ NEVER use JavaScript expressions like \`\${new Date().getTime()}\` -- they are s
 - **Do NOT use requiresApproval: true on cleanup/delete steps.** Plans run unattended on schedules — no one is there to click Approve. Cleanup steps delete test resources YOU just created, so no human gate is needed. Set requiresApproval: false on all steps unless absolutely unavoidable.
 
 ## CRITICAL: Never Use Custom HTTP Calls in Plans
-**Do NOT create steps that use custom_api_call, http_request, raw HTTP actions, or generic REST/webhook steps.** These fail because auth tokens are managed internally by each piece -- you cannot replicate them in custom HTTP steps. Always use the piece's own typed actions instead (e.g. use the piece's send_message action instead of a raw POST to the API).`;
+**ABSOLUTELY NEVER use custom_api_call, http_request, send_http_request, custom_action, api_call, raw_http, generic_api, webhook, or ANY raw/custom HTTP action.** These ALWAYS fail because auth tokens are managed internally by each piece and cannot be replicated in custom HTTP steps. ONLY use the piece's own named/typed actions. If the piece lacks a specific action, redesign the plan around available actions -- do NOT work around it with HTTP calls.`;
 
 // ══════════════════════════════════════════════════════════════
 // Public API: Create test plan
