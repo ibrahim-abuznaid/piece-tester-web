@@ -88,6 +88,9 @@ export default function TestPlanView({
   // v2 multi-agent toggle
   const [useV2, setUseV2] = useState(true);
 
+  // Cost tracking
+  const [costSummary, setCostSummary] = useState<{ cost_usd: number; input_tokens: number; output_tokens: number; requests: number } | null>(null);
+
   const controllerRef = useRef<AbortController | null>(null);
   const logEndRef = useRef<HTMLDivElement>(null);
 
@@ -120,6 +123,7 @@ export default function TestPlanView({
             onLog: (log) => { if (!cancelled) setAgentLogs(prev => [...prev, log]); },
             onResult: (result) => {
               if (cancelled) return;
+              if (result.costSummary) setCostSummary(result.costSummary);
               const hasUnfilledHuman = result.steps.some(
                 (s: any) => s.type === 'human_input' && !s.savedHumanResponse
               );
@@ -167,12 +171,14 @@ export default function TestPlanView({
     setShowLogs(true);
     setAutoTestResults([]);
     setAutoTestPassed(null);
+    setCostSummary(null);
 
     const memory = plan?.agent_memory || undefined;
 
     const callbacks: PlanStreamCallbacks = {
       onLog: (log) => setAgentLogs(prev => [...prev, log]),
       onResult: (result) => {
+        if (result.costSummary) setCostSummary(result.costSummary);
         const hasUnfilledHuman = result.steps.some(
           (s: any) => s.type === 'human_input' && !s.savedHumanResponse
         );
@@ -392,10 +398,12 @@ export default function TestPlanView({
     setFixing(true);
     setAgentLogs([]);
     setShowLogs(true);
+    setCostSummary(null);
 
     const callbacks: PlanStreamCallbacks = {
       onLog: (log) => setAgentLogs(prev => [...prev, log]),
       onResult: (result) => {
+        if (result.costSummary) setCostSummary(result.costSummary);
         const updatedPlan: TestPlan = {
           ...plan,
           id: result.planId,
@@ -1033,6 +1041,24 @@ export default function TestPlanView({
           </div>
         );
       })()}
+
+      {/* Cost summary banner */}
+      {costSummary && !creating && !fixing && (
+        <div className="flex items-center gap-3 px-3 py-2 rounded-lg border border-green-500/20 bg-green-500/5 text-xs">
+          <span className="text-green-400 font-semibold">
+            ${costSummary.cost_usd < 0.01 ? costSummary.cost_usd.toFixed(4) : costSummary.cost_usd.toFixed(2)}
+          </span>
+          <span className="text-gray-500">|</span>
+          <span className="text-gray-400">
+            {((costSummary.input_tokens + costSummary.output_tokens) / 1000).toFixed(1)}K tokens
+          </span>
+          <span className="text-gray-600 text-[10px]">
+            ({(costSummary.input_tokens / 1000).toFixed(1)}K in / {(costSummary.output_tokens / 1000).toFixed(1)}K out)
+          </span>
+          <span className="text-gray-500">|</span>
+          <span className="text-gray-400">{costSummary.requests} API call{costSummary.requests !== 1 ? 's' : ''}</span>
+        </div>
+      )}
 
       {/* Agent logs panel */}
       {showLogs && agentLogs.length > 0 && (
