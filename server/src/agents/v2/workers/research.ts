@@ -4,6 +4,7 @@ import { runAgentLoop } from '../agent-runner.js';
 import { createToolRegistry, RESEARCH_TOOLS } from '../tools/index.js';
 import { RESEARCH_SYSTEM_PROMPT, buildResearchUserPrompt } from '../prompts/research.js';
 import { parseResearchFindings } from '../prompts/coordinator.js';
+import type { CostTracker } from '../cost-tracker.js';
 
 /**
  * Run the research worker.
@@ -15,8 +16,9 @@ export async function runResearchWorker(params: {
   previousMemory?: string;
   onLog: OnLogCallback;
   abortSignal?: AbortSignal;
+  costTracker?: CostTracker;
 }): Promise<ResearchFindings> {
-  const { pieceMeta, actionName, previousMemory, onLog, abortSignal } = params;
+  const { pieceMeta, actionName, previousMemory, onLog, abortSignal, costTracker } = params;
   const registry = createToolRegistry();
 
   const toolCtx: ToolContext = { pieceMeta, actionName, abortSignal };
@@ -32,7 +34,7 @@ export async function runResearchWorker(params: {
     toolNames: [...RESEARCH_TOOLS],
     abortSignal,
     onLog,
-  }, toolCtx);
+  }, toolCtx, costTracker);
 
   // The research worker doesn't use a terminal tool -- it just writes its
   // findings as text in its last assistant message. Extract that text.

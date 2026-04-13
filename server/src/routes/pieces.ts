@@ -230,6 +230,10 @@ function runPlanJobInBackground(job: PlanJob, pieceName: string, actionName: str
 
           onLog({ timestamp: Date.now(), type: 'thinking', message: 'Auto-test failed, running AI fix agent...' });
           const stepResults = JSON.parse(finalRun.step_results || '[]');
+          const brokenMappings = detectBrokenInputMappings(currentSteps, stepResults);
+          if (brokenMappings.length > 0) {
+            onLog({ timestamp: Date.now(), type: 'thinking', message: `Detected ${brokenMappings.length} broken input mapping(s).` });
+          }
 
           const fixResult = await fixTestPlanWithAi(
             piece, actionName, currentSteps, stepResults, currentMemory, onLog,
@@ -439,6 +443,7 @@ function runPlanJobV2InBackground(job: PlanJob, pieceName: string, actionName: s
         agentMemory: planResult.agentMemory,
         status: 'draft',
         version: 'v2',
+        costSummary: (planResult as any).costSummary,
       });
 
       // Auto-test the plan (same logic as v1)
@@ -626,6 +631,7 @@ router.post('/:name/actions/:action/ai-plan-fix-v2', async (req, res) => {
       agentMemory: planResult.agentMemory,
       status: saved!.status,
       version: 'v2',
+      costSummary: (planResult as any).costSummary,
     });
     sendEvent('done', {});
   } catch (err: any) {

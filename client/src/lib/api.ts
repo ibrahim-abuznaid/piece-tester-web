@@ -23,6 +23,32 @@ export interface AgentLogEntry {
   role?: string;
 }
 
+export interface AiCostSummary {
+  total_cost_usd: number;
+  total_input_tokens: number;
+  total_output_tokens: number;
+  total_requests: number;
+  by_version: { version: string; cost_usd: number; requests: number }[];
+  by_operation: { operation: string; cost_usd: number; requests: number }[];
+}
+
+export interface AiUsageRow {
+  id: number;
+  session_id: string;
+  piece_name: string;
+  action_name: string;
+  agent_role: string;
+  agent_version: string;
+  model: string;
+  input_tokens: number;
+  output_tokens: number;
+  cache_creation_input_tokens: number;
+  cache_read_input_tokens: number;
+  cost_usd: number;
+  operation: string;
+  created_at: string;
+}
+
 export interface AiActionResult {
   actionName: string;
   displayName: string;
@@ -783,4 +809,20 @@ export const api = {
     const qs = params.toString();
     return request<PlanRunRecord[]>('GET', `/test-plans/runs/all${qs ? `?${qs}` : ''}`);
   },
+
+  // AI Cost Tracking
+  getAiCostSummary: (filters?: { piece_name?: string; date_from?: string; date_to?: string }) => {
+    const params = new URLSearchParams();
+    if (filters?.piece_name) params.set('piece_name', filters.piece_name);
+    if (filters?.date_from) params.set('date_from', filters.date_from);
+    if (filters?.date_to) params.set('date_to', filters.date_to);
+    const qs = params.toString();
+    return request<AiCostSummary>('GET', `/settings/ai-costs${qs ? `?${qs}` : ''}`);
+  },
+  getAiCostRecent: (limit = 100) =>
+    request<AiUsageRow[]>('GET', `/settings/ai-costs/recent?limit=${limit}`),
+  getAiCostBySession: (sessionId: string) =>
+    request<AiUsageRow[]>('GET', `/settings/ai-costs/session/${sessionId}`),
+  getAiCostByPiece: (pieceName: string, limit = 50) =>
+    request<AiUsageRow[]>('GET', `/settings/ai-costs/piece/${encodeURIComponent(pieceName)}?limit=${limit}`),
 };

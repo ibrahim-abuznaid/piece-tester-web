@@ -3,6 +3,7 @@ import { getSettings } from '../../db/queries.js';
 import { ToolRegistry } from './tool-registry.js';
 import { TERMINAL_TOOLS } from './tools/index.js';
 import type { AgentRunnerConfig, AgentRunnerResult, OnLogCallback, AgentRole, ToolContext } from './types.js';
+import { CostTracker } from './cost-tracker.js';
 
 function checkAborted(signal?: AbortSignal) {
   if (signal?.aborted) throw new Error('Agent aborted: client disconnected');
@@ -24,6 +25,7 @@ export async function runAgentLoop(
   registry: ToolRegistry,
   config: AgentRunnerConfig,
   toolCtx: ToolContext,
+  costTracker?: CostTracker,
 ): Promise<AgentRunnerResult> {
   const settings = getSettings();
   if (!settings.anthropic_api_key) {
@@ -55,6 +57,13 @@ export async function runAgentLoop(
       { model, max_tokens: 4096, system: systemPrompt, tools, messages },
       requestOptions,
     );
+
+    // Track cost
+    if (costTracker) {
+      costTracker.trackResponse(model, response, role);
+      const totals = costTracker.getTotals();
+      log('thinking', `[${role}] Tokens: ${response.usage?.input_tokens || 0}→in ${response.usage?.output_tokens || 0}→out | Session: $${totals.cost_usd.toFixed(4)}`);
+    }
 
     const assistantContent = response.content;
     messages.push({ role: 'assistant', content: assistantContent });

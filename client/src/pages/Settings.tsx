@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
-import { api } from '../lib/api';
-import { CheckCircle, XCircle, Loader2, LogIn, LogOut, ShieldCheck, Brain, Trash2 } from 'lucide-react';
+import { api, type AiCostSummary, type AiUsageRow } from '../lib/api';
+import { CheckCircle, XCircle, Loader2, LogIn, LogOut, ShieldCheck, Brain, Trash2, DollarSign, TrendingUp, Zap } from 'lucide-react';
 
 const AI_MODELS = [
   { value: 'claude-sonnet-4-6', label: 'Claude Sonnet 4.6 (latest)' },
@@ -368,6 +368,150 @@ export default function Settings() {
           <div className={`flex items-center gap-2 text-sm ${aiResult.success ? 'text-green-400' : 'text-red-400'}`}>
             {aiResult.success ? <CheckCircle size={16} /> : <XCircle size={16} />}
             {aiResult.message}
+          </div>
+        )}
+      </div>
+
+      {/* AI Cost Tracking */}
+      <AiCostDashboard />
+    </div>
+  );
+}
+
+function AiCostDashboard() {
+  const [summary, setSummary] = useState<AiCostSummary | null>(null);
+  const [recentLogs, setRecentLogs] = useState<AiUsageRow[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [showRecent, setShowRecent] = useState(false);
+
+  useEffect(() => {
+    Promise.all([
+      api.getAiCostSummary(),
+      api.getAiCostRecent(30),
+    ]).then(([s, r]) => {
+      setSummary(s);
+      setRecentLogs(r);
+    }).catch(() => {}).finally(() => setLoading(false));
+  }, []);
+
+  if (loading) return null;
+  if (!summary || summary.total_requests === 0) {
+    return (
+      <div className="bg-gray-900 rounded-lg border border-gray-800 p-6 max-w-xl space-y-4 mt-6">
+        <h3 className="text-lg font-semibold flex items-center gap-2">
+          <DollarSign size={20} className="text-green-400" /> AI Cost Tracking
+        </h3>
+        <p className="text-sm text-gray-400">No AI usage recorded yet. Create or fix a plan to start tracking costs.</p>
+      </div>
+    );
+  }
+
+  const formatCost = (n: number) => n < 0.01 ? `$${n.toFixed(4)}` : `$${n.toFixed(2)}`;
+  const formatTokens = (n: number) => n >= 1_000_000 ? `${(n / 1_000_000).toFixed(1)}M` : n >= 1_000 ? `${(n / 1_000).toFixed(1)}K` : String(n);
+
+  return (
+    <div className="bg-gray-900 rounded-lg border border-gray-800 p-6 max-w-xl space-y-4 mt-6">
+      <h3 className="text-lg font-semibold flex items-center gap-2">
+        <DollarSign size={20} className="text-green-400" /> AI Cost Tracking
+      </h3>
+
+      {/* Summary Cards */}
+      <div className="grid grid-cols-3 gap-3">
+        <div className="bg-gray-800/50 border border-gray-700 rounded p-3 text-center">
+          <div className="text-xs text-gray-400 mb-1">Total Cost</div>
+          <div className="text-lg font-bold text-green-400">{formatCost(summary.total_cost_usd)}</div>
+        </div>
+        <div className="bg-gray-800/50 border border-gray-700 rounded p-3 text-center">
+          <div className="text-xs text-gray-400 mb-1">API Calls</div>
+          <div className="text-lg font-bold text-blue-400">{summary.total_requests}</div>
+        </div>
+        <div className="bg-gray-800/50 border border-gray-700 rounded p-3 text-center">
+          <div className="text-xs text-gray-400 mb-1">Total Tokens</div>
+          <div className="text-lg font-bold text-purple-400">
+            {formatTokens(summary.total_input_tokens + summary.total_output_tokens)}
+          </div>
+        </div>
+      </div>
+
+      {/* Breakdown by Version */}
+      {summary.by_version.length > 0 && (
+        <div className="space-y-2">
+          <div className="text-sm font-medium text-gray-300 flex items-center gap-1.5">
+            <Zap size={14} className="text-yellow-400" /> By Version
+          </div>
+          <div className="flex gap-2 flex-wrap">
+            {summary.by_version.map(v => (
+              <div key={v.version} className="bg-gray-800 border border-gray-700 rounded px-3 py-1.5 text-xs">
+                <span className="text-gray-300 font-medium">{v.version.toUpperCase()}</span>
+                <span className="text-gray-500 mx-1.5">|</span>
+                <span className="text-green-400">{formatCost(v.cost_usd)}</span>
+                <span className="text-gray-500 mx-1.5">|</span>
+                <span className="text-gray-400">{v.requests} calls</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Breakdown by Operation */}
+      {summary.by_operation.length > 0 && (
+        <div className="space-y-2">
+          <div className="text-sm font-medium text-gray-300 flex items-center gap-1.5">
+            <TrendingUp size={14} className="text-cyan-400" /> By Operation
+          </div>
+          <div className="flex gap-2 flex-wrap">
+            {summary.by_operation.map(op => (
+              <div key={op.operation} className="bg-gray-800 border border-gray-700 rounded px-3 py-1.5 text-xs">
+                <span className="text-gray-300 font-medium">{op.operation}</span>
+                <span className="text-gray-500 mx-1.5">|</span>
+                <span className="text-green-400">{formatCost(op.cost_usd)}</span>
+                <span className="text-gray-500 mx-1.5">|</span>
+                <span className="text-gray-400">{op.requests} calls</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Recent Usage Table */}
+      <div>
+        <button
+          onClick={() => setShowRecent(!showRecent)}
+          className="text-sm text-primary-400 hover:text-primary-300"
+        >
+          {showRecent ? 'Hide' : 'Show'} recent API calls ({recentLogs.length})
+        </button>
+
+        {showRecent && recentLogs.length > 0 && (
+          <div className="mt-2 max-h-64 overflow-auto border border-gray-700 rounded">
+            <table className="w-full text-xs">
+              <thead className="bg-gray-800 sticky top-0">
+                <tr>
+                  <th className="text-left px-2 py-1.5 text-gray-400">Time</th>
+                  <th className="text-left px-2 py-1.5 text-gray-400">Piece</th>
+                  <th className="text-left px-2 py-1.5 text-gray-400">Role</th>
+                  <th className="text-right px-2 py-1.5 text-gray-400">Tokens</th>
+                  <th className="text-right px-2 py-1.5 text-gray-400">Cost</th>
+                </tr>
+              </thead>
+              <tbody>
+                {recentLogs.map(row => (
+                  <tr key={row.id} className="border-t border-gray-800 hover:bg-gray-800/50">
+                    <td className="px-2 py-1 text-gray-500">{new Date(row.created_at).toLocaleString()}</td>
+                    <td className="px-2 py-1 text-gray-300 truncate max-w-[120px]">{row.piece_name.replace('@activepieces/piece-', '')}</td>
+                    <td className="px-2 py-1">
+                      <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${
+                        row.agent_version === 'v2' ? 'bg-purple-900/40 text-purple-300' : 'bg-blue-900/40 text-blue-300'
+                      }`}>
+                        {row.agent_version}/{row.agent_role}
+                      </span>
+                    </td>
+                    <td className="px-2 py-1 text-right text-gray-400">{formatTokens(row.input_tokens + row.output_tokens)}</td>
+                    <td className="px-2 py-1 text-right text-green-400">{formatCost(row.cost_usd)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         )}
       </div>

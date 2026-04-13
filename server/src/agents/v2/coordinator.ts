@@ -20,6 +20,7 @@ import { runPlannerWorker } from './workers/planner.js';
 import { runVerifierWorker } from './workers/verifier.js';
 import { runFixerWorker } from './workers/fixer.js';
 import { synthesizePlannerSpec, parseResearchFindings } from './prompts/coordinator.js';
+import { CostTracker } from './cost-tracker.js';
 
 const MAX_FIX_ATTEMPTS = 2;
 
@@ -36,8 +37,15 @@ export async function createTestPlanV2(params: {
   previousMemory?: string;
   onLog: OnLogCallback;
   abortSignal?: AbortSignal;
-}): Promise<TestPlanResult> {
+}): Promise<TestPlanResult & { costSummary?: ReturnType<CostTracker['getTotals']> }> {
   const { pieceMeta, actionName, previousMemory, onLog, abortSignal } = params;
+
+  const costTracker = new CostTracker({
+    pieceName: pieceMeta.name,
+    actionName,
+    operation: 'create',
+    version: 'v2',
+  });
 
   const state: CoordinatorState = {
     phases: [],
@@ -47,6 +55,12 @@ export async function createTestPlanV2(params: {
 
   function logPhase(name: CoordinatorState['phases'][0]['name'], message: string) {
     onLog({ timestamp: Date.now(), type: 'phase', role: 'coordinator', message, detail: name });
+  }
+
+  function withCost<T extends TestPlanResult>(plan: T): T & { costSummary: ReturnType<CostTracker['getTotals']> } {
+    const totals = costTracker.getTotals();
+    onLog({ timestamp: Date.now(), type: 'done', role: 'coordinator', message: `Total cost: $${totals.cost_usd.toFixed(4)} (${totals.requests} API calls, ${totals.input_tokens + totals.output_tokens} tokens)` });
+    return { ...plan, costSummary: totals };
   }
 
   // ── Phase 1: Research ──
@@ -64,6 +78,7 @@ export async function createTestPlanV2(params: {
       previousMemory,
       onLog,
       abortSignal,
+      costTracker,
     });
     state.researchFindings = findings;
   } catch (err: any) {
@@ -105,16 +120,17 @@ export async function createTestPlanV2(params: {
       synthesizedSpec,
       onLog,
       abortSignal,
+      costTracker,
     });
   } catch (err: any) {
     if (err.message?.includes('aborted')) throw err;
     onLog({ timestamp: Date.now(), type: 'error', role: 'coordinator', message: `Planner worker failed: ${err.message}` });
-    return { steps: [], note: `Plan creation failed: ${err.message}`, agentMemory: undefined };
+    return withCost({ steps: [], note: `Plan creation failed: ${err.message}`, agentMemory: undefined });
   }
 
   if (plan.steps.length === 0) {
     onLog({ timestamp: Date.now(), type: 'error', role: 'coordinator', message: 'Planner produced an empty plan.' });
-    return plan;
+    return withCost(plan);
   }
 
   onLog({ timestamp: Date.now(), type: 'worker_complete', role: 'coordinator', message: `Planner created a ${plan.steps.length}-step plan.` });
@@ -137,13 +153,14 @@ export async function createTestPlanV2(params: {
       planNote: plan.note,
       onLog,
       abortSignal,
+      costTracker,
     });
     state.verification = verification;
   } catch (err: any) {
     if (err.message?.includes('aborted')) throw err;
     onLog({ timestamp: Date.now(), type: 'error', role: 'coordinator', message: `Verifier failed: ${err.message}. Accepting plan without verification.` });
     state.phases[state.phases.length - 1].completedAt = Date.now();
-    return plan;
+    return withCost(plan);
   }
 
   onLog({
@@ -156,7 +173,7 @@ export async function createTestPlanV2(params: {
   // If verification passed, return the plan
   if (verification.verdict === 'PASS') {
     logPhase('complete', 'Plan verified successfully. Done.');
-    return plan;
+    return withCost(plan);
   }
 
   // ── Phase 5: Fix loop (if verification failed) ──
@@ -184,6 +201,7 @@ export async function createTestPlanV2(params: {
         agentMemory: currentPlan.agentMemory,
         onLog,
         abortSignal,
+        costTracker,
       });
     } catch (err: any) {
       if (err.message?.includes('aborted')) throw err;
@@ -211,6 +229,7 @@ export async function createTestPlanV2(params: {
         planNote: fixedPlan.note,
         onLog,
         abortSignal,
+        costTracker,
       });
 
       onLog({
@@ -220,7 +239,7 @@ export async function createTestPlanV2(params: {
 
       if (reVerification.verdict === 'PASS') {
         logPhase('complete', 'Fixed plan verified successfully. Done.');
-        return fixedPlan;
+        return withCost(fixedPlan);
       }
 
       currentPlan = fixedPlan;
@@ -228,7 +247,7 @@ export async function createTestPlanV2(params: {
     } catch (err: any) {
       if (err.message?.includes('aborted')) throw err;
       onLog({ timestamp: Date.now(), type: 'error', role: 'coordinator', message: `Re-verification failed: ${err.message}. Returning fixed plan.` });
-      return fixedPlan;
+      return withCost(fixedPlan);
     }
   }
 
@@ -236,7 +255,7 @@ export async function createTestPlanV2(params: {
     timestamp: Date.now(), type: 'done', role: 'coordinator',
     message: `Returning plan after ${state.fixAttempts} fix attempts. Last verdict: ${currentVerification.verdict}`,
   });
-  return currentPlan;
+  return withCost(currentPlan);
 }
 
 /**
@@ -251,8 +270,21 @@ export async function fixTestPlanV2(params: {
   agentMemory?: string;
   onLog: OnLogCallback;
   abortSignal?: AbortSignal;
-}): Promise<TestPlanResult> {
+}): Promise<TestPlanResult & { costSummary?: ReturnType<CostTracker['getTotals']> }> {
   const { pieceMeta, actionName, onLog, abortSignal } = params;
+
+  const costTracker = new CostTracker({
+    pieceName: pieceMeta.name,
+    actionName,
+    operation: 'fix',
+    version: 'v2',
+  });
+
+  function withCost<T extends TestPlanResult>(plan: T): T & { costSummary: ReturnType<CostTracker['getTotals']> } {
+    const totals = costTracker.getTotals();
+    onLog({ timestamp: Date.now(), type: 'done', role: 'coordinator', message: `Fix cost: $${totals.cost_usd.toFixed(4)} (${totals.requests} API calls, ${totals.input_tokens + totals.output_tokens} tokens)` });
+    return { ...plan, costSummary: totals };
+  }
 
   onLog({ timestamp: Date.now(), type: 'phase', role: 'coordinator', message: 'Fixing failed plan (post-execution)...' });
   onLog({ timestamp: Date.now(), type: 'worker_spawn', role: 'coordinator', message: 'Spawning fixer worker with execution results...' });
@@ -268,11 +300,12 @@ export async function fixTestPlanV2(params: {
       agentMemory: params.agentMemory,
       onLog,
       abortSignal,
+      costTracker,
     });
   } catch (err: any) {
     if (err.message?.includes('aborted')) throw err;
     onLog({ timestamp: Date.now(), type: 'error', role: 'coordinator', message: `Fixer failed: ${err.message}` });
-    return { steps: params.previousSteps, note: 'Fix attempt failed.', agentMemory: params.agentMemory };
+    return withCost({ steps: params.previousSteps, note: 'Fix attempt failed.', agentMemory: params.agentMemory });
   }
 
   onLog({ timestamp: Date.now(), type: 'worker_complete', role: 'coordinator', message: `Fixer produced a ${fixedPlan.steps.length}-step plan.` });
@@ -288,6 +321,7 @@ export async function fixTestPlanV2(params: {
       planNote: fixedPlan.note,
       onLog,
       abortSignal,
+      costTracker,
     });
 
     onLog({
@@ -308,6 +342,7 @@ export async function fixTestPlanV2(params: {
           agentMemory: fixedPlan.agentMemory,
           onLog,
           abortSignal,
+          costTracker,
         });
         if (reFix.steps.length > 0) fixedPlan = reFix;
       } catch { /* use previous fixed plan */ }
@@ -318,5 +353,5 @@ export async function fixTestPlanV2(params: {
   }
 
   onLog({ timestamp: Date.now(), type: 'done', role: 'coordinator', message: 'Fix complete.' });
-  return fixedPlan;
+  return withCost(fixedPlan);
 }

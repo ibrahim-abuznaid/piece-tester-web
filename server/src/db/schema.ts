@@ -270,4 +270,23 @@ function initTables(db: DatabaseAdapter): void {
   if (planCols.length > 0 && !planCols.some(c => c.name === 'automation_status')) {
     db.exec(`ALTER TABLE test_plans ADD COLUMN automation_status TEXT NOT NULL DEFAULT 'unknown'`);
   }
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS ai_usage_logs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      session_id TEXT NOT NULL,
+      piece_name TEXT NOT NULL DEFAULT '',
+      action_name TEXT NOT NULL DEFAULT '',
+      agent_role TEXT NOT NULL DEFAULT '',
+      agent_version TEXT NOT NULL DEFAULT 'v1',
+      model TEXT NOT NULL DEFAULT '',
+      input_tokens INTEGER NOT NULL DEFAULT 0,
+      output_tokens INTEGER NOT NULL DEFAULT 0,
+      cache_creation_input_tokens INTEGER NOT NULL DEFAULT 0,
+      cache_read_input_tokens INTEGER NOT NULL DEFAULT 0,
+      cost_usd REAL NOT NULL DEFAULT 0,
+      operation TEXT NOT NULL DEFAULT 'create',
+      created_at TEXT DEFAULT (datetime('now'))
+    );
+  `);
 }

@@ -5,6 +5,7 @@ import { runAgentLoop } from '../agent-runner.js';
 import { createToolRegistry, FIXER_TOOLS } from '../tools/index.js';
 import { FIXER_SYSTEM_PROMPT, buildFixerUserPrompt } from '../prompts/fixer.js';
 import { parsePlanFromToolInput } from '../tools/set-plan.js';
+import type { CostTracker } from '../cost-tracker.js';
 
 /**
  * Run the fixer worker to repair a failed test plan.
@@ -20,8 +21,9 @@ export async function runFixerWorker(params: {
   agentMemory?: string;
   onLog: OnLogCallback;
   abortSignal?: AbortSignal;
+  costTracker?: CostTracker;
 }): Promise<TestPlanResult> {
-  const { pieceMeta, actionName, onLog, abortSignal } = params;
+  const { pieceMeta, actionName, onLog, abortSignal, costTracker } = params;
   const registry = createToolRegistry();
 
   const toolCtx: ToolContext = { pieceMeta, actionName, abortSignal };
@@ -37,7 +39,7 @@ export async function runFixerWorker(params: {
     toolNames: [...FIXER_TOOLS],
     abortSignal,
     onLog,
-  }, toolCtx);
+  }, toolCtx, costTracker);
 
   if (result.terminatedByTool && result.output) {
     return parsePlanFromToolInput(result.output as Record<string, any>);

@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { getSettings, updateSettings } from '../db/queries.js';
+import { getSettings, updateSettings, getAiUsageSummary, getAiUsageBySession, getAiUsageByPiece, getAiUsageRecent } from '../db/queries.js';
 import { ActivepiecesClient } from '../services/ap-client.js';
 
 const router = Router();
@@ -133,6 +133,50 @@ router.post('/save-anthropic-key', async (req, res) => {
 router.post('/remove-anthropic-key', (_req, res) => {
   updateSettings({ anthropic_api_key: '' });
   res.json({ success: true });
+});
+
+// ── AI Cost Tracking Routes ──
+
+router.get('/ai-costs', (req, res) => {
+  try {
+    const summary = getAiUsageSummary({
+      piece_name: req.query.piece_name as string | undefined,
+      date_from: req.query.date_from as string | undefined,
+      date_to: req.query.date_to as string | undefined,
+    });
+    res.json(summary);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.get('/ai-costs/recent', (req, res) => {
+  try {
+    const limit = parseInt(req.query.limit as string) || 100;
+    const rows = getAiUsageRecent(limit);
+    res.json(rows);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.get('/ai-costs/session/:sessionId', (req, res) => {
+  try {
+    const rows = getAiUsageBySession(req.params.sessionId);
+    res.json(rows);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.get('/ai-costs/piece/:pieceName', (req, res) => {
+  try {
+    const limit = parseInt(req.query.limit as string) || 50;
+    const rows = getAiUsageByPiece(req.params.pieceName, limit);
+    res.json(rows);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 export default router;

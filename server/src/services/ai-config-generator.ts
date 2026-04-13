@@ -5,6 +5,7 @@ import type { PieceMetadataFull, PieceActionMeta } from './ap-client.js';
 import { createClient } from './test-engine.js';
 import { buildConnectionValue, makeExternalId } from './connection-builder.js';
 import { formatLessonsForPrompt } from './lesson-extractor.js';
+import { CostTracker } from '../agents/v2/cost-tracker.js';
 
 // ── Types ──
 
@@ -262,6 +263,7 @@ async function runAgentLoop(
   onLog: OnLogCallback,
   toolSet?: Anthropic.Messages.Tool[],
   abortSignal?: AbortSignal,
+  costTracker?: CostTracker,
 ): Promise<AiActionResult | TestPlanResult> {
   const settings = getSettings();
   if (!settings.anthropic_api_key) throw new Error('Anthropic API key not configured. Go to Settings to add it.');
@@ -297,6 +299,12 @@ async function runAgentLoop(
     const activeTools = toolSet || TOOLS;
     const requestOptions = abortSignal ? { signal: abortSignal } : undefined;
     const response = await client.messages.create({ model, max_tokens: 4096, system: systemPrompt, tools: activeTools, messages }, requestOptions);
+
+    if (costTracker) {
+      const isPlanMode = toolSet?.some(t => t.name === 'set_test_plan');
+      costTracker.trackResponse(model, response, isPlanMode ? 'planner' : 'configurator');
+    }
+
     const assistantContent = response.content;
     messages.push({ role: 'assistant', content: assistantContent });
 
@@ -429,10 +437,14 @@ export async function configureActionWithAi(
   const connRow = getConnectionByPiece(pieceMeta.name);
   const connectionInfo = connRow ? { hasConnection: true, connectionType: connRow.connection_type } : { hasConnection: false };
 
+  const costTracker = new CostTracker({
+    pieceName: pieceMeta.name, actionName, operation: 'configure', version: 'v1',
+  });
+
   onLog({ timestamp: Date.now(), type: 'thinking', message: `Starting AI agent for "${pieceMeta.actions[actionName]?.displayName}" (${actionName})` });
 
   const prompt = buildActionPrompt(pieceMeta, actionName, pieceMeta.actions[actionName], connectionInfo, previousMemory);
-  return runAgentLoop(pieceMeta, actionName, CONFIGURE_SYSTEM_PROMPT, [{ role: 'user', content: prompt }], onLog, undefined, abortSignal) as Promise<AiActionResult>;
+  return runAgentLoop(pieceMeta, actionName, CONFIGURE_SYSTEM_PROMPT, [{ role: 'user', content: prompt }], onLog, undefined, abortSignal, costTracker) as Promise<AiActionResult>;
 }
 
 // ══════════════════════════════════════════════════════════════
@@ -451,10 +463,14 @@ export async function fixActionWithAi(
   const connRow = getConnectionByPiece(pieceMeta.name);
   const connectionInfo = connRow ? { hasConnection: true, connectionType: connRow.connection_type } : { hasConnection: false };
 
+  const costTracker = new CostTracker({
+    pieceName: pieceMeta.name, actionName, operation: 'fix_action', version: 'v1',
+  });
+
   onLog({ timestamp: Date.now(), type: 'thinking', message: `Analyzing failure for "${pieceMeta.actions[actionName]?.displayName}" and attempting fix...` });
 
   const prompt = buildFixPrompt(pieceMeta, actionName, pieceMeta.actions[actionName], connectionInfo, previousConfig, testError, agentMemory);
-  return runAgentLoop(pieceMeta, actionName, FIX_SYSTEM_PROMPT, [{ role: 'user', content: prompt }], onLog, undefined, abortSignal) as Promise<AiActionResult>;
+  return runAgentLoop(pieceMeta, actionName, FIX_SYSTEM_PROMPT, [{ role: 'user', content: prompt }], onLog, undefined, abortSignal, costTracker) as Promise<AiActionResult>;
 }
 
 // ══════════════════════════════════════════════════════════════
@@ -722,10 +738,14 @@ export async function createTestPlanWithAi(
   const connRow = getConnectionByPiece(pieceMeta.name);
   const connectionInfo = connRow ? { hasConnection: true, connectionType: connRow.connection_type } : { hasConnection: false };
 
+  const costTracker = new CostTracker({
+    pieceName: pieceMeta.name, actionName, operation: 'create', version: 'v1',
+  });
+
   onLog({ timestamp: Date.now(), type: 'thinking', message: `Creating test plan for "${pieceMeta.actions[actionName]?.displayName}" (${actionName})` });
 
   const prompt = buildPlanPrompt(pieceMeta, actionName, pieceMeta.actions[actionName], connectionInfo, previousMemory);
-  const result = await runAgentLoop(pieceMeta, actionName, PLAN_SYSTEM_PROMPT, [{ role: 'user', content: prompt }], onLog, PLAN_TOOLS, abortSignal);
+  const result = await runAgentLoop(pieceMeta, actionName, PLAN_SYSTEM_PROMPT, [{ role: 'user', content: prompt }], onLog, PLAN_TOOLS, abortSignal, costTracker);
 
   // Ensure we got a plan result
   if ('steps' in result) return result as TestPlanResult;
@@ -764,10 +784,14 @@ export async function fixTestPlanWithAi(
   const connRow = getConnectionByPiece(pieceMeta.name);
   const connectionInfo = connRow ? { hasConnection: true, connectionType: connRow.connection_type } : { hasConnection: false };
 
+  const costTracker = new CostTracker({
+    pieceName: pieceMeta.name, actionName, operation: 'fix', version: 'v1',
+  });
+
   onLog({ timestamp: Date.now(), type: 'thinking', message: `Analyzing failed plan for "${pieceMeta.actions[actionName]?.displayName}" and fixing...` });
 
   const prompt = buildFixPlanPrompt(pieceMeta, actionName, pieceMeta.actions[actionName], connectionInfo, previousSteps, stepResults, agentMemory);
-  const result = await runAgentLoop(pieceMeta, actionName, FIX_PLAN_SYSTEM_PROMPT, [{ role: 'user', content: prompt }], onLog, PLAN_TOOLS, abortSignal);
+  const result = await runAgentLoop(pieceMeta, actionName, FIX_PLAN_SYSTEM_PROMPT, [{ role: 'user', content: prompt }], onLog, PLAN_TOOLS, abortSignal, costTracker);
 
   if ('steps' in result) return result as TestPlanResult;
 

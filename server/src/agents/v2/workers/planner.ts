@@ -4,6 +4,7 @@ import { runAgentLoop } from '../agent-runner.js';
 import { createToolRegistry, PLANNER_TOOLS } from '../tools/index.js';
 import { PLANNER_SYSTEM_PROMPT, buildPlannerUserPrompt } from '../prompts/planner.js';
 import { parsePlanFromToolInput } from '../tools/set-plan.js';
+import type { CostTracker } from '../cost-tracker.js';
 
 /**
  * Run the planner worker with a synthesized spec from the coordinator.
@@ -15,8 +16,9 @@ export async function runPlannerWorker(params: {
   synthesizedSpec: string;
   onLog: OnLogCallback;
   abortSignal?: AbortSignal;
+  costTracker?: CostTracker;
 }): Promise<TestPlanResult> {
-  const { pieceMeta, actionName, synthesizedSpec, onLog, abortSignal } = params;
+  const { pieceMeta, actionName, synthesizedSpec, onLog, abortSignal, costTracker } = params;
   const registry = createToolRegistry();
 
   const toolCtx: ToolContext = { pieceMeta, actionName, abortSignal };
@@ -32,7 +34,7 @@ export async function runPlannerWorker(params: {
     toolNames: [...PLANNER_TOOLS],
     abortSignal,
     onLog,
-  }, toolCtx);
+  }, toolCtx, costTracker);
 
   if (result.terminatedByTool && result.output) {
     return parsePlanFromToolInput(result.output as Record<string, any>);

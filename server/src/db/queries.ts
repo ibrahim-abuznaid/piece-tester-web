@@ -898,6 +898,114 @@ export function deleteAllTestRuns(before?: string): number {
   return getDb().run('DELETE FROM test_runs').changes;
 }
 
+// ── AI Usage Tracking ──
+
+export interface AiUsageRow {
+  id: number;
+  session_id: string;
+  piece_name: string;
+  action_name: string;
+  agent_role: string;
+  agent_version: string;
+  model: string;
+  input_tokens: number;
+  output_tokens: number;
+  cache_creation_input_tokens: number;
+  cache_read_input_tokens: number;
+  cost_usd: number;
+  operation: string;
+  created_at: string;
+}
+
+export function logAiUsage(params: {
+  session_id: string;
+  piece_name: string;
+  action_name: string;
+  agent_role: string;
+  agent_version: string;
+  model: string;
+  input_tokens: number;
+  output_tokens: number;
+  cache_creation_input_tokens?: number;
+  cache_read_input_tokens?: number;
+  cost_usd: number;
+  operation: string;
+}): void {
+  getDb().run(
+    `INSERT INTO ai_usage_logs (session_id, piece_name, action_name, agent_role, agent_version, model, input_tokens, output_tokens, cache_creation_input_tokens, cache_read_input_tokens, cost_usd, operation)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      params.session_id, params.piece_name, params.action_name,
+      params.agent_role, params.agent_version, params.model,
+      params.input_tokens, params.output_tokens,
+      params.cache_creation_input_tokens || 0, params.cache_read_input_tokens || 0,
+      params.cost_usd, params.operation,
+    ],
+  );
+}
+
+export function getAiUsageSummary(filters?: { piece_name?: string; date_from?: string; date_to?: string }): {
+  total_cost_usd: number;
+  total_input_tokens: number;
+  total_output_tokens: number;
+  total_requests: number;
+  by_version: { version: string; cost_usd: number; requests: number }[];
+  by_operation: { operation: string; cost_usd: number; requests: number }[];
+} {
+  const where: string[] = [];
+  const vals: unknown[] = [];
+  if (filters?.piece_name) { where.push('piece_name = ?'); vals.push(filters.piece_name); }
+  if (filters?.date_from) { where.push('created_at >= ?'); vals.push(filters.date_from); }
+  if (filters?.date_to) { where.push('created_at <= ?'); vals.push(filters.date_to); }
+  const whereClause = where.length > 0 ? `WHERE ${where.join(' AND ')}` : '';
+
+  const totals = getDb().get<{ total_cost: number; total_input: number; total_output: number; total_reqs: number }>(
+    `SELECT COALESCE(SUM(cost_usd), 0) as total_cost, COALESCE(SUM(input_tokens), 0) as total_input,
+     COALESCE(SUM(output_tokens), 0) as total_output, COUNT(*) as total_reqs
+     FROM ai_usage_logs ${whereClause}`, vals,
+  )!;
+
+  const byVersion = getDb().all<{ version: string; cost_usd: number; requests: number }>(
+    `SELECT agent_version as version, COALESCE(SUM(cost_usd), 0) as cost_usd, COUNT(*) as requests
+     FROM ai_usage_logs ${whereClause} GROUP BY agent_version`, vals,
+  );
+
+  const byOperation = getDb().all<{ operation: string; cost_usd: number; requests: number }>(
+    `SELECT operation, COALESCE(SUM(cost_usd), 0) as cost_usd, COUNT(*) as requests
+     FROM ai_usage_logs ${whereClause} GROUP BY operation`, vals,
+  );
+
+  return {
+    total_cost_usd: totals.total_cost,
+    total_input_tokens: totals.total_input,
+    total_output_tokens: totals.total_output,
+    total_requests: totals.total_reqs,
+    by_version: byVersion,
+    by_operation: byOperation,
+  };
+}
+
+export function getAiUsageBySession(sessionId: string): AiUsageRow[] {
+  return getDb().all<AiUsageRow>(
+    'SELECT * FROM ai_usage_logs WHERE session_id = ? ORDER BY created_at ASC',
+    [sessionId],
+  );
+}
+
+export function getAiUsageByPiece(pieceName: string, limit = 50): AiUsageRow[] {
+  return getDb().all<AiUsageRow>(
+    'SELECT * FROM ai_usage_logs WHERE piece_name = ? ORDER BY created_at DESC LIMIT ?',
+    [pieceName, limit],
+  );
+}
+
+export function getAiUsageRecent(limit = 100): AiUsageRow[] {
+  return getDb().all<AiUsageRow>(
+    'SELECT * FROM ai_usage_logs ORDER BY created_at DESC LIMIT ?',
+    [limit],
+  );
+}
+
 export function updatePlanRun(id: number, updates: Partial<{
   status: string;
   current_step_id: string | null;

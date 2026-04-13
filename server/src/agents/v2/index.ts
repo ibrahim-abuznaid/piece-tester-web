@@ -10,3 +10,4 @@ export type {
 } from './types.js';
 export { ToolRegistry } from './tool-registry.js';
 export { createToolRegistry } from './tools/index.js';
+export { CostTracker, calculateCost, extractUsage } from './cost-tracker.js';

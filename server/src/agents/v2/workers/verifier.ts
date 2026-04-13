@@ -3,6 +3,7 @@ import type { OnLogCallback, TestPlanStep, VerificationResult, VerificationIssue
 import { runAgentLoop } from '../agent-runner.js';
 import { createToolRegistry, VERIFIER_TOOLS } from '../tools/index.js';
 import { VERIFIER_SYSTEM_PROMPT, buildVerifierUserPrompt } from '../prompts/verifier.js';
+import type { CostTracker } from '../cost-tracker.js';
 
 /**
  * Parse the verifier's free-text output into a structured result.
@@ -51,8 +52,9 @@ export async function runVerifierWorker(params: {
   planNote: string;
   onLog: OnLogCallback;
   abortSignal?: AbortSignal;
+  costTracker?: CostTracker;
 }): Promise<VerificationResult> {
-  const { pieceMeta, actionName, steps, planNote, onLog, abortSignal } = params;
+  const { pieceMeta, actionName, steps, planNote, onLog, abortSignal, costTracker } = params;
   const registry = createToolRegistry();
 
   const toolCtx: ToolContext = { pieceMeta, actionName, abortSignal };
@@ -68,7 +70,7 @@ export async function runVerifierWorker(params: {
     toolNames: [...VERIFIER_TOOLS],
     abortSignal,
     onLog,
-  }, toolCtx);
+  }, toolCtx, costTracker);
 
   // Extract the verifier's text output
   const lastAssistantMsg = [...result.messages].reverse().find(m => m.role === 'assistant');
