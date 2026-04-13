@@ -112,11 +112,24 @@ export async function runScheduledTests(targets?: ScheduleTarget[] | null): Prom
     );
   });
 
-  if (plansToRun.length > 0) {
-    console.log(`[scheduler] Running ${plansToRun.length} test plan(s)...`);
-    // Run plans in background (don't block the cron tick)
+  const validPlans = plansToRun.filter(p => {
+    try {
+      const steps = JSON.parse(p.steps);
+      if (!Array.isArray(steps) || steps.length === 0) {
+        console.warn(`[scheduler] Skipping plan #${p.id} (${p.target_action}): no steps defined`);
+        return false;
+      }
+      return true;
+    } catch {
+      console.warn(`[scheduler] Skipping plan #${p.id} (${p.target_action}): invalid steps JSON`);
+      return false;
+    }
+  });
+
+  if (validPlans.length > 0) {
+    console.log(`[scheduler] Running ${validPlans.length} test plan(s)...`);
     (async () => {
-      for (const plan of plansToRun) {
+      for (const plan of validPlans) {
         try {
           await executePlan(plan.id, () => {}, 'scheduled');
         } catch (err) {

@@ -158,7 +158,9 @@ export class ActivepiecesClient {
   }
 
   async deleteFlow(flowId: string): Promise<void> {
-    await this.http.delete(`/v1/flows/${flowId}`);
+    await this.http.delete(`/v1/flows/${flowId}`, {
+      headers: { 'Content-Type': undefined },
+    });
   }
 
   /**
