@@ -17,9 +17,10 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
 
 export interface AgentLogEntry {
   timestamp: number;
-  type: 'thinking' | 'tool_call' | 'tool_result' | 'decision' | 'error' | 'done';
+  type: 'thinking' | 'tool_call' | 'tool_result' | 'decision' | 'error' | 'done' | 'worker_spawn' | 'worker_complete' | 'phase';
   message: string;
   detail?: string;
+  role?: string;
 }
 
 export interface AiActionResult {
@@ -416,6 +417,87 @@ function streamAiPlanFix(
 }
 
 /**
+ * Stream AI plan creation via SSE using v2 multi-agent system.
+ */
+function streamAiPlanV2(
+  pieceName: string,
+  actionName: string,
+  callbacks: PlanStreamCallbacks,
+  previousMemory?: string,
+): AbortController {
+  const controller = new AbortController();
+  let url = `${BASE}/pieces/${encodeURIComponent(pieceName)}/actions/${encodeURIComponent(actionName)}/ai-plan-v2`;
+  if (previousMemory) url += `?memory=${encodeURIComponent(previousMemory)}`;
+
+  (async () => {
+    try {
+      const response = await fetch(url, { signal: controller.signal });
+      if (!response.ok) {
+        const errText = await response.text();
+        callbacks.onError(`HTTP ${response.status}: ${errText}`);
+        callbacks.onDone();
+        return;
+      }
+      await readSSE(response, {
+        log: (d: any) => callbacks.onLog(d),
+        result: (d: any) => callbacks.onResult(d),
+        plan_progress: (d: any) => callbacks.onPlanProgress?.(d),
+        error: (d: any) => callbacks.onError(d.message || 'Unknown error'),
+        done: () => callbacks.onDone(),
+      });
+      callbacks.onDone();
+    } catch (err: any) {
+      if (err.name !== 'AbortError') { callbacks.onError(err.message); callbacks.onDone(); }
+    }
+  })();
+
+  return controller;
+}
+
+/**
+ * Stream AI plan fix via SSE using v2 multi-agent system.
+ */
+function streamAiPlanFixV2(
+  pieceName: string,
+  actionName: string,
+  previousSteps: TestPlanStep[],
+  stepResults: StepResult[],
+  agentMemory: string | undefined,
+  callbacks: PlanStreamCallbacks,
+): AbortController {
+  const controller = new AbortController();
+  const url = `${BASE}/pieces/${encodeURIComponent(pieceName)}/actions/${encodeURIComponent(actionName)}/ai-plan-fix-v2`;
+
+  (async () => {
+    try {
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ previousSteps, stepResults, agentMemory }),
+        signal: controller.signal,
+      });
+      if (!response.ok) {
+        const errText = await response.text();
+        callbacks.onError(`HTTP ${response.status}: ${errText}`);
+        callbacks.onDone();
+        return;
+      }
+      await readSSE(response, {
+        log: (d: any) => callbacks.onLog(d),
+        result: (d: any) => callbacks.onResult(d),
+        error: (d: any) => callbacks.onError(d.message || 'Unknown error'),
+        done: () => callbacks.onDone(),
+      });
+      callbacks.onDone();
+    } catch (err: any) {
+      if (err.name !== 'AbortError') { callbacks.onError(err.message); callbacks.onDone(); }
+    }
+  })();
+
+  return controller;
+}
+
+/**
  * Stream plan execution via SSE.
  */
 function streamPlanExecution(
@@ -594,10 +676,14 @@ export const api = {
   updateSchedule: (id: number, data: any) => request<any>('PUT', `/schedules/${id}`, data),
   deleteSchedule: (id: number) => request<any>('DELETE', `/schedules/${id}`),
 
-  // Test Plans
+  // Test Plans (v1)
   streamAiPlan,
   streamAiPlanFix,
   streamPlanExecution,
+
+  // Test Plans (v2 multi-agent)
+  streamAiPlanV2,
+  streamAiPlanFixV2,
   getTestPlan: (planId: number) => request<TestPlan>('GET', `/test-plans/${planId}`),
   getTestPlanByAction: (pieceName: string, actionName: string) =>
     request<TestPlan>('GET', `/test-plans/by-action/${encodeURIComponent(pieceName)}/${encodeURIComponent(actionName)}`),

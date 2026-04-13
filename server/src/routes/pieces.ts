@@ -7,6 +7,9 @@ import { createTestPlan, getTestPlanByAction, updateTestPlan, getLessonsForPiece
 import { executePlan } from '../services/plan-executor.js';
 import { extractAndStoreLessons } from '../services/lesson-extractor.js';
 import { getJob, createJob, emitJobEvent, completeJob, getActiveJobsForPiece, subscribeToJobWithCleanup, type PlanJob } from '../services/plan-jobs.js';
+import { createTestPlanV2, fixTestPlanV2 } from '../agents/v2/index.js';
+import type { AgentLogEntry as V2LogEntry } from '../agents/v2/types.js';
+import { detectBrokenInputMappings } from '../agents/v2/tools/inspect-output.js';
 
 const router = Router();
 
@@ -388,6 +391,246 @@ router.post('/:name/actions/:action/ai-plan-fix', async (req, res) => {
       console.log(`[ai-plan-fix] Agent for ${req.params.action} aborted (client disconnect).`);
     } else {
       console.error('[ai-plan-fix] SSE error:', err.message);
+      sendEvent('error', { message: err.message || 'Unknown error' });
+    }
+  }
+
+  res.end();
+});
+
+// ══════════════════════════════════════════════════════════════
+// Plan Creator v2 routes (multi-agent orchestration)
+// ══════════════════════════════════════════════════════════════
+
+function runPlanJobV2InBackground(job: PlanJob, pieceName: string, actionName: string, previousMemory?: string) {
+  (async () => {
+    try {
+      const client = createClient();
+      const piece = await client.getPieceMetadata(pieceName);
+
+      if (!piece.actions[actionName]) {
+        emitJobEvent(job, 'error', { message: `Action "${actionName}" not found` });
+        emitJobEvent(job, 'done', {});
+        completeJob(job, 'error');
+        return;
+      }
+
+      const onLog = (log: V2LogEntry) => emitJobEvent(job, 'log', log);
+
+      const planResult = await createTestPlanV2({
+        pieceMeta: piece,
+        actionName,
+        previousMemory: previousMemory || undefined,
+        onLog,
+      });
+
+      const saved = createTestPlan({
+        piece_name: pieceName,
+        target_action: actionName,
+        steps: JSON.stringify(planResult.steps),
+        status: 'draft',
+        agent_memory: planResult.agentMemory || '',
+      });
+
+      emitJobEvent(job, 'result', {
+        planId: saved.id,
+        steps: planResult.steps,
+        note: planResult.note,
+        agentMemory: planResult.agentMemory,
+        status: 'draft',
+        version: 'v2',
+      });
+
+      // Auto-test the plan (same logic as v1)
+      const hasHumanInputSteps = planResult.steps.some((s: any) => s.type === 'human_input');
+
+      if (!hasHumanInputSteps && planResult.steps.length > 0) {
+        const MAX_FIX_ATTEMPTS = 3;
+        let currentSteps = planResult.steps;
+        let currentMemory = planResult.agentMemory;
+        let autoTestPassed = false;
+
+        for (let attempt = 0; attempt <= MAX_FIX_ATTEMPTS; attempt++) {
+          onLog({ timestamp: Date.now(), type: 'thinking', role: 'coordinator', message: `Auto-testing plan (attempt ${attempt + 1}/${MAX_FIX_ATTEMPTS + 1})...` });
+
+          const finalRun = await executePlan(saved.id, (progress) => {
+            emitJobEvent(job, 'plan_progress', progress);
+          }, 'auto_test');
+
+          if (finalRun.status === 'completed') {
+            onLog({ timestamp: Date.now(), type: 'done', role: 'coordinator', message: 'Auto-test passed! Plan is verified and working.' });
+            autoTestPassed = true;
+            updateTestPlan(saved.id, { status: 'approved' });
+
+            if (attempt > 0) {
+              extractAndStoreLessons(
+                pieceName, piece.displayName,
+                planResult.steps, JSON.parse(finalRun.step_results || '[]'), currentSteps,
+              ).catch(() => {});
+            }
+
+            emitJobEvent(job, 'result', {
+              planId: saved.id,
+              steps: currentSteps,
+              note: planResult.note,
+              agentMemory: currentMemory,
+              status: 'approved',
+              autoTestPassed: true,
+              autoTestAttempts: attempt + 1,
+              version: 'v2',
+            });
+            break;
+          }
+
+          if (attempt >= MAX_FIX_ATTEMPTS) {
+            onLog({ timestamp: Date.now(), type: 'error', role: 'coordinator', message: `Auto-test still failing after ${MAX_FIX_ATTEMPTS + 1} attempt(s).` });
+            break;
+          }
+
+          onLog({ timestamp: Date.now(), type: 'thinking', role: 'coordinator', message: 'Auto-test failed, running v2 fixer...' });
+          const stepResults = JSON.parse(finalRun.step_results || '[]');
+          const brokenMappings = detectBrokenInputMappings(currentSteps, stepResults);
+
+          const fixResult = await fixTestPlanV2({
+            pieceMeta: piece,
+            actionName,
+            previousSteps: currentSteps,
+            stepResults,
+            brokenMappings,
+            agentMemory: currentMemory,
+            onLog,
+          });
+
+          updateTestPlan(saved.id, {
+            steps: JSON.stringify(fixResult.steps),
+            agent_memory: fixResult.agentMemory || currentMemory || '',
+          });
+
+          currentSteps = fixResult.steps;
+          currentMemory = fixResult.agentMemory || currentMemory;
+
+          emitJobEvent(job, 'result', {
+            planId: saved.id,
+            steps: fixResult.steps,
+            note: fixResult.note || planResult.note,
+            agentMemory: fixResult.agentMemory,
+            status: 'draft',
+            version: 'v2',
+          });
+        }
+      } else if (hasHumanInputSteps) {
+        onLog({ timestamp: Date.now(), type: 'thinking', role: 'coordinator', message: 'Plan has human_input steps — skipping auto-test.' });
+      }
+
+      emitJobEvent(job, 'done', {});
+      completeJob(job, 'done');
+    } catch (err: any) {
+      console.error(`[ai-plan-v2] Background job error for ${actionName}:`, err.message);
+      emitJobEvent(job, 'error', { message: err.message || 'Unknown error' });
+      emitJobEvent(job, 'done', {});
+      completeJob(job, 'error');
+    }
+  })();
+}
+
+router.get('/:name/actions/:action/ai-plan-v2', async (req, res) => {
+  req.setTimeout(600_000);
+  const sendEvent = setupSSE(res);
+  const pieceName = req.params.name;
+  const actionName = req.params.action;
+
+  const jobKey = `v2:${actionName}`;
+  let existingJob = getJob(pieceName, jobKey);
+
+  if (existingJob && existingJob.status === 'running') {
+    console.log(`[ai-plan-v2] Client reconnecting to running job for ${actionName}`);
+    const unsubscribe = subscribeToJobWithCleanup(existingJob, sendEvent, () => res.end());
+    res.on('close', () => { unsubscribe(); });
+    return;
+  }
+
+  const previousMemory = req.query.memory as string | undefined;
+  const job = createJob(pieceName, jobKey);
+  runPlanJobV2InBackground(job, pieceName, actionName, previousMemory);
+
+  const unsubscribe = subscribeToJobWithCleanup(job, sendEvent, () => res.end());
+  res.on('close', () => { unsubscribe(); console.log(`[ai-plan-v2] Client disconnected from ${actionName} (job continues)`); });
+});
+
+router.post('/:name/actions/:action/ai-plan-fix-v2', async (req, res) => {
+  req.setTimeout(300_000);
+  const sendEvent = setupSSE(res);
+
+  const ac = new AbortController();
+  res.on('close', () => { ac.abort(); });
+
+  try {
+    const client = createClient();
+    const piece = await client.getPieceMetadata(req.params.name);
+    const actionName = req.params.action;
+
+    if (!piece.actions[actionName]) {
+      sendEvent('error', { message: `Action "${actionName}" not found` });
+      res.end();
+      return;
+    }
+
+    const { previousSteps, stepResults, agentMemory } = req.body;
+    if (!previousSteps || !stepResults) {
+      sendEvent('error', { message: 'previousSteps and stepResults are required' });
+      res.end();
+      return;
+    }
+
+    const brokenMappings = detectBrokenInputMappings(previousSteps, stepResults);
+    const onLog = (log: V2LogEntry) => { if (!ac.signal.aborted) sendEvent('log', log); };
+    const planResult = await fixTestPlanV2({
+      pieceMeta: piece,
+      actionName,
+      previousSteps,
+      stepResults,
+      brokenMappings,
+      agentMemory,
+      onLog,
+      abortSignal: ac.signal,
+    });
+
+    if (ac.signal.aborted) { res.end(); return; }
+
+    const existing = getTestPlanByAction(req.params.name, actionName);
+    let saved;
+    if (existing) {
+      saved = updateTestPlan(existing.id, {
+        steps: JSON.stringify(planResult.steps),
+        agent_memory: planResult.agentMemory || existing.agent_memory,
+      });
+    } else {
+      saved = createTestPlan({
+        piece_name: req.params.name,
+        target_action: actionName,
+        steps: JSON.stringify(planResult.steps),
+        status: 'draft',
+        agent_memory: planResult.agentMemory || '',
+      });
+    }
+
+    extractAndStoreLessons(
+      req.params.name, piece.displayName,
+      previousSteps, stepResults, planResult.steps,
+    ).catch(() => {});
+
+    sendEvent('result', {
+      planId: saved!.id,
+      steps: planResult.steps,
+      note: planResult.note,
+      agentMemory: planResult.agentMemory,
+      status: saved!.status,
+      version: 'v2',
+    });
+    sendEvent('done', {});
+  } catch (err: any) {
+    if (!ac.signal.aborted) {
+      console.error('[ai-plan-fix-v2] SSE error:', err.message);
       sendEvent('error', { message: err.message || 'Unknown error' });
     }
   }

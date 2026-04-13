@@ -85,6 +85,9 @@ export default function TestPlanView({
     matches: Array<{ planId: number; actionName: string; stepId: string }>;
   } | null>(null);
 
+  // v2 multi-agent toggle
+  const [useV2, setUseV2] = useState(true);
+
   const controllerRef = useRef<AbortController | null>(null);
   const logEndRef = useRef<HTMLDivElement>(null);
 
@@ -198,8 +201,10 @@ export default function TestPlanView({
       onDone: () => { setCreating(false); refreshLessons(); },
     };
 
-    controllerRef.current = api.streamAiPlan(pieceName, actionName, callbacks, memory);
-  }, [pieceName, actionName, plan]);
+    controllerRef.current = useV2
+      ? api.streamAiPlanV2(pieceName, actionName, callbacks, memory)
+      : api.streamAiPlan(pieceName, actionName, callbacks, memory);
+  }, [pieceName, actionName, plan, useV2]);
 
   // ── Execute plan ──
   const runPlan = useCallback(() => {
@@ -408,15 +413,10 @@ export default function TestPlanView({
       onDone: () => { setFixing(false); refreshLessons(); },
     };
 
-    controllerRef.current = api.streamAiPlanFix(
-      pieceName,
-      actionName,
-      plan.steps,
-      stepResults,
-      plan.agent_memory || undefined,
-      callbacks,
-    );
-  }, [pieceName, actionName, plan, stepResults]);
+    controllerRef.current = useV2
+      ? api.streamAiPlanFixV2(pieceName, actionName, plan.steps, stepResults, plan.agent_memory || undefined, callbacks)
+      : api.streamAiPlanFix(pieceName, actionName, plan.steps, stepResults, plan.agent_memory || undefined, callbacks);
+  }, [pieceName, actionName, plan, stepResults, useV2]);
 
   // Cleanup on unmount
   useEffect(() => () => { controllerRef.current?.abort(); }, []);
@@ -549,10 +549,24 @@ export default function TestPlanView({
           <Brain size={32} className="mx-auto mb-3 text-gray-600" />
           <p className="text-gray-400 text-sm mb-3">No test plan exists for this action yet.</p>
           {hasAnthropicKey ? (
-            <button onClick={createPlan}
-              className="px-4 py-2 bg-purple-600 hover:bg-purple-500 text-white text-sm rounded flex items-center gap-2 mx-auto">
-              <Brain size={14} /> Create Plan with AI
-            </button>
+            <div className="flex flex-col items-center gap-3">
+              <button onClick={createPlan}
+                className="px-4 py-2 bg-purple-600 hover:bg-purple-500 text-white text-sm rounded flex items-center gap-2">
+                <Brain size={14} /> Create Plan with AI
+              </button>
+              <button
+                onClick={() => setUseV2(!useV2)}
+                className={`text-xs px-2 py-1 rounded flex items-center gap-1.5 transition-colors ${
+                  useV2
+                    ? 'bg-purple-500/20 text-purple-300 border border-purple-500/40'
+                    : 'bg-gray-800 text-gray-500 border border-gray-700 hover:text-gray-400'
+                }`}
+                title={useV2 ? 'v2: Multi-agent (research → plan → verify)' : 'v1: Single agent loop'}
+              >
+                <span className={`w-1.5 h-1.5 rounded-full ${useV2 ? 'bg-purple-400' : 'bg-gray-600'}`} />
+                {useV2 ? 'v2 Multi-Agent' : 'v1 Classic'}
+              </button>
+            </div>
           ) : (
             <p className="text-yellow-500 text-xs">Configure Anthropic API key in Settings first.</p>
           )}
@@ -922,6 +936,18 @@ export default function TestPlanView({
                 className="px-3 py-2 bg-gray-800 hover:bg-gray-700 text-sm rounded flex items-center gap-2 text-gray-400">
                 <RotateCcw size={14} /> Regenerate
               </button>
+              <button
+                onClick={() => setUseV2(!useV2)}
+                className={`px-2 py-2 text-xs rounded flex items-center gap-1.5 transition-colors ${
+                  useV2
+                    ? 'bg-purple-500/20 text-purple-300 border border-purple-500/40'
+                    : 'bg-gray-800 text-gray-500 border border-gray-700 hover:text-gray-400'
+                }`}
+                title={useV2 ? 'v2: Multi-agent system (research → plan → verify)' : 'v1: Single agent loop'}
+              >
+                <span className={`w-1.5 h-1.5 rounded-full ${useV2 ? 'bg-purple-400' : 'bg-gray-600'}`} />
+                {useV2 ? 'v2' : 'v1'}
+              </button>
             </>
           ) : executing ? (
             <div className="flex items-center gap-2 text-sm text-blue-400">
@@ -1024,9 +1050,12 @@ export default function TestPlanView({
                 log.type === 'tool_call' ? 'text-cyan-400' :
                 log.type === 'tool_result' ? 'text-green-400' :
                 log.type === 'decision' ? 'text-yellow-400' :
+                log.type === 'worker_spawn' ? 'text-purple-400' :
+                log.type === 'worker_complete' ? 'text-purple-300' :
+                log.type === 'phase' ? 'text-indigo-400 font-semibold' :
                 'text-gray-500'
               }`}>
-                <span className="text-gray-700">[{log.type}]</span> {log.message}
+                <span className="text-gray-700">[{log.role ? `${log.role}:` : ''}{log.type}]</span> {log.message}
               </div>
             ))}
             <div ref={logEndRef} />
