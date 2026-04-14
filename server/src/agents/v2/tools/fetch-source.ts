@@ -47,8 +47,10 @@ export async function fetchActionSourceFromGitHub(pieceName: string, actionName:
   const underName = actionName.replace(/-/g, '_');
   const patterns = [
     `src/lib/actions/${dashName}.ts`, `src/lib/actions/${underName}.ts`,
+    `src/lib/actions/${dashName}-action.ts`, `src/lib/actions/${underName}-action.ts`,
     `src/lib/actions/${dashName}.action.ts`, `src/lib/actions/${underName}.action.ts`,
     `src/lib/actions/${dashName}/index.ts`, `src/lib/actions/${underName}/index.ts`,
+    `src/lib/actions/${dashName}-action/index.ts`, `src/lib/actions/${underName}_action/index.ts`,
   ];
   for (const pattern of patterns) {
     try {
