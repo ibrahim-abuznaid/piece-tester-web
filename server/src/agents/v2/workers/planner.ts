@@ -21,7 +21,8 @@ export async function runPlannerWorker(params: {
 }): Promise<TestPlanResult> {
   const { pieceMeta, actionName, synthesizedSpec, onLog, abortSignal, costTracker } = params;
   const registry = createToolRegistry();
-  const mcpEnabled = !!getSettings().mcp_token;
+  const s = getSettings();
+  const mcpEnabled = !!s.mcp_access_token || !!s.mcp_token;
 
   const toolCtx: ToolContext = { pieceMeta, actionName, abortSignal };
 

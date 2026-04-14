@@ -74,6 +74,10 @@ ${RUNTIME_TOKENS_DOC}
 
 ${INPUT_MAPPING_DOC}
 
+## Auth in Plan Steps
+If the spec includes a connection externalId (from ap_list_connections), include it as `"auth": "<externalId>"` in the input of every step that requires authentication. Example: `{ "auth": "tx1a86yrIY2fsCxxX8r35", "subject": "Test {{$uuid}}", ... }`.
+Do NOT wrap it with `{{connections.xxx}}` — pass the bare externalId.
+
 ## Rules
 - The coordinator has already done the research for you. Use the synthesized spec.
 - Only fetch additional source code if the spec is missing critical details.

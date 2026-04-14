@@ -26,7 +26,8 @@ export async function runFixerWorker(params: {
 }): Promise<TestPlanResult> {
   const { pieceMeta, actionName, onLog, abortSignal, costTracker } = params;
   const registry = createToolRegistry();
-  const mcpEnabled = !!getSettings().mcp_token;
+  const s = getSettings();
+  const mcpEnabled = !!s.mcp_access_token || !!s.mcp_token;
 
   const toolCtx: ToolContext = { pieceMeta, actionName, abortSignal };
 

@@ -21,7 +21,8 @@ export async function runResearchWorker(params: {
 }): Promise<ResearchFindings> {
   const { pieceMeta, actionName, previousMemory, onLog, abortSignal, costTracker } = params;
   const registry = createToolRegistry();
-  const mcpEnabled = !!getSettings().mcp_token;
+  const s = getSettings();
+  const mcpEnabled = !!s.mcp_access_token || !!s.mcp_token;
 
   const toolCtx: ToolContext = { pieceMeta, actionName, abortSignal };
 

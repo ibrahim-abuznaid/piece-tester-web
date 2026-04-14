@@ -70,6 +70,10 @@ ${RUNTIME_TOKENS_DOC}
 
 ${INPUT_MAPPING_DOC}
 
+## Auth in Plan Steps
+For authenticated actions, ensure every step that requires auth has `"auth": "<externalId>"` in its input (bare externalId, not `{{connections.xxx}}`). Use ap_list_connections to find the correct externalId if it is missing.
+For inspect_output: also pass `"auth": "<externalId>"` in the input object, otherwise you'll get 403 errors.
+
 ## Rules
 - NEVER add placeholder values to base input as a workaround for broken inputMapping
 - When an inputMapping path resolves to undefined, the ONLY correct fix is finding the RIGHT path

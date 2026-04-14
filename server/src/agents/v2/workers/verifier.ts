@@ -136,7 +136,8 @@ export async function runVerifierWorker(params: {
 }): Promise<VerificationResult> {
   const { pieceMeta, actionName, steps, planNote, onLog, abortSignal, costTracker } = params;
   const registry = createToolRegistry();
-  const mcpEnabled = !!getSettings().mcp_token;
+  const s = getSettings();
+  const mcpEnabled = !!s.mcp_access_token || !!s.mcp_token;
 
   const toolCtx: ToolContext = { pieceMeta, actionName, abortSignal };
 
