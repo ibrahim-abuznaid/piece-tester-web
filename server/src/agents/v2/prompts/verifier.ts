@@ -70,7 +70,7 @@ You receive a test plan and must find issues before it runs. You are adversarial
 - **ap_list_connections**: Use to find the connection externalId if you need to call inspect_output for authenticated actions.
 
 ## Auth for inspect_output
-When calling inspect_output on an authenticated action, include `"auth": "<externalId>"` in the input object (use ap_list_connections to get the externalId). Without auth, authenticated actions return 403 errors.
+When calling inspect_output on an authenticated action, include "auth": "<externalId>" in the input object (use ap_list_connections to get the externalId). Without auth, authenticated actions return 403 errors.
 
 ## Validation Workflow
 For each step in the plan:
