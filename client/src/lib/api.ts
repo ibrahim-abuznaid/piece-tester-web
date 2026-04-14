@@ -687,6 +687,15 @@ export const api = {
 
   // Pieces
   listPieces: () => request<any[]>('GET', '/pieces'),
+  /** Cancel a running background plan-creation job (v1 or v2). Does not stop direct SSE fix/config streams — use AbortController.abort() for those. */
+  cancelAiPlanJob: (pieceName: string, actionName: string, useV2: boolean) =>
+    request<{ cancelled: boolean }>(
+      'POST',
+      `/pieces/${encodeURIComponent(pieceName)}/actions/${encodeURIComponent(actionName)}/${useV2 ? 'ai-plan-v2/cancel' : 'ai-plan/cancel'}`,
+    ),
+  /** Cancel every running AI plan creation job on the server (Claude + executePlan). */
+  cancelAllAiPlanJobs: () =>
+    request<{ cancelled: number }>('POST', '/pieces/abort-all-ai-jobs'),
   getPiece: (name: string) => request<any>('GET', `/pieces/${encodeURIComponent(name)}`),
   getAutoConfig: (name: string) => request<any>('GET', `/pieces/${encodeURIComponent(name)}/auto-config`),
 

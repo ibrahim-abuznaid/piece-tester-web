@@ -8,7 +8,7 @@ import {
   Play, Loader2, Brain, Check, X, ChevronDown, ChevronRight,
   Trash2, Plus, GripVertical, AlertTriangle, Clock, CheckCircle,
   XCircle, Pause, MessageSquare, Shield, Terminal, Edit3,
-  RotateCcw, Save, Wrench, BookOpen, Lightbulb,
+  RotateCcw, Save, Wrench, BookOpen, Lightbulb, Square,
 } from 'lucide-react';
 
 // ── Step type config ──
@@ -428,6 +428,17 @@ export default function TestPlanView({
       : api.streamAiPlanFix(pieceName, actionName, plan.steps, stepResults, plan.agent_memory || undefined, callbacks);
   }, [pieceName, actionName, plan, stepResults, useV2]);
 
+  /** Stop client stream and cancel server-side background plan job (if any). */
+  const stopPlanAi = useCallback(() => {
+    controllerRef.current?.abort();
+    if (creating) {
+      void api.cancelAiPlanJob(pieceName, actionName, useV2).catch(() => {});
+    }
+    setCreating(false);
+    setFixing(false);
+    setAgentLogs(prev => [...prev, { timestamp: Date.now(), type: 'error', message: 'AI stopped.' }]);
+  }, [pieceName, actionName, useV2, creating]);
+
   // Cleanup on unmount
   useEffect(() => () => { controllerRef.current?.abort(); }, []);
 
@@ -494,6 +505,16 @@ export default function TestPlanView({
             {lessons.length > 0 ? `${lessons.length} lesson${lessons.length > 1 ? 's' : ''}` : 'No lessons'}
           </button>
 
+          {(creating || fixing) && (
+            <button
+              type="button"
+              onClick={stopPlanAi}
+              className="text-[10px] text-red-300 hover:text-red-200 px-2 py-1 rounded bg-red-500/15 border border-red-500/30 hover:bg-red-500/25 flex items-center gap-1"
+              title="Stop this AI run (cancels Claude + plan execution on the server for background jobs)"
+            >
+              <Square size={10} /> Stop AI
+            </button>
+          )}
           {(agentLogs.length > 0 || creating) && (
             <button onClick={() => setShowLogs(!showLogs)}
               className="text-[10px] text-gray-400 hover:text-gray-200 px-2 py-1 rounded bg-gray-800 hover:bg-gray-700 flex items-center gap-1">

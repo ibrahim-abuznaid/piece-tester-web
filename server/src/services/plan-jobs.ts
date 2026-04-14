@@ -14,6 +14,8 @@ export interface PlanJob {
   startedAt: number;
   completedAt?: number;
   emitter: EventEmitter;
+  /** Abort all in-flight Anthropic calls and executePlan for this job */
+  abortController: AbortController;
 }
 
 // ── Batch Queue types ──
@@ -83,10 +85,41 @@ export function createJob(pieceName: string, actionName: string): PlanJob {
     events: [],
     startedAt: Date.now(),
     emitter: new EventEmitter(),
+    abortController: new AbortController(),
   };
   job.emitter.setMaxListeners(50);
   activeJobs.set(key, job);
   return job;
+}
+
+/** Stop a running plan-creation background job (cancels Claude + plan execution). */
+export function cancelPlanJob(pieceName: string, actionKey: string): boolean {
+  const key = jobKey(pieceName, actionKey);
+  const job = activeJobs.get(key);
+  if (!job || job.status !== 'running') return false;
+  try {
+    job.abortController.abort();
+  } catch {
+    /* ignore */
+  }
+  emitJobEvent(job, 'error', { message: 'Cancelled by user.', cancelled: true });
+  emitJobEvent(job, 'done', {});
+  completeJob(job, 'error');
+  return true;
+}
+
+/** Cancel every running AI plan job (v1 and v2). Returns how many were cancelled. */
+export function cancelAllPlanJobs(): number {
+  const keys = [...activeJobs.keys()];
+  let n = 0;
+  for (const key of keys) {
+    const slash = key.indexOf('/');
+    if (slash === -1) continue;
+    const pieceName = key.slice(0, slash);
+    const actionKey = key.slice(slash + 1);
+    if (cancelPlanJob(pieceName, actionKey)) n++;
+  }
+  return n;
 }
 
 export function emitJobEvent(job: PlanJob, event: string, data: any): void {

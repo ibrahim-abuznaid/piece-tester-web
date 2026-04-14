@@ -6,12 +6,32 @@ import { configureActionWithAi, fixActionWithAi, createTestPlanWithAi, fixTestPl
 import { createTestPlan, getTestPlanByAction, updateTestPlan, getLessonsForPiece, deleteLesson, addLesson } from '../db/queries.js';
 import { executePlan } from '../services/plan-executor.js';
 import { extractAndStoreLessons } from '../services/lesson-extractor.js';
-import { getJob, createJob, emitJobEvent, completeJob, getActiveJobsForPiece, subscribeToJobWithCleanup, type PlanJob } from '../services/plan-jobs.js';
+import {
+  getJob, createJob, emitJobEvent, completeJob, getActiveJobsForPiece, subscribeToJobWithCleanup,
+  cancelPlanJob, cancelAllPlanJobs, type PlanJob,
+} from '../services/plan-jobs.js';
 import { createTestPlanV2, fixTestPlanV2 } from '../agents/v2/index.js';
 import type { AgentLogEntry as V2LogEntry } from '../agents/v2/types.js';
 import { detectBrokenInputMappings } from '../agents/v2/tools/inspect-output.js';
 
 const router = Router();
+
+// Cancel routes must be registered before `/:name` so "abort-all-ai-jobs" is not captured as a piece name.
+
+router.post('/abort-all-ai-jobs', (_req, res) => {
+  const n = cancelAllPlanJobs();
+  res.json({ cancelled: n });
+});
+
+router.post('/:name/actions/:action/ai-plan/cancel', (req, res) => {
+  const ok = cancelPlanJob(req.params.name, req.params.action);
+  res.json({ cancelled: ok });
+});
+
+router.post('/:name/actions/:action/ai-plan-v2/cancel', (req, res) => {
+  const ok = cancelPlanJob(req.params.name, `v2:${req.params.action}`);
+  res.json({ cancelled: ok });
+});
 
 router.get('/', async (_req, res) => {
   try {
@@ -145,6 +165,7 @@ router.post('/:name/actions/:action/ai-fix', async (req, res) => {
 // ── Background job runner for AI plan creation ──
 function runPlanJobInBackground(job: PlanJob, pieceName: string, actionName: string, previousMemory?: string) {
   (async () => {
+    const signal = job.abortController.signal;
     try {
       const client = createClient();
       const piece = await client.getPieceMetadata(pieceName);
@@ -159,7 +180,11 @@ function runPlanJobInBackground(job: PlanJob, pieceName: string, actionName: str
       const onLog = (log: AgentLogEntry) => emitJobEvent(job, 'log', log);
 
       // ── Step 1: Create plan ──
-      const planResult = await createTestPlanWithAi(piece, actionName, onLog, previousMemory || undefined);
+      const planResult = await createTestPlanWithAi(piece, actionName, onLog, previousMemory || undefined, signal);
+
+      if (signal.aborted || job.status !== 'running') {
+        return;
+      }
 
       const saved = createTestPlan({
         piece_name: pieceName,
@@ -187,11 +212,14 @@ function runPlanJobInBackground(job: PlanJob, pieceName: string, actionName: str
         let autoTestPassed = false;
 
         for (let attempt = 0; attempt <= MAX_FIX_ATTEMPTS; attempt++) {
+          if (signal.aborted || job.status !== 'running') {
+            return;
+          }
           onLog({ timestamp: Date.now(), type: 'thinking', message: `Auto-testing plan (attempt ${attempt + 1}/${MAX_FIX_ATTEMPTS + 1})...` });
 
           const finalRun = await executePlan(saved.id, (progress) => {
             emitJobEvent(job, 'plan_progress', progress);
-          }, 'auto_test');
+          }, 'auto_test', signal);
 
           if (finalRun.status === 'completed') {
             onLog({ timestamp: Date.now(), type: 'done', message: 'Auto-test passed! Plan is verified and working.' });
@@ -236,7 +264,7 @@ function runPlanJobInBackground(job: PlanJob, pieceName: string, actionName: str
           }
 
           const fixResult = await fixTestPlanWithAi(
-            piece, actionName, currentSteps, stepResults, currentMemory, onLog,
+            piece, actionName, currentSteps, stepResults, currentMemory, onLog, signal,
           );
 
           updateTestPlan(saved.id, {
@@ -263,9 +291,20 @@ function runPlanJobInBackground(job: PlanJob, pieceName: string, actionName: str
         onLog({ timestamp: Date.now(), type: 'thinking', message: 'Plan has human_input steps — skipping auto-test (requires manual input).' });
       }
 
+      if (signal.aborted || job.status !== 'running') {
+        return;
+      }
       emitJobEvent(job, 'done', {});
       completeJob(job, 'done');
     } catch (err: any) {
+      if (job.status !== 'running') return;
+      const aborted = signal.aborted || /aborted|AbortError/i.test(err?.message ?? '') || err?.name === 'AbortError';
+      if (aborted) {
+        emitJobEvent(job, 'error', { message: 'Cancelled by user.', cancelled: true });
+        emitJobEvent(job, 'done', {});
+        completeJob(job, 'error');
+        return;
+      }
       console.error(`[ai-plan] Background job error for ${actionName}:`, err.message);
       emitJobEvent(job, 'error', { message: err.message || 'Unknown error' });
       emitJobEvent(job, 'done', {});
@@ -408,6 +447,7 @@ router.post('/:name/actions/:action/ai-plan-fix', async (req, res) => {
 
 function runPlanJobV2InBackground(job: PlanJob, pieceName: string, actionName: string, previousMemory?: string) {
   (async () => {
+    const signal = job.abortController.signal;
     try {
       const client = createClient();
       const piece = await client.getPieceMetadata(pieceName);
@@ -426,7 +466,12 @@ function runPlanJobV2InBackground(job: PlanJob, pieceName: string, actionName: s
         actionName,
         previousMemory: previousMemory || undefined,
         onLog,
+        abortSignal: signal,
       });
+
+      if (signal.aborted || job.status !== 'running') {
+        return;
+      }
 
       const saved = createTestPlan({
         piece_name: pieceName,
@@ -456,11 +501,14 @@ function runPlanJobV2InBackground(job: PlanJob, pieceName: string, actionName: s
         let autoTestPassed = false;
 
         for (let attempt = 0; attempt <= MAX_FIX_ATTEMPTS; attempt++) {
+          if (signal.aborted || job.status !== 'running') {
+            return;
+          }
           onLog({ timestamp: Date.now(), type: 'thinking', role: 'coordinator', message: `Auto-testing plan (attempt ${attempt + 1}/${MAX_FIX_ATTEMPTS + 1})...` });
 
           const finalRun = await executePlan(saved.id, (progress) => {
             emitJobEvent(job, 'plan_progress', progress);
-          }, 'auto_test');
+          }, 'auto_test', signal);
 
           if (finalRun.status === 'completed') {
             onLog({ timestamp: Date.now(), type: 'done', role: 'coordinator', message: 'Auto-test passed! Plan is verified and working.' });
@@ -504,6 +552,7 @@ function runPlanJobV2InBackground(job: PlanJob, pieceName: string, actionName: s
             brokenMappings,
             agentMemory: currentMemory,
             onLog,
+            abortSignal: signal,
           });
 
           updateTestPlan(saved.id, {
@@ -527,9 +576,20 @@ function runPlanJobV2InBackground(job: PlanJob, pieceName: string, actionName: s
         onLog({ timestamp: Date.now(), type: 'thinking', role: 'coordinator', message: 'Plan has human_input steps — skipping auto-test.' });
       }
 
+      if (signal.aborted || job.status !== 'running') {
+        return;
+      }
       emitJobEvent(job, 'done', {});
       completeJob(job, 'done');
     } catch (err: any) {
+      if (job.status !== 'running') return;
+      const aborted = signal.aborted || /aborted|AbortError/i.test(err?.message ?? '') || err?.name === 'AbortError';
+      if (aborted) {
+        emitJobEvent(job, 'error', { message: 'Cancelled by user.', cancelled: true });
+        emitJobEvent(job, 'done', {});
+        completeJob(job, 'error');
+        return;
+      }
       console.error(`[ai-plan-v2] Background job error for ${actionName}:`, err.message);
       emitJobEvent(job, 'error', { message: err.message || 'Unknown error' });
       emitJobEvent(job, 'done', {});
