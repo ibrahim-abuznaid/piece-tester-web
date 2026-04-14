@@ -549,14 +549,25 @@ export default function PieceDetail() {
     if (plan) {
       setEnabledActions(prev => { const next = new Set(prev); next.add(actionName); return next; });
     }
-    // Clear active job indicator when plan arrives
+    // Clear active job indicator when plan arrives (v2 jobs use key `v2:${actionName}`)
     setActiveAiJobs(prev => {
-      if (!prev[actionName]) return prev;
       const next = { ...prev };
-      delete next[actionName];
-      return next;
+      let changed = false;
+      if (prev[actionName]) {
+        delete next[actionName];
+        changed = true;
+      }
+      const v2Key = `v2:${actionName}`;
+      if (prev[v2Key]) {
+        delete next[v2Key];
+        changed = true;
+      }
+      return changed ? next : prev;
     });
-  }, []);
+    if (name) {
+      api.getAiPlanJobs(name).then(setActiveAiJobs).catch(() => {});
+    }
+  }, [name]);
 
   function toggleAction(actionName: string) {
     setEnabledActions(prev => {

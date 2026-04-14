@@ -504,6 +504,20 @@ export async function executeActionOnAP(pieceMeta: PieceMetadataFull, actionName
     }
   }
 
+  // If no local connection found but the agent provided an auth externalId (from ap_list_connections),
+  // wrap it in the correct {{connections.}} format so AP resolves it at runtime.
+  // Always strip the raw auth value from input so it doesn't override authInput.
+  const { auth: rawInputAuth, ...inputWithoutAuth } = input;
+  if (Object.keys(authInput).length === 0 && rawInputAuth && typeof rawInputAuth === 'string') {
+    // Accept bare externalId or already-formatted {{connections.xxx}}
+    if (rawInputAuth.startsWith('{{connections.')) {
+      authInput['auth'] = rawInputAuth;
+    } else if (!rawInputAuth.includes('{') && !rawInputAuth.includes(' ')) {
+      // Looks like a bare externalId — wrap it
+      authInput['auth'] = `{{connections.${rawInputAuth}}}`;
+    }
+  }
+
   const flow = await apClient.createFlow(`[AI Agent] ${pieceMeta.displayName} - ${actionName}`);
   try {
     const updatedFlow = await apClient.applyFlowOperation(flow.id, {
@@ -514,7 +528,8 @@ export async function executeActionOnAP(pieceMeta: PieceMetadataFull, actionName
           type: 'PIECE', name: 'step_1', displayName: `Agent: ${actionName}`, valid: true, skip: false,
           settings: {
             pieceName: pieceMeta.name, pieceVersion: `~${pieceMeta.version}`, actionName,
-            input: { ...authInput, ...input }, propertySettings: {},
+            // authInput takes priority — never let raw input.auth override the formatted connection ref
+            input: { ...authInput, ...inputWithoutAuth }, propertySettings: {},
             errorHandlingOptions: { continueOnFailure: { value: true }, retryOnFailure: { value: false } },
           },
         },

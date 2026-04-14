@@ -70,12 +70,12 @@ export function detectBrokenInputMappings(
  */
 export const inspectOutputTool: ToolDefinition = {
   name: 'inspect_output',
-  description: 'Execute an action and inspect its output structure to validate that inputMapping paths are correct. Returns the output JSON with available dot-paths.',
+  description: 'Execute an action and inspect its output structure to validate that inputMapping paths are correct. Returns the output JSON with available dot-paths. IMPORTANT: if the action requires auth, include "auth" in the input object set to the connection externalId you found via ap_list_connections (e.g. {"auth": "tx1a86yrIY2fsCxxX8r35", ...other fields...}). Without auth, authenticated actions will return a 403 error.',
   input_schema: {
     type: 'object' as const,
     properties: {
       action_name: { type: 'string', description: 'The action to execute and inspect' },
-      input: { type: 'object' as const, description: 'Input parameters for the action', additionalProperties: true },
+      input: { type: 'object' as const, description: 'Input parameters for the action. Include "auth": "<externalId>" if the action requires authentication.', additionalProperties: true },
       reason: { type: 'string', description: 'Why you need to inspect this output' },
     },
     required: ['action_name', 'input', 'reason'],
