@@ -30,7 +30,13 @@ VERDICT: PASS
 (or VERDICT: FAIL, or VERDICT: PARTIAL)
 
 ### Issues Found
-- [severity: error|warning] [stepId?] [field?] Description of the issue
+Each issue MUST be one line starting with "-" and include the literal tag "[severity: error]" or "[severity: warning]" so the system can parse issues (required).
+
+Example with bold close before the message:
+- **[severity: error] [step_1] [calendar_id]** Description of the problem.
+
+Example without bold:
+- [severity: warning] [global] Short description.
 
 ### Summary
 Brief summary of your analysis.

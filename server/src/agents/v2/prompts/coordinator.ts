@@ -31,10 +31,14 @@ export function parseResearchFindings(rawText: string): ResearchFindings {
     recommendations: '',
   };
 
-  // Extract sections by headers
-  const sourceMatch = rawText.match(/### SOURCE ANALYSIS\n([\s\S]*?)(?=### DISCOVERED RESOURCES|### RECOMMENDATIONS|$)/i);
-  const resourcesMatch = rawText.match(/### DISCOVERED RESOURCES\n([\s\S]*?)(?=### RECOMMENDATIONS|$)/i);
-  const recsMatch = rawText.match(/### RECOMMENDATIONS\n([\s\S]*?)$/i);
+  // Extract sections by headers (allow ### not only at line start — models often emit `--- ### SOURCE ANALYSIS`)
+  const sourceMatch = rawText.match(
+    /###\s*SOURCE\s+ANALYSIS\s*\n([\s\S]*?)(?=###\s*DISCOVERED\s+RESOURCES|###\s*RECOMMENDATIONS|$)/i,
+  );
+  const resourcesMatch = rawText.match(
+    /###\s*DISCOVERED\s+RESOURCES\s*\n([\s\S]*?)(?=###\s*RECOMMENDATIONS|$)/i,
+  );
+  const recsMatch = rawText.match(/###\s*RECOMMENDATIONS\s*\n([\s\S]*?)$/i);
 
   if (sourceMatch) {
     findings.sourceAnalysis.pieceSourceSummary = sourceMatch[1].trim();
@@ -57,12 +61,35 @@ export function parseResearchFindings(rawText: string): ResearchFindings {
   if (resourcesMatch) {
     const resourceLines = resourcesMatch[1].trim().split('\n');
     for (const line of resourceLines) {
-      const match = line.match(/^-\s*(.+?):\s*(.+?)\s*--\s*(.+)/);
+      const trimmed = line.trim();
+      if (!trimmed.startsWith('-')) continue;
+      // Canonical: - type: id -- name
+      let match = trimmed.match(/^-\s*(.+?):\s*(.+?)\s*--\s*(.+)/);
       if (match) {
         findings.discoveredResources.push({
           type: match[1].trim(),
           id: match[2].trim(),
           name: match[3].trim(),
+        });
+        continue;
+      }
+      // Markdown: - **calendar**: `"primary"` — description
+      match = trimmed.match(/^-\s*\*\*([^*]+)\*\*:\s*`([^`]+)`\s*[—–-]\s*(.+)/);
+      if (match) {
+        findings.discoveredResources.push({
+          type: match[1].trim(),
+          id: match[2].trim(),
+          name: match[3].trim(),
+        });
+        continue;
+      }
+      // Loose: - **label**: value (use value as id+name)
+      match = trimmed.match(/^-\s*\*\*([^*]+)\*\*:\s*(.+)/);
+      if (match) {
+        findings.discoveredResources.push({
+          type: match[1].trim(),
+          id: match[2].trim().slice(0, 500),
+          name: match[2].trim().slice(0, 500),
         });
       }
     }
