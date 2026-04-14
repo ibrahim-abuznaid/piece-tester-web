@@ -1,6 +1,7 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { getSettings } from '../../db/queries.js';
 import { refreshMcpTokenIfNeeded } from '../../routes/settings.js';
+import { McpProxyClient, mcpToolToAnthropic } from './mcp-proxy-client.js';
 import { ToolRegistry } from './tool-registry.js';
 import { TERMINAL_TOOLS } from './tools/index.js';
 import type { AgentRunnerConfig, AgentRunnerResult, OnLogCallback, AgentRole, ToolContext } from './types.js';
@@ -18,6 +19,11 @@ function checkAborted(signal?: AbortSignal) {
  * - The model stops using tools (end_turn)
  * - Max iterations reached
  * - Abort signal fires
+ *
+ * MCP integration: when an OAuth token (or legacy Bearer token) is configured,
+ * we connect directly to the Activepieces MCP server using a local proxy client
+ * (fetch-based JSON-RPC). MCP tools are injected as regular Anthropic tools —
+ * no Anthropic beta mcp_servers feature needed, avoiding OAuth discovery issues.
  *
  * Returns the terminal tool's raw input (for the caller to parse),
  * plus the full conversation for coordinator inspection.
@@ -37,30 +43,53 @@ export async function runAgentLoop(
   const client = new Anthropic({ apiKey: settings.anthropic_api_key });
   const { role, systemPrompt, maxIterations, toolNames, abortSignal, onLog } = config;
 
-  const tools = registry.getTools(toolNames);
-  const messages: Anthropic.Messages.MessageParam[] = [...config.initialMessages];
-
-  // MCP mode: OAuth access token takes priority over legacy project Bearer token
-  const hasMcpOAuth = !!settings.mcp_access_token;
-  const hasMcpLegacy = !!settings.mcp_token && !!settings.project_id;
-  const mcpEnabled = hasMcpOAuth || hasMcpLegacy;
-
-  // OAuth MCP: cloud Streamable HTTP endpoint at https://mcp.activepieces.com/mcp
-  // Legacy Bearer MCP: project-level endpoint /v1/projects/:projectId/mcp-server/http
-  const mcpUrl = hasMcpOAuth
-    ? 'https://mcp.activepieces.com/mcp'
-    : `${settings.base_url}/v1/projects/${settings.project_id}/mcp-server/http`;
-
-  // Propagate MCP availability to tool context so tools can adapt
-  toolCtx.mcpEnabled = mcpEnabled;
-
   function log(type: Parameters<OnLogCallback>[0]['type'], message: string, detail?: string) {
     onLog({ timestamp: Date.now(), type, role, message, detail });
   }
 
+  // ── MCP setup ──────────────────────────────────────────────────────────────
+  const hasMcpOAuth = !!settings.mcp_access_token;
+  const hasMcpLegacy = !!settings.mcp_token && !!settings.project_id;
+  const mcpEnabled = hasMcpOAuth || hasMcpLegacy;
+
+  const mcpUrl = hasMcpOAuth
+    ? 'https://mcp.activepieces.com/mcp'
+    : `${settings.base_url}/v1/projects/${settings.project_id}/mcp-server/http`;
+
+  toolCtx.mcpEnabled = mcpEnabled;
+
+  // MCP tool names discovered at runtime (so we know which tool_use calls to proxy)
+  let mcpToolNames = new Set<string>();
+  let mcpProxy: McpProxyClient | null = null;
+
+  // Local tools from registry + MCP tools combined
+  const localTools = registry.getTools(toolNames);
+  let allTools: any[] = [...localTools];
+
   if (mcpEnabled) {
-    log('thinking', `[${role}] MCP mode active — ${hasMcpOAuth ? 'OAuth cloud MCP' : 'legacy project MCP'}.`);
+    try {
+      const authToken = hasMcpOAuth ? await refreshMcpTokenIfNeeded() : settings.mcp_token;
+      mcpProxy = new McpProxyClient(mcpUrl, authToken);
+      await mcpProxy.initialize();
+
+      const mcpTools = await mcpProxy.listTools();
+      mcpToolNames = new Set(mcpTools.map(t => t.name));
+
+      // Inject MCP tools as regular Anthropic tools
+      const mcpAnthropicTools = mcpTools.map(mcpToolToAnthropic);
+      allTools = [...localTools, ...mcpAnthropicTools];
+
+      log('thinking', `[${role}] MCP mode active — ${hasMcpOAuth ? 'OAuth cloud MCP' : 'legacy project MCP'}. ${mcpTools.length} MCP tools loaded.`);
+    } catch (err: any) {
+      log('error', `[${role}] MCP init failed: ${err.message}. Continuing without MCP.`);
+      mcpProxy = null;
+      mcpToolNames = new Set();
+      toolCtx.mcpEnabled = false;
+    }
   }
+
+  // ── Agent loop ──────────────────────────────────────────────────────────────
+  const messages: Anthropic.Messages.MessageParam[] = [...config.initialMessages];
 
   let iterations = 0;
   let terminalOutput: unknown = null;
@@ -73,41 +102,12 @@ export async function runAgentLoop(
 
     const requestOptions = abortSignal ? { signal: abortSignal } : undefined;
 
-    let response: any;
-    if (mcpEnabled) {
-      // Refresh OAuth token if needed before each iteration
-      let authToken: string;
-      if (hasMcpOAuth) {
-        authToken = await refreshMcpTokenIfNeeded();
-      } else {
-        authToken = settings.mcp_token;
-      }
+    const response = await client.messages.create(
+      { model, max_tokens: 8096, system: systemPrompt, tools: allTools as any, messages },
+      requestOptions,
+    );
 
-      response = await (client.beta.messages.create as any)(
-        {
-          model,
-          max_tokens: 8096,
-          system: systemPrompt,
-          tools,
-          messages,
-          betas: ['mcp-client-2025-04-04'],
-          mcp_servers: [{
-            type: 'url',
-            name: 'activepieces',
-            url: mcpUrl,
-            authorization_token: authToken,
-          }],
-        },
-        requestOptions,
-      );
-    } else {
-      response = await client.messages.create(
-        { model, max_tokens: 4096, system: systemPrompt, tools, messages },
-        requestOptions,
-      );
-    }
-
-    // Track cost (usage shape is identical for beta and standard messages)
+    // Track cost
     if (costTracker) {
       costTracker.trackResponse(model, response, role);
       const totals = costTracker.getTotals();
@@ -121,19 +121,8 @@ export async function runAgentLoop(
       if (block.type === 'text' && block.text?.trim()) {
         log('thinking', block.text.trim());
       }
-      // Log MCP tool activity for SSE visibility (executed server-side by Anthropic)
-      if (block.type === 'mcp_tool_use') {
-        log('tool_call', `[${role}] MCP→ ${block.name}`, JSON.stringify(block.input).slice(0, 300));
-      }
-      if (block.type === 'mcp_tool_result') {
-        const content = Array.isArray(block.content)
-          ? block.content.map((c: any) => c.text ?? '').join('')
-          : JSON.stringify(block.content);
-        log('tool_result', `[${role}] MCP← ${block.tool_use_id}`, content.slice(0, 200));
-      }
     }
 
-    // Handle local tool_use blocks (MCP tool_use blocks are handled by Anthropic automatically)
     const toolUseBlocks = assistantContent.filter(
       (b: any): b is Anthropic.Messages.ToolUseBlock => b.type === 'tool_use',
     );
@@ -149,6 +138,7 @@ export async function runAgentLoop(
       checkAborted(abortSignal);
       const input = toolUse.input as Record<string, any>;
 
+      // Terminal tool — capture output and stop loop
       if (TERMINAL_TOOLS.has(toolUse.name as any)) {
         log('decision', `[${role}] Terminal tool: ${toolUse.name}`, JSON.stringify(input).slice(0, 500));
         terminalOutput = input;
@@ -160,9 +150,19 @@ export async function runAgentLoop(
       log('tool_call', `[${role}] ${toolUse.name}`, JSON.stringify(input).slice(0, 300));
 
       try {
-        const result = await registry.execute(toolUse.name, input, toolCtx);
+        let result: string;
+
+        if (mcpProxy && mcpToolNames.has(toolUse.name)) {
+          // ── MCP tool: proxy through our local client ──
+          result = await mcpProxy.callTool(toolUse.name, input);
+          log('tool_result', `[${role}] MCP← ${toolUse.name}`, result.slice(0, 200));
+        } else {
+          // ── Local tool from registry ──
+          result = await registry.execute(toolUse.name, input, toolCtx);
+          log('tool_result', `[${role}] ${toolUse.name} OK`, result.slice(0, 200));
+        }
+
         toolResults.push({ type: 'tool_result', tool_use_id: toolUse.id, content: result });
-        log('tool_result', `[${role}] ${toolUse.name} OK`, result.slice(0, 200));
       } catch (err: any) {
         toolResults.push({ type: 'tool_result', tool_use_id: toolUse.id, content: `Error: ${err.message}`, is_error: true });
         log('error', `[${role}] ${toolUse.name} failed: ${err.message}`);
