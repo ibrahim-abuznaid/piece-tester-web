@@ -1,10 +1,11 @@
 import type { PieceMetadataFull } from '../../../services/ap-client.js';
 import type { OnLogCallback, TestPlanResult, ToolContext } from '../types.js';
 import { runAgentLoop } from '../agent-runner.js';
-import { createToolRegistry, PLANNER_TOOLS } from '../tools/index.js';
-import { PLANNER_SYSTEM_PROMPT, buildPlannerUserPrompt } from '../prompts/planner.js';
+import { createToolRegistry, PLANNER_TOOLS, PLANNER_TOOLS_MCP } from '../tools/index.js';
+import { PLANNER_SYSTEM_PROMPT, PLANNER_SYSTEM_PROMPT_MCP, buildPlannerUserPrompt } from '../prompts/planner.js';
 import { parsePlanFromToolInput } from '../tools/set-plan.js';
 import type { CostTracker } from '../cost-tracker.js';
+import { getSettings } from '../../../db/queries.js';
 
 /**
  * Run the planner worker with a synthesized spec from the coordinator.
@@ -20,18 +21,19 @@ export async function runPlannerWorker(params: {
 }): Promise<TestPlanResult> {
   const { pieceMeta, actionName, synthesizedSpec, onLog, abortSignal, costTracker } = params;
   const registry = createToolRegistry();
+  const mcpEnabled = !!getSettings().mcp_token;
 
   const toolCtx: ToolContext = { pieceMeta, actionName, abortSignal };
 
   const result = await runAgentLoop(registry, {
     role: 'planner',
     model: '',
-    systemPrompt: PLANNER_SYSTEM_PROMPT,
+    systemPrompt: mcpEnabled ? PLANNER_SYSTEM_PROMPT_MCP : PLANNER_SYSTEM_PROMPT,
     initialMessages: [
       { role: 'user', content: buildPlannerUserPrompt(synthesizedSpec) },
     ],
     maxIterations: 10,
-    toolNames: [...PLANNER_TOOLS],
+    toolNames: mcpEnabled ? [...PLANNER_TOOLS_MCP] : [...PLANNER_TOOLS],
     abortSignal,
     onLog,
   }, toolCtx, costTracker);

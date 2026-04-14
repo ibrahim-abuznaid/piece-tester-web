@@ -17,7 +17,7 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
 
 export interface AgentLogEntry {
   timestamp: number;
-  type: 'thinking' | 'tool_call' | 'tool_result' | 'decision' | 'error' | 'done' | 'worker_spawn' | 'worker_complete' | 'phase';
+  type: 'thinking' | 'tool_call' | 'tool_result' | 'decision' | 'error' | 'done' | 'worker_spawn' | 'worker_complete' | 'phase' | 'mcp_call';
   message: string;
   detail?: string;
   role?: string;
@@ -684,6 +684,8 @@ export const api = {
   signOut: () => request<any>('POST', '/settings/sign-out'),
   saveAnthropicKey: (api_key: string, model?: string) => request<any>('POST', '/settings/save-anthropic-key', { api_key, model }),
   removeAnthropicKey: () => request<any>('POST', '/settings/remove-anthropic-key'),
+  saveMcpToken: (mcp_token: string) => request<any>('POST', '/settings/save-mcp-token', { mcp_token }),
+  removeMcpToken: () => request<any>('POST', '/settings/remove-mcp-token'),
 
   // Pieces
   listPieces: () => request<any[]>('GET', '/pieces'),

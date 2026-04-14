@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { api, type AiCostSummary, type AiUsageRow } from '../lib/api';
-import { CheckCircle, XCircle, Loader2, LogIn, LogOut, ShieldCheck, Brain, Trash2, DollarSign, TrendingUp, Zap } from 'lucide-react';
+import { CheckCircle, XCircle, Loader2, LogIn, LogOut, ShieldCheck, Brain, Trash2, DollarSign, TrendingUp, Zap, Plug } from 'lucide-react';
 
 const AI_MODELS = [
   { value: 'claude-sonnet-4-6', label: 'Claude Sonnet 4.6 (latest)' },
@@ -14,6 +14,8 @@ export default function Settings() {
   const [hasAnthropicKey, setHasAnthropicKey] = useState(false);
   const [anthropicKeyMasked, setAnthropicKeyMasked] = useState('');
   const [currentAiModel, setCurrentAiModel] = useState('claude-sonnet-4-6');
+  const [hasMcpToken, setHasMcpToken] = useState(false);
+  const [mcpTokenMasked, setMcpTokenMasked] = useState('');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
@@ -34,6 +36,11 @@ export default function Settings() {
   const [savingAi, setSavingAi] = useState(false);
   const [aiResult, setAiResult] = useState<{ success: boolean; message: string } | null>(null);
 
+  // MCP token state
+  const [mcpToken, setMcpToken] = useState('');
+  const [savingMcp, setSavingMcp] = useState(false);
+  const [mcpResult, setMcpResult] = useState<{ success: boolean; message: string } | null>(null);
+
   useEffect(() => {
     api.getSettings().then((s) => {
       setForm({ base_url: s.base_url, api_key: s.api_key, project_id: s.project_id, test_timeout_ms: s.test_timeout_ms });
@@ -42,6 +49,8 @@ export default function Settings() {
       setAnthropicKeyMasked(s.anthropic_key_masked || '');
       setCurrentAiModel(s.ai_model || 'claude-sonnet-4-6');
       setAiModel(s.ai_model || 'claude-sonnet-4-6');
+      setHasMcpToken(s.has_mcp_token || false);
+      setMcpTokenMasked(s.mcp_token_masked || '');
       setLoading(false);
     });
   }, []);
@@ -120,6 +129,28 @@ export default function Settings() {
     setHasAnthropicKey(false);
     setAnthropicKeyMasked('');
     setAiResult(null);
+  };
+
+  const handleSaveMcpToken = async () => {
+    setSavingMcp(true);
+    setMcpResult(null);
+    try {
+      const res = await api.saveMcpToken(mcpToken.trim());
+      setMcpResult({ success: true, message: res.message || 'MCP token saved!' });
+      setHasMcpToken(true);
+      setMcpTokenMasked('...' + mcpToken.trim().slice(-8));
+      setMcpToken('');
+    } catch (err: any) {
+      setMcpResult({ success: false, message: err.message });
+    }
+    setSavingMcp(false);
+  };
+
+  const handleRemoveMcpToken = async () => {
+    await api.removeMcpToken();
+    setHasMcpToken(false);
+    setMcpTokenMasked('');
+    setMcpResult(null);
   };
 
   if (loading) return <div className="text-gray-400">Loading settings...</div>;
@@ -368,6 +399,68 @@ export default function Settings() {
           <div className={`flex items-center gap-2 text-sm ${aiResult.success ? 'text-green-400' : 'text-red-400'}`}>
             {aiResult.success ? <CheckCircle size={16} /> : <XCircle size={16} />}
             {aiResult.message}
+          </div>
+        )}
+      </div>
+
+      {/* MCP Integration */}
+      <div className="bg-gray-900 rounded-lg border border-gray-800 p-6 max-w-xl space-y-4 mt-6">
+        <div className="flex items-center justify-between">
+          <h3 className="text-lg font-semibold flex items-center gap-2"><Plug size={20} className="text-cyan-400" /> MCP Integration</h3>
+          {hasMcpToken && (
+            <span className="flex items-center gap-1.5 text-sm text-cyan-400">
+              <CheckCircle size={16} /> Connected
+            </span>
+          )}
+        </div>
+        <div className="text-sm text-gray-400 space-y-1">
+          <p>Connect your <strong className="text-gray-300">Activepieces MCP token</strong> to give AI agents native access to 35+ Activepieces tools.</p>
+          <p>When enabled, agents can resolve live dropdown values, validate configs before execution, and test steps directly — <strong className="text-cyan-300">no JWT required for agent testing</strong>.</p>
+        </div>
+
+        {hasMcpToken ? (
+          <div className="space-y-3">
+            <div className="bg-cyan-900/20 border border-cyan-800/40 rounded p-3 text-sm text-cyan-300">
+              <p>MCP is active. Token: <code className="bg-gray-800 px-1.5 py-0.5 rounded text-xs font-mono">{mcpTokenMasked}</code></p>
+              <p className="text-xs text-gray-400 mt-1">Agents will use <code className="bg-gray-800 px-1 rounded">ap_get_piece_props</code>, <code className="bg-gray-800 px-1 rounded">ap_validate_step_config</code>, and more.</p>
+            </div>
+            <button onClick={handleRemoveMcpToken} className="px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded text-sm font-medium flex items-center gap-2">
+              <Trash2 size={14} /> Remove Token
+            </button>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            <div className="bg-gray-800/50 border border-gray-700 rounded p-3 text-xs text-gray-400 space-y-1">
+              <p><strong className="text-gray-300">How to get your MCP token:</strong></p>
+              <p>1. Open the Activepieces dashboard</p>
+              <p>2. Go to <strong className="text-gray-300">Settings → MCP</strong></p>
+              <p>3. Copy the token shown there (it's different from your API key)</p>
+            </div>
+            <div>
+              <label className="block text-sm text-gray-400 mb-1">MCP Token</label>
+              <input
+                className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm focus:outline-none focus:border-cyan-500 font-mono"
+                type="password"
+                value={mcpToken}
+                onChange={(e) => setMcpToken(e.target.value)}
+                placeholder="Paste your MCP token..."
+              />
+            </div>
+            <button
+              onClick={handleSaveMcpToken}
+              disabled={savingMcp || !mcpToken.trim()}
+              className="px-4 py-2 bg-cyan-600 hover:bg-cyan-700 rounded text-sm font-medium disabled:opacity-50 flex items-center gap-2"
+            >
+              {savingMcp ? <Loader2 size={14} className="animate-spin" /> : <Plug size={14} />}
+              Save & Test MCP Connection
+            </button>
+          </div>
+        )}
+
+        {mcpResult && (
+          <div className={`flex items-center gap-2 text-sm ${mcpResult.success ? 'text-green-400' : 'text-red-400'}`}>
+            {mcpResult.success ? <CheckCircle size={16} /> : <XCircle size={16} />}
+            {mcpResult.message}
           </div>
         )}
       </div>

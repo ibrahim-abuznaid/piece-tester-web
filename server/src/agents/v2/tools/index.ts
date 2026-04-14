@@ -4,6 +4,7 @@ import { executeActionTool } from './execute-action.js';
 import { setPlanTool } from './set-plan.js';
 import { listActionsTool } from './list-actions.js';
 import { inspectOutputTool } from './inspect-output.js';
+import { cleanupFlowTool } from './cleanup-flow.js';
 
 /** Tool name constants for easy reference. */
 export const TOOL_NAMES = {
@@ -13,6 +14,7 @@ export const TOOL_NAMES = {
   SET_TEST_PLAN: 'set_test_plan',
   LIST_ACTIONS: 'list_actions',
   INSPECT_OUTPUT: 'inspect_output',
+  CLEANUP_FLOW: 'cleanup_flow',
 } as const;
 
 /** Read-only tools safe for research workers. */
@@ -23,11 +25,30 @@ export const RESEARCH_TOOLS = [
   TOOL_NAMES.LIST_ACTIONS,
 ] as const;
 
+/**
+ * Research tools when MCP mode is active.
+ * execute_action is replaced by native MCP tools; cleanup_flow handles REST-only deletion.
+ */
+export const RESEARCH_TOOLS_MCP = [
+  TOOL_NAMES.FETCH_PIECE_SOURCE,
+  TOOL_NAMES.FETCH_ACTION_SOURCE,
+  TOOL_NAMES.LIST_ACTIONS,
+  TOOL_NAMES.CLEANUP_FLOW,
+] as const;
+
 /** All tools available to the planner worker. */
 export const PLANNER_TOOLS = [
   TOOL_NAMES.FETCH_PIECE_SOURCE,
   TOOL_NAMES.FETCH_ACTION_SOURCE,
   TOOL_NAMES.EXECUTE_ACTION,
+  TOOL_NAMES.LIST_ACTIONS,
+  TOOL_NAMES.SET_TEST_PLAN,
+] as const;
+
+/** Planner tools when MCP mode is active. */
+export const PLANNER_TOOLS_MCP = [
+  TOOL_NAMES.FETCH_PIECE_SOURCE,
+  TOOL_NAMES.FETCH_ACTION_SOURCE,
   TOOL_NAMES.LIST_ACTIONS,
   TOOL_NAMES.SET_TEST_PLAN,
 ] as const;
@@ -49,6 +70,15 @@ export const FIXER_TOOLS = [
   TOOL_NAMES.SET_TEST_PLAN,
 ] as const;
 
+/** Fixer tools when MCP mode is active. */
+export const FIXER_TOOLS_MCP = [
+  TOOL_NAMES.FETCH_PIECE_SOURCE,
+  TOOL_NAMES.FETCH_ACTION_SOURCE,
+  TOOL_NAMES.LIST_ACTIONS,
+  TOOL_NAMES.INSPECT_OUTPUT,
+  TOOL_NAMES.SET_TEST_PLAN,
+] as const;
+
 /** Terminal tools that stop the agent loop when called. */
 export const TERMINAL_TOOLS = new Set([TOOL_NAMES.SET_TEST_PLAN]);
 
@@ -61,5 +91,6 @@ export function createToolRegistry(): ToolRegistry {
   registry.register(setPlanTool);
   registry.register(listActionsTool);
   registry.register(inspectOutputTool);
+  registry.register(cleanupFlowTool);
   return registry;
 }

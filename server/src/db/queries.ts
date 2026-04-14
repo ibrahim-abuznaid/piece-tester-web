@@ -11,6 +11,7 @@ export interface SettingsRow {
   jwt_token: string;
   anthropic_api_key: string;
   ai_model: string;
+  mcp_token: string;
   updated_at: string;
 }
 
@@ -29,6 +30,7 @@ export function updateSettings(s: Partial<Omit<SettingsRow, 'id' | 'updated_at'>
       jwt_token = ?,
       anthropic_api_key = ?,
       ai_model = ?,
+      mcp_token = ?,
       updated_at = datetime('now')
     WHERE id = 1
   `, [
@@ -39,6 +41,7 @@ export function updateSettings(s: Partial<Omit<SettingsRow, 'id' | 'updated_at'>
     s.jwt_token ?? current.jwt_token,
     s.anthropic_api_key ?? current.anthropic_api_key,
     s.ai_model ?? current.ai_model,
+    s.mcp_token ?? current.mcp_token,
   ]);
   return getSettings();
 }

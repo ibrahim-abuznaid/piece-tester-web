@@ -12,7 +12,7 @@ export type AgentRole = 'coordinator' | 'research' | 'planner' | 'verifier' | 'f
 
 export interface AgentLogEntry {
   timestamp: number;
-  type: 'thinking' | 'tool_call' | 'tool_result' | 'decision' | 'error' | 'done' | 'worker_spawn' | 'worker_complete' | 'phase';
+  type: 'thinking' | 'tool_call' | 'tool_result' | 'decision' | 'error' | 'done' | 'worker_spawn' | 'worker_complete' | 'phase' | 'mcp_call';
   role: AgentRole;
   message: string;
   detail?: string;
@@ -26,6 +26,7 @@ export interface ToolContext {
   pieceMeta: PieceMetadataFull;
   actionName: string;
   abortSignal?: AbortSignal;
+  mcpEnabled?: boolean;
 }
 
 export interface ToolDefinition {

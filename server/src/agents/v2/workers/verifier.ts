@@ -5,8 +5,9 @@ import type {
 } from '../types.js';
 import { runAgentLoop } from '../agent-runner.js';
 import { createToolRegistry, VERIFIER_TOOLS } from '../tools/index.js';
-import { VERIFIER_SYSTEM_PROMPT, buildVerifierUserPrompt } from '../prompts/verifier.js';
+import { VERIFIER_SYSTEM_PROMPT, VERIFIER_SYSTEM_PROMPT_MCP, buildVerifierUserPrompt } from '../prompts/verifier.js';
 import type { CostTracker } from '../cost-tracker.js';
+import { getSettings } from '../../../db/queries.js';
 
 /** Text after `]**` (markdown bold close after bracket tags). */
 function extractIssueMessage(line: string): string {
@@ -135,13 +136,14 @@ export async function runVerifierWorker(params: {
 }): Promise<VerificationResult> {
   const { pieceMeta, actionName, steps, planNote, onLog, abortSignal, costTracker } = params;
   const registry = createToolRegistry();
+  const mcpEnabled = !!getSettings().mcp_token;
 
   const toolCtx: ToolContext = { pieceMeta, actionName, abortSignal };
 
   const result = await runAgentLoop(registry, {
     role: 'verifier',
     model: '',
-    systemPrompt: VERIFIER_SYSTEM_PROMPT,
+    systemPrompt: mcpEnabled ? VERIFIER_SYSTEM_PROMPT_MCP : VERIFIER_SYSTEM_PROMPT,
     initialMessages: [
       { role: 'user', content: buildVerifierUserPrompt(pieceMeta, actionName, steps, planNote) },
     ],

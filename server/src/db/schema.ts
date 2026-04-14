@@ -63,6 +63,11 @@ function initTables(db: DatabaseAdapter): void {
   // Fix incorrect model ID saved with wrong date suffix
   db.exec(`UPDATE settings SET ai_model = 'claude-sonnet-4-6' WHERE ai_model = 'claude-sonnet-4-6-20260514'`);
 
+  // Migration: add mcp_token column if missing
+  if (!cols2.some(c => c.name === 'mcp_token')) {
+    db.exec(`ALTER TABLE settings ADD COLUMN mcp_token TEXT NOT NULL DEFAULT ''`);
+  }
+
   // Migration: add ai_config_meta column to piece_connections if missing
   const connCols = db.pragma(`table_info(piece_connections)`) as { name: string }[];
   // (table may not exist yet — the CREATE TABLE below creates it; run migration only if table exists)

@@ -12,6 +12,8 @@ router.get('/', (_req, res) => {
     has_jwt: !!s.jwt_token,
     has_anthropic_key: !!s.anthropic_api_key,
     anthropic_key_masked: s.anthropic_api_key ? s.anthropic_api_key.slice(0, 10) + '...' + s.anthropic_api_key.slice(-4) : '',
+    has_mcp_token: !!s.mcp_token,
+    mcp_token_masked: s.mcp_token ? '...' + s.mcp_token.slice(-8) : '',
   });
 });
 
@@ -132,6 +134,50 @@ router.post('/save-anthropic-key', async (req, res) => {
 /** Remove Anthropic API key */
 router.post('/remove-anthropic-key', (_req, res) => {
   updateSettings({ anthropic_api_key: '' });
+  res.json({ success: true });
+});
+
+/** Save Activepieces MCP token */
+router.post('/save-mcp-token', async (req, res) => {
+  const { mcp_token } = req.body;
+  if (!mcp_token || !mcp_token.trim()) {
+    return res.status(400).json({ error: 'MCP token is required' });
+  }
+
+  const s = getSettings();
+  const mcpUrl = s.base_url.replace(/\/api$/, '/mcp');
+
+  try {
+    // Validate by calling tools/list on the MCP server
+    const response = await fetch(mcpUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${mcp_token.trim()}`,
+      },
+      body: JSON.stringify({ jsonrpc: '2.0', method: 'tools/list', id: 1 }),
+    });
+
+    if (!response.ok) {
+      return res.status(400).json({ success: false, error: `MCP server returned ${response.status}: ${await response.text()}` });
+    }
+
+    const data = await response.json() as any;
+    if (data.error) {
+      return res.status(400).json({ success: false, error: `MCP error: ${data.error.message}` });
+    }
+
+    const toolCount = data.result?.tools?.length ?? 0;
+    updateSettings({ mcp_token: mcp_token.trim() });
+    res.json({ success: true, message: `MCP token saved. ${toolCount} tools available.` });
+  } catch (err: any) {
+    res.status(400).json({ success: false, error: `Failed to connect to MCP server: ${err.message}` });
+  }
+});
+
+/** Remove MCP token */
+router.post('/remove-mcp-token', (_req, res) => {
+  updateSettings({ mcp_token: '' });
   res.json({ success: true });
 });
 

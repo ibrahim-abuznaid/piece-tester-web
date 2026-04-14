@@ -39,8 +39,19 @@ export async function runAgentLoop(
   const tools = registry.getTools(toolNames);
   const messages: Anthropic.Messages.MessageParam[] = [...config.initialMessages];
 
+  // MCP mode: use beta API with mcp_servers when token is configured
+  const mcpEnabled = !!settings.mcp_token;
+  const mcpUrl = settings.base_url.replace(/\/api$/, '/mcp');
+
+  // Propagate MCP availability to tool context so tools can adapt
+  toolCtx.mcpEnabled = mcpEnabled;
+
   function log(type: Parameters<OnLogCallback>[0]['type'], message: string, detail?: string) {
     onLog({ timestamp: Date.now(), type, role, message, detail });
+  }
+
+  if (mcpEnabled) {
+    log('thinking', `[${role}] MCP mode active — agents have native Activepieces tool access.`);
   }
 
   let iterations = 0;
@@ -53,12 +64,34 @@ export async function runAgentLoop(
     log('thinking', `[${role}] Iteration ${iterations}/${maxIterations}...`);
 
     const requestOptions = abortSignal ? { signal: abortSignal } : undefined;
-    const response = await client.messages.create(
-      { model, max_tokens: 4096, system: systemPrompt, tools, messages },
-      requestOptions,
-    );
 
-    // Track cost
+    let response: any;
+    if (mcpEnabled) {
+      response = await (client.beta.messages.create as any)(
+        {
+          model,
+          max_tokens: 8096,
+          system: systemPrompt,
+          tools,
+          messages,
+          betas: ['mcp-client-2025-04-04'],
+          mcp_servers: [{
+            type: 'url',
+            name: 'activepieces',
+            url: mcpUrl,
+            authorization_token: settings.mcp_token,
+          }],
+        },
+        requestOptions,
+      );
+    } else {
+      response = await client.messages.create(
+        { model, max_tokens: 4096, system: systemPrompt, tools, messages },
+        requestOptions,
+      );
+    }
+
+    // Track cost (usage shape is identical for beta and standard messages)
     if (costTracker) {
       costTracker.trackResponse(model, response, role);
       const totals = costTracker.getTotals();
@@ -69,13 +102,24 @@ export async function runAgentLoop(
     messages.push({ role: 'assistant', content: assistantContent });
 
     for (const block of assistantContent) {
-      if (block.type === 'text' && block.text.trim()) {
+      if (block.type === 'text' && block.text?.trim()) {
         log('thinking', block.text.trim());
+      }
+      // Log MCP tool activity for SSE visibility (executed server-side by Anthropic)
+      if (block.type === 'mcp_tool_use') {
+        log('tool_call', `[${role}] MCP→ ${block.name}`, JSON.stringify(block.input).slice(0, 300));
+      }
+      if (block.type === 'mcp_tool_result') {
+        const content = Array.isArray(block.content)
+          ? block.content.map((c: any) => c.text ?? '').join('')
+          : JSON.stringify(block.content);
+        log('tool_result', `[${role}] MCP← ${block.tool_use_id}`, content.slice(0, 200));
       }
     }
 
+    // Handle local tool_use blocks (MCP tool_use blocks are handled by Anthropic automatically)
     const toolUseBlocks = assistantContent.filter(
-      (b): b is Anthropic.Messages.ToolUseBlock => b.type === 'tool_use',
+      (b: any): b is Anthropic.Messages.ToolUseBlock => b.type === 'tool_use',
     );
 
     if (toolUseBlocks.length === 0) {

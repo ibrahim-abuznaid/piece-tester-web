@@ -1,10 +1,11 @@
 import type { PieceMetadataFull } from '../../../services/ap-client.js';
 import type { OnLogCallback, ResearchFindings, ToolContext } from '../types.js';
 import { runAgentLoop } from '../agent-runner.js';
-import { createToolRegistry, RESEARCH_TOOLS } from '../tools/index.js';
-import { RESEARCH_SYSTEM_PROMPT, buildResearchUserPrompt } from '../prompts/research.js';
+import { createToolRegistry, RESEARCH_TOOLS, RESEARCH_TOOLS_MCP } from '../tools/index.js';
+import { RESEARCH_SYSTEM_PROMPT, RESEARCH_SYSTEM_PROMPT_MCP, buildResearchUserPrompt } from '../prompts/research.js';
 import { parseResearchFindings } from '../prompts/coordinator.js';
 import type { CostTracker } from '../cost-tracker.js';
+import { getSettings } from '../../../db/queries.js';
 
 /**
  * Run the research worker.
@@ -20,18 +21,19 @@ export async function runResearchWorker(params: {
 }): Promise<ResearchFindings> {
   const { pieceMeta, actionName, previousMemory, onLog, abortSignal, costTracker } = params;
   const registry = createToolRegistry();
+  const mcpEnabled = !!getSettings().mcp_token;
 
   const toolCtx: ToolContext = { pieceMeta, actionName, abortSignal };
 
   const result = await runAgentLoop(registry, {
     role: 'research',
     model: '',
-    systemPrompt: RESEARCH_SYSTEM_PROMPT,
+    systemPrompt: mcpEnabled ? RESEARCH_SYSTEM_PROMPT_MCP : RESEARCH_SYSTEM_PROMPT,
     initialMessages: [
       { role: 'user', content: buildResearchUserPrompt(pieceMeta, actionName, previousMemory) },
     ],
     maxIterations: 12,
-    toolNames: [...RESEARCH_TOOLS],
+    toolNames: mcpEnabled ? [...RESEARCH_TOOLS_MCP] : [...RESEARCH_TOOLS],
     abortSignal,
     onLog,
   }, toolCtx, costTracker);
