@@ -137,83 +137,14 @@ router.post('/remove-anthropic-key', (_req, res) => {
   res.json({ success: true });
 });
 
-/**
- * Auto-fetch the MCP token from Activepieces using the stored API key + project ID.
- * Calls GET /v1/projects/:projectId/mcp-server which returns the project's MCP token.
- */
-router.post('/fetch-mcp-token', async (_req, res) => {
-  const s = getSettings();
-  if (!s.api_key || !s.project_id) {
-    return res.status(400).json({ error: 'API key and project ID must be configured first (API Connection section).' });
-  }
-
-  const mcpConfigUrl = `${s.base_url}/v1/projects/${s.project_id}/mcp-server`;
-
-  try {
-    const response = await fetch(mcpConfigUrl, {
-      headers: { 'Authorization': `Bearer ${s.api_key}` },
-    });
-
-    if (!response.ok) {
-      const body = await response.text();
-      return res.status(400).json({ error: `AP API returned ${response.status}: ${body}` });
-    }
-
-    const data = await response.json() as any;
-    const token: string | undefined = data?.token;
-
-    if (!token) {
-      return res.status(400).json({ error: 'No MCP token found in response. Make sure MCP is enabled in Activepieces Settings → MCP Server.' });
-    }
-
-    updateSettings({ mcp_token: token });
-    res.json({ success: true, message: `MCP token fetched and saved (${token.length} chars).`, token_masked: '...' + token.slice(-8) });
-  } catch (err: any) {
-    res.status(500).json({ error: `Failed to fetch MCP token: ${err.message}` });
-  }
-});
-
 /** Save Activepieces MCP token */
-router.post('/save-mcp-token', async (req, res) => {
+router.post('/save-mcp-token', (req, res) => {
   const { mcp_token } = req.body;
   if (!mcp_token || !mcp_token.trim()) {
     return res.status(400).json({ error: 'MCP token is required' });
   }
-
-  const s = getSettings();
-  if (!s.project_id) {
-    return res.status(400).json({ error: 'Project ID must be configured first (API Connection section).' });
-  }
-
-  // Bearer-token MCP endpoint: /api/v1/projects/:projectId/mcp-server/http
-  const mcpUrl = `${s.base_url}/v1/projects/${s.project_id}/mcp-server/http`;
-
-  try {
-    const response = await fetch(mcpUrl, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${mcp_token.trim()}`,
-      },
-      body: JSON.stringify({ jsonrpc: '2.0', method: 'tools/list', id: 1 }),
-    });
-
-    if (!response.ok) {
-      const body = await response.text();
-      return res.status(400).json({ success: false, error: `MCP server returned ${response.status}: ${body}` });
-    }
-
-    const data = await response.json() as any;
-    if (data.error) {
-      return res.status(400).json({ success: false, error: `MCP error: ${data.error.message}` });
-    }
-
-    const toolCount = data.result?.tools?.length ?? 0;
-    updateSettings({ mcp_token: mcp_token.trim() });
-    res.json({ success: true, message: `MCP token saved. ${toolCount} tools available.` });
-  } catch (err: any) {
-    res.status(400).json({ success: false, error: `Failed to connect to MCP server: ${err.message}` });
-  }
+  updateSettings({ mcp_token: mcp_token.trim() });
+  res.json({ success: true, message: 'MCP token saved.' });
 });
 
 /** Remove MCP token */

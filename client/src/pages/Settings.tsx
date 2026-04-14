@@ -131,20 +131,6 @@ export default function Settings() {
     setAiResult(null);
   };
 
-  const handleFetchMcpToken = async () => {
-    setSavingMcp(true);
-    setMcpResult(null);
-    try {
-      const res = await api.fetchMcpToken();
-      setMcpResult({ success: true, message: res.message || 'MCP token fetched!' });
-      setHasMcpToken(true);
-      setMcpTokenMasked(res.token_masked || '');
-    } catch (err: any) {
-      setMcpResult({ success: false, message: err.message });
-    }
-    setSavingMcp(false);
-  };
-
   const handleSaveMcpToken = async () => {
     setSavingMcp(true);
     setMcpResult(null);
@@ -438,53 +424,37 @@ export default function Settings() {
               <p>MCP is active. Token: <code className="bg-gray-800 px-1.5 py-0.5 rounded text-xs font-mono">{mcpTokenMasked}</code></p>
               <p className="text-xs text-gray-400 mt-1">Agents will use <code className="bg-gray-800 px-1 rounded">ap_get_piece_props</code>, <code className="bg-gray-800 px-1 rounded">ap_validate_step_config</code>, and more.</p>
             </div>
-            <div className="flex gap-3">
-              <button onClick={handleFetchMcpToken} disabled={savingMcp} className="px-4 py-2 bg-cyan-700 hover:bg-cyan-600 rounded text-sm font-medium flex items-center gap-2 disabled:opacity-50">
-                {savingMcp ? <Loader2 size={14} className="animate-spin" /> : <Plug size={14} />}
-                Refresh Token
-              </button>
-              <button onClick={handleRemoveMcpToken} className="px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded text-sm font-medium flex items-center gap-2">
-                <Trash2 size={14} /> Remove
-              </button>
-            </div>
+            <button onClick={handleRemoveMcpToken} className="px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded text-sm font-medium flex items-center gap-2">
+              <Trash2 size={14} /> Remove Token
+            </button>
           </div>
         ) : (
-          <div className="space-y-4">
-            {/* Auto-fetch — primary action */}
-            <div className="bg-cyan-950/40 border border-cyan-800/40 rounded p-4 space-y-3">
-              <p className="text-sm text-cyan-200 font-medium">Automatic setup (recommended)</p>
-              <p className="text-xs text-gray-400">Fetches the token directly from Activepieces using your API key. Make sure <strong className="text-gray-300">API Connection</strong> is saved and MCP is enabled in Activepieces Settings → MCP Server.</p>
-              <button
-                onClick={handleFetchMcpToken}
-                disabled={savingMcp}
-                className="px-4 py-2 bg-cyan-600 hover:bg-cyan-700 rounded text-sm font-medium disabled:opacity-50 flex items-center gap-2"
-              >
-                {savingMcp ? <Loader2 size={14} className="animate-spin" /> : <Plug size={14} />}
-                Auto-Fetch MCP Token from Activepieces
-              </button>
+          <div className="space-y-3">
+            <div className="bg-gray-800/50 border border-gray-700 rounded p-3 text-xs text-gray-400 space-y-1">
+              <p><strong className="text-gray-300">How to get your MCP token:</strong></p>
+              <p>1. Open the Activepieces dashboard → Settings → <strong className="text-gray-300">MCP Server</strong></p>
+              <p>2. Press <strong className="text-gray-300">F12</strong> → Network tab → refresh the page</p>
+              <p>3. Click the <strong className="text-gray-300">mcp-server</strong> request → Response tab</p>
+              <p>4. Copy the <code className="bg-gray-700 px-1 rounded">token</code> value from the JSON</p>
             </div>
-
-            {/* Manual paste — fallback */}
-            <details className="text-sm">
-              <summary className="text-gray-400 cursor-pointer hover:text-gray-300 select-none">Or paste token manually</summary>
-              <div className="mt-3 space-y-2">
-                <input
-                  className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm focus:outline-none focus:border-cyan-500 font-mono"
-                  type="password"
-                  value={mcpToken}
-                  onChange={(e) => setMcpToken(e.target.value)}
-                  placeholder="Paste your MCP token..."
-                />
-                <button
-                  onClick={handleSaveMcpToken}
-                  disabled={savingMcp || !mcpToken.trim()}
-                  className="px-4 py-2 bg-gray-600 hover:bg-gray-500 rounded text-sm font-medium disabled:opacity-50 flex items-center gap-2"
-                >
-                  {savingMcp ? <Loader2 size={14} className="animate-spin" /> : <Plug size={14} />}
-                  Save Token
-                </button>
-              </div>
-            </details>
+            <div>
+              <label className="block text-sm text-gray-400 mb-1">MCP Token</label>
+              <input
+                className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm focus:outline-none focus:border-cyan-500 font-mono"
+                type="password"
+                value={mcpToken}
+                onChange={(e) => setMcpToken(e.target.value)}
+                placeholder="Paste your MCP token here..."
+              />
+            </div>
+            <button
+              onClick={handleSaveMcpToken}
+              disabled={savingMcp || !mcpToken.trim()}
+              className="px-4 py-2 bg-cyan-600 hover:bg-cyan-700 rounded text-sm font-medium disabled:opacity-50 flex items-center gap-2"
+            >
+              {savingMcp ? <Loader2 size={14} className="animate-spin" /> : <Plug size={14} />}
+              Save MCP Token
+            </button>
           </div>
         )}
 
