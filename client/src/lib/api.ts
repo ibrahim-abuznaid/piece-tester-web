@@ -686,6 +686,7 @@ export const api = {
   removeAnthropicKey: () => request<any>('POST', '/settings/remove-anthropic-key'),
   saveMcpToken: (mcp_token: string) => request<any>('POST', '/settings/save-mcp-token', { mcp_token }),
   removeMcpToken: () => request<any>('POST', '/settings/remove-mcp-token'),
+  fetchMcpToken: () => request<any>('POST', '/settings/fetch-mcp-token'),
 
   // Pieces
   listPieces: () => request<any[]>('GET', '/pieces'),
