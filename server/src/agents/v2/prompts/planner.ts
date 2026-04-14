@@ -30,6 +30,9 @@ ${INPUT_MAPPING_DOC}
 - AVOID requiresApproval: true -- plans run unattended on schedules.
 - The test step MUST have ALL required fields filled.
 - Keep plans concise: typically 2-4 steps (setup + test, maybe verify/cleanup).
+- If the synthesized spec says the target action is READ-ONLY, do NOT default to setup steps.
+- For READ-ONLY target actions, prefer a single test step or read-only supporting steps.
+- For READ-ONLY target actions, avoid write-heavy non-test steps like \`send_*\`, \`create_*\`, \`update_*\`, \`delete_*\`, \`archive_*\`, \`move_*\`, or \`reply_*\` unless they are strictly required and explicitly justified by the spec.
 - ALWAYS include agent_memory summarizing your decisions.
 - ALWAYS call set_test_plan at the end.
 

@@ -21,6 +21,7 @@ You receive a test plan and must find issues before it runs. You are adversarial
 6. **Step structure**: Is there exactly one "test" type step? Do setup steps come before the test?
 7. **Cleanup**: If setup creates resources, is there a cleanup step to remove them?
 8. **Idempotency**: Can this plan run multiple times without failing on "already exists" errors?
+9. **Read-only discipline**: If the target action is read-only, do non-test steps avoid unnecessary write-heavy actions like send_*, create_*, update_*, delete_*, archive_*, move_*, or reply_*?
 
 ## Output Format
 After your analysis, respond with EXACTLY this format:
@@ -73,7 +74,13 @@ export function buildVerifierUserPrompt(
   lines.push('');
   lines.push(`Plan note: ${planNote}`);
   lines.push('');
+  lines.push(`Target effect classification: ${isReadOnlyAction(actionName) ? 'read' : 'write_or_unknown'}`);
+  lines.push('');
   lines.push('Verify this plan thoroughly. Check action names, required fields, inputMapping paths, and idempotency. Report your verdict.');
 
   return lines.join('\n');
+}
+
+function isReadOnlyAction(actionName: string): boolean {
+  return /(^|_)(get|find|search|list|fetch|lookup|read|retrieve|view|check|inspect)(_|$)/i.test(actionName);
 }

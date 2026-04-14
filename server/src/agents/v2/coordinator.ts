@@ -23,9 +23,55 @@ import { synthesizePlannerSpec, parseResearchFindings } from './prompts/coordina
 import { CostTracker } from './cost-tracker.js';
 
 const MAX_FIX_ATTEMPTS = 2;
+const WRITE_HEAVY_ACTION_RE = /(^|_)(send|create|update|delete|archive|move|reply|post|insert|remove|upload|draft)(_|$)/i;
+
+interface DeterministicPlanValidationResult {
+  ok: boolean;
+  issues: string[];
+}
 
 function checkAborted(signal?: AbortSignal) {
   if (signal?.aborted) throw new Error('Coordinator aborted: client disconnected');
+}
+
+function validatePlanDeterministically(actionName: string, steps: TestPlanStep[], targetEffect: 'read' | 'write' | 'unknown'): DeterministicPlanValidationResult {
+  const issues: string[] = [];
+  const testSteps = steps.filter(step => step.type === 'test');
+
+  if (testSteps.length !== 1) {
+    issues.push(`Expected exactly one test step, found ${testSteps.length}.`);
+  }
+
+  if (targetEffect === 'read') {
+    for (const step of steps) {
+      if (step.type === 'test' || step.type === 'human_input') {
+        continue;
+      }
+      if (WRITE_HEAVY_ACTION_RE.test(step.actionName)) {
+        issues.push(
+          `Read-only target action "${actionName}" should not include write-heavy ${step.type} step "${step.id}" using action "${step.actionName}".`,
+        );
+      }
+    }
+  }
+
+  return {
+    ok: issues.length === 0,
+    issues,
+  };
+}
+
+function inferTargetEffect(actionName: string, targetEffect: 'read' | 'write' | 'unknown'): 'read' | 'write' | 'unknown' {
+  if (targetEffect !== 'unknown') {
+    return targetEffect;
+  }
+  if (/(^|_)(get|find|search|list|fetch|lookup|read|retrieve|view|check|inspect)(_|$)/i.test(actionName)) {
+    return 'read';
+  }
+  if (WRITE_HEAVY_ACTION_RE.test(actionName)) {
+    return 'write';
+  }
+  return 'unknown';
 }
 
 /**
@@ -85,6 +131,7 @@ export async function createTestPlanV2(params: {
     if (err.message?.includes('aborted')) throw err;
     onLog({ timestamp: Date.now(), type: 'error', role: 'coordinator', message: `Research worker failed: ${err.message}. Proceeding with minimal context.` });
     findings = {
+      targetEffect: 'unknown',
       sourceAnalysis: { actionFile: null, pieceSourceSummary: '', requiredProps: [], optionalProps: [], dropdownValues: {}, outputShape: '', helperNotes: '' },
       discoveredResources: [],
       recommendations: '',
@@ -100,6 +147,7 @@ export async function createTestPlanV2(params: {
   checkAborted(abortSignal);
 
   const synthesizedSpec = synthesizePlannerSpec(pieceMeta, actionName, findings, previousMemory);
+  const effectiveTargetEffect = inferTargetEffect(actionName, findings.targetEffect);
   state.synthesizedSpec = synthesizedSpec;
 
   onLog({ timestamp: Date.now(), type: 'decision', role: 'coordinator', message: `Synthesized spec (${synthesizedSpec.length} chars) with ${findings.discoveredResources.length} resources and research findings.` });
@@ -132,6 +180,8 @@ export async function createTestPlanV2(params: {
     onLog({ timestamp: Date.now(), type: 'error', role: 'coordinator', message: 'Planner produced an empty plan.' });
     return withCost(plan);
   }
+
+  const deterministicValidation = validatePlanDeterministically(actionName, plan.steps, effectiveTargetEffect);
 
   onLog({ timestamp: Date.now(), type: 'worker_complete', role: 'coordinator', message: `Planner created a ${plan.steps.length}-step plan.` });
   state.plan = plan;
@@ -170,15 +220,23 @@ export async function createTestPlanV2(params: {
   });
   state.phases[state.phases.length - 1].completedAt = Date.now();
 
-  // If verification passed, return the plan
-  if (verification.verdict === 'PASS') {
-    logPhase('complete', 'Plan verified successfully. Done.');
-    return withCost(plan);
-  }
-
   // ── Phase 5: Fix loop (if verification failed) ──
   let currentPlan = plan;
   let currentVerification = verification;
+
+  if (!deterministicValidation.ok) {
+    for (const issue of deterministicValidation.issues) {
+      onLog({ timestamp: Date.now(), type: 'error', role: 'coordinator', message: issue });
+    }
+    currentVerification = {
+      verdict: 'FAIL',
+      issues: deterministicValidation.issues.map(message => ({ severity: 'error', message })),
+      summary: 'Deterministic validation rejected the planner output.',
+    };
+  } else if (verification.verdict === 'PASS') {
+    logPhase('complete', 'Plan verified successfully. Done.');
+    return withCost(plan);
+  }
 
   while (state.fixAttempts < state.maxFixAttempts) {
     state.fixAttempts++;
@@ -236,6 +294,20 @@ export async function createTestPlanV2(params: {
         timestamp: Date.now(), type: 'worker_complete', role: 'coordinator',
         message: `Re-verification verdict: ${reVerification.verdict}`,
       });
+
+      const reValidation = validatePlanDeterministically(actionName, fixedPlan.steps, effectiveTargetEffect);
+      if (!reValidation.ok) {
+        for (const issue of reValidation.issues) {
+          onLog({ timestamp: Date.now(), type: 'error', role: 'coordinator', message: issue });
+        }
+        currentPlan = fixedPlan;
+        currentVerification = {
+          verdict: 'FAIL',
+          issues: reValidation.issues.map(message => ({ severity: 'error', message })),
+          summary: 'Deterministic validation rejected the fixed plan.',
+        };
+        continue;
+      }
 
       if (reVerification.verdict === 'PASS') {
         logPhase('complete', 'Fixed plan verified successfully. Done.');

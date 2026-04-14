@@ -74,6 +74,7 @@ export interface PropInfo {
 }
 
 export interface ResearchFindings {
+  targetEffect: 'read' | 'write' | 'unknown';
   sourceAnalysis: {
     actionFile: string | null;
     pieceSourceSummary: string;

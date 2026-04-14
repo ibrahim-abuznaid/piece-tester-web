@@ -29,6 +29,7 @@ You investigate a piece's source code and API to gather facts that a planner age
 When you are done researching, respond with a structured summary in this EXACT format:
 
 ### SOURCE ANALYSIS
+- Target effect: [read | write | unknown]
 - Action file: [path or "not found"]
 - Required props: [list each with name, type, and any constraints]
 - Optional props: [list each]

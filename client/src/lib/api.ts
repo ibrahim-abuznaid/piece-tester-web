@@ -271,6 +271,13 @@ export interface TestPlan {
   updated_at: string;
 }
 
+export interface TestPlanExportBundle {
+  exported_at: string;
+  piece_name: string;
+  action_names: string[];
+  plans: TestPlan[];
+}
+
 export interface StepResult {
   stepId: string;
   label?: string;
@@ -293,7 +300,22 @@ export interface PlanProgress {
 
 export interface PlanStreamCallbacks {
   onLog: (log: AgentLogEntry) => void;
-  onResult: (result: { planId: number; steps: TestPlanStep[]; note: string; agentMemory?: string; status: string; autoTestPassed?: boolean; autoTestAttempts?: number }) => void;
+  onResult: (result: {
+    planId: number;
+    steps: TestPlanStep[];
+    note: string;
+    agentMemory?: string;
+    status: string;
+    autoTestPassed?: boolean;
+    autoTestAttempts?: number;
+    version?: string;
+    costSummary?: {
+      cost_usd: number;
+      input_tokens: number;
+      output_tokens: number;
+      requests: number;
+    };
+  }) => void;
   onPlanProgress?: (progress: PlanProgress) => void;
   onError: (message: string) => void;
   onDone: () => void;
@@ -718,10 +740,26 @@ export const api = {
   deleteTestPlan: (planId: number) => request<any>('DELETE', `/test-plans/${planId}`),
   listTestPlans: (pieceName?: string) =>
     request<TestPlan[]>('GET', `/test-plans${pieceName ? `?piece=${encodeURIComponent(pieceName)}` : ''}`),
+  exportTestPlans: (pieceName: string, actionNames?: string[]) => {
+    const params = new URLSearchParams();
+    params.set('piece', pieceName);
+    if (actionNames && actionNames.length > 0) {
+      params.set('actions', actionNames.join(','));
+    }
+    return request<TestPlanExportBundle>('GET', `/test-plans/export?${params.toString()}`);
+  },
   getPlanRun: (runId: number) => request<any>('GET', `/test-plans/runs/${runId}`),
   listPlanRuns: (planId: number) => request<any[]>('GET', `/test-plans/${planId}/runs`),
   respondToPlanRun: (runId: number, data: { stepId: string; approved?: boolean; humanResponse?: string }) =>
     request<any>('POST', `/test-plans/runs/${runId}/respond`, data),
+  deletePlansByPiece: (pieceName: string, actionNames?: string[]) => {
+    const params = new URLSearchParams();
+    params.set('piece', pieceName);
+    if (actionNames && actionNames.length > 0) {
+      params.set('actions', actionNames.join(','));
+    }
+    return request<{ success: boolean; deleted: number }>('DELETE', `/test-plans?${params.toString()}`);
+  },
 
   // AI Plan Jobs (background)
   getAiPlanJobs: (pieceName: string) =>

@@ -17,6 +17,7 @@ const SKIP_PROP_TYPES = ['MARKDOWN'];
  */
 export function parseResearchFindings(rawText: string): ResearchFindings {
   const findings: ResearchFindings = {
+    targetEffect: 'unknown',
     sourceAnalysis: {
       actionFile: null,
       pieceSourceSummary: '',
@@ -37,6 +38,11 @@ export function parseResearchFindings(rawText: string): ResearchFindings {
 
   if (sourceMatch) {
     findings.sourceAnalysis.pieceSourceSummary = sourceMatch[1].trim();
+
+    const targetEffectMatch = sourceMatch[1].match(/Target effect:\s*(read|write|unknown)/i);
+    if (targetEffectMatch) {
+      findings.targetEffect = targetEffectMatch[1].toLowerCase() as 'read' | 'write' | 'unknown';
+    }
 
     const actionFileMatch = sourceMatch[1].match(/Action file:\s*(.+)/i);
     if (actionFileMatch) findings.sourceAnalysis.actionFile = actionFileMatch[1].trim();
@@ -131,6 +137,9 @@ export function synthesizePlannerSpec(
     lines.push(findings.recommendations);
   }
 
+  lines.push('');
+  lines.push(`**Target action effect classification:** ${findings.targetEffect}`);
+
   // Action properties (authoritative, from metadata)
   lines.push('');
   if (action) lines.push(buildActionProperties(action, actionName));
@@ -149,9 +158,16 @@ export function synthesizePlannerSpec(
 
   lines.push('');
   lines.push('## Instructions');
-  lines.push('Create a multi-step test plan. Setup steps create fresh resources each run (idempotent).');
-  lines.push('The test step uses inputMapping to reference setup outputs.');
-  lines.push('Use {{$uuid}} or {{$timestamp}} in resource names for uniqueness.');
+  if (findings.targetEffect === 'read') {
+    lines.push('Create a plan for a READ-ONLY target action.');
+    lines.push('Prefer a single test step or read-only supporting steps.');
+    lines.push('Do NOT add write-heavy setup steps such as send_*, create_*, update_*, delete_*, archive_*, move_*, reply_* unless the source code proves they are strictly required to test the target action.');
+    lines.push('Prefer existing/discovered resources and stable references over creating new remote state.');
+  } else {
+    lines.push('Create a multi-step test plan. Setup steps create fresh resources each run (idempotent).');
+    lines.push('The test step uses inputMapping to reference setup outputs.');
+    lines.push('Use {{$uuid}} or {{$timestamp}} in resource names for uniqueness.');
+  }
   lines.push('ALWAYS call set_test_plan when done.');
 
   return lines.join('\n');

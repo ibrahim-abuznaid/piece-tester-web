@@ -26,6 +26,32 @@ router.get('/', (req, res) => {
   })));
 });
 
+router.get('/export', (req, res) => {
+  const pieceName = req.query.piece as string | undefined;
+  if (!pieceName) {
+    return res.status(400).json({ error: 'piece query param is required' });
+  }
+
+  const actionsParam = req.query.actions as string | undefined;
+  const actionNames = actionsParam
+    ? actionsParam.split(',').map(a => a.trim()).filter(Boolean)
+    : [];
+
+  const plans = actionNames.length > 0
+    ? db.listTestPlansForActions(pieceName, actionNames)
+    : db.listTestPlans(pieceName);
+
+  res.json({
+    exported_at: new Date().toISOString(),
+    piece_name: pieceName,
+    action_names: actionNames,
+    plans: plans.map(p => ({
+      ...p,
+      steps: safeParseJson(p.steps),
+    })),
+  });
+});
+
 // Get plan by piece + action (must be before /:id to avoid matching "by-action" as id)
 router.get('/by-action/:pieceName/:actionName', (req, res) => {
   const plan = db.getTestPlanByAction(req.params.pieceName, req.params.actionName);
@@ -74,6 +100,21 @@ router.delete('/:id', (req, res) => {
   const ok = db.deleteTestPlan(parseInt(req.params.id));
   if (!ok) return res.status(404).json({ error: 'Plan not found' });
   res.json({ success: true });
+});
+
+router.delete('/', (req, res) => {
+  const pieceName = req.query.piece as string | undefined;
+  if (!pieceName) {
+    return res.status(400).json({ error: 'piece query param is required' });
+  }
+
+  const actionsParam = req.query.actions as string | undefined;
+  const actionNames = actionsParam
+    ? actionsParam.split(',').map(a => a.trim()).filter(Boolean)
+    : undefined;
+
+  const deleted = db.deleteTestPlansByPiece(pieceName, actionNames);
+  res.json({ success: true, deleted });
 });
 
 // ── Execute plan (SSE streaming) ──

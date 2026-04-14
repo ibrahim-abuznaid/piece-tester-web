@@ -114,7 +114,7 @@ export default function TestPlanView({
       try {
         const jobs = await api.getAiPlanJobs(pieceName);
         if (cancelled) return;
-        const activeJob = jobs[actionName];
+        const activeJob = jobs[`v2:${actionName}`] || jobs[actionName];
         if (activeJob && activeJob.status === 'running') {
           setCreating(true);
           setShowLogs(true);
@@ -150,7 +150,9 @@ export default function TestPlanView({
             onDone: () => { if (!cancelled) { setCreating(false); refreshLessons(); } },
           };
 
-          controllerRef.current = api.subscribeAiPlanJob(pieceName, actionName, callbacks);
+          controllerRef.current = jobs[`v2:${actionName}`]
+            ? api.streamAiPlanV2(pieceName, actionName, callbacks, plan?.agent_memory || undefined)
+            : api.subscribeAiPlanJob(pieceName, actionName, callbacks);
         }
       } catch { /* non-critical */ }
     })();

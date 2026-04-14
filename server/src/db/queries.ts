@@ -436,6 +436,17 @@ export function listTestPlans(pieceName?: string): TestPlanRow[] {
   return getDb().all<TestPlanRow>('SELECT * FROM test_plans ORDER BY piece_name, target_action');
 }
 
+export function listTestPlansForActions(pieceName: string, actionNames: string[]): TestPlanRow[] {
+  if (actionNames.length === 0) {
+    return [];
+  }
+  const placeholders = actionNames.map(() => '?').join(', ');
+  return getDb().all<TestPlanRow>(
+    `SELECT * FROM test_plans WHERE piece_name = ? AND target_action IN (${placeholders}) ORDER BY target_action`,
+    [pieceName, ...actionNames],
+  );
+}
+
 export function updateTestPlan(id: number, updates: Partial<{
   steps: string;
   status: string;
@@ -460,6 +471,20 @@ export function updateTestPlan(id: number, updates: Partial<{
 
 export function deleteTestPlan(id: number): boolean {
   return getDb().run('DELETE FROM test_plans WHERE id = ?', [id]).changes > 0;
+}
+
+export function deleteTestPlansByPiece(pieceName: string, actionNames?: string[]): number {
+  if (actionNames && actionNames.length > 0) {
+    const placeholders = actionNames.map(() => '?').join(', ');
+    return getDb().run(
+      `DELETE FROM test_plans WHERE piece_name = ? AND target_action IN (${placeholders})`,
+      [pieceName, ...actionNames],
+    ).changes;
+  }
+  return getDb().run(
+    'DELETE FROM test_plans WHERE piece_name = ?',
+    [pieceName],
+  ).changes;
 }
 
 // ── Test Plan Runs ──
