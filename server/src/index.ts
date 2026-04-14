@@ -51,23 +51,40 @@ console.log('[server] Database initialized');
 
 initScheduler();
 
-const server = app.listen(PORT, HOST, () => {
-  console.log(`[server] Piece Tester running at http://${HOST}:${PORT}`);
-});
-
-// ── Graceful shutdown ──
-function shutdown(signal: string) {
-  console.log(`[server] ${signal} received — shutting down gracefully`);
-  server.close(() => {
-    db.close();
-    console.log('[server] Closed.');
-    process.exit(0);
+function startServer(port: number, retries = 3) {
+  const server = app.listen(port, HOST, () => {
+    console.log(`[server] Piece Tester running at http://${HOST}:${port}`);
   });
-  setTimeout(() => {
-    console.error('[server] Forceful shutdown after timeout');
-    process.exit(1);
-  }, 10_000);
+
+  server.on('error', (err: NodeJS.ErrnoException) => {
+    if (err.code === 'EADDRINUSE' && retries > 0) {
+      console.warn(`[server] Port ${port} in use — retrying in 3s (${retries} attempts left)`);
+      server.close();
+      setTimeout(() => startServer(port, retries - 1), 3000);
+    } else {
+      console.error('[server] Fatal listen error:', err.message);
+      process.exit(1);
+    }
+  });
+
+  // ── Graceful shutdown ──
+  function shutdown(signal: string) {
+    console.log(`[server] ${signal} received — shutting down gracefully`);
+    server.close(() => {
+      db.close();
+      console.log('[server] Closed.');
+      process.exit(0);
+    });
+    setTimeout(() => {
+      console.error('[server] Forceful shutdown after timeout');
+      process.exit(1);
+    }, 10_000);
+  }
+
+  process.on('SIGTERM', () => shutdown('SIGTERM'));
+  process.on('SIGINT', () => shutdown('SIGINT'));
+
+  return server;
 }
 
-process.on('SIGTERM', () => shutdown('SIGTERM'));
-process.on('SIGINT', () => shutdown('SIGINT'));
+startServer(PORT);
