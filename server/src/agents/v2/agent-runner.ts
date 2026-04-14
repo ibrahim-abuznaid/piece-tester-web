@@ -45,10 +45,10 @@ export async function runAgentLoop(
   const hasMcpLegacy = !!settings.mcp_token && !!settings.project_id;
   const mcpEnabled = hasMcpOAuth || hasMcpLegacy;
 
-  // OAuth MCP: cloud endpoint at https://mcp.activepieces.com
+  // OAuth MCP: cloud Streamable HTTP endpoint at https://mcp.activepieces.com/mcp
   // Legacy Bearer MCP: project-level endpoint /v1/projects/:projectId/mcp-server/http
   const mcpUrl = hasMcpOAuth
-    ? 'https://mcp.activepieces.com'
+    ? 'https://mcp.activepieces.com/mcp'
     : `${settings.base_url}/v1/projects/${settings.project_id}/mcp-server/http`;
 
   // Propagate MCP availability to tool context so tools can adapt
