@@ -1,5 +1,6 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { getSettings } from '../../db/queries.js';
+import { refreshMcpTokenIfNeeded } from '../../routes/settings.js';
 import { ToolRegistry } from './tool-registry.js';
 import { TERMINAL_TOOLS } from './tools/index.js';
 import type { AgentRunnerConfig, AgentRunnerResult, OnLogCallback, AgentRole, ToolContext } from './types.js';
@@ -39,10 +40,16 @@ export async function runAgentLoop(
   const tools = registry.getTools(toolNames);
   const messages: Anthropic.Messages.MessageParam[] = [...config.initialMessages];
 
-  // MCP mode: use beta API with mcp_servers when token is configured
-  const mcpEnabled = !!settings.mcp_token && !!settings.project_id;
-  // Bearer-token MCP endpoint: /api/v1/projects/:projectId/mcp-server/http
-  const mcpUrl = `${settings.base_url}/v1/projects/${settings.project_id}/mcp-server/http`;
+  // MCP mode: OAuth access token takes priority over legacy project Bearer token
+  const hasMcpOAuth = !!settings.mcp_access_token;
+  const hasMcpLegacy = !!settings.mcp_token && !!settings.project_id;
+  const mcpEnabled = hasMcpOAuth || hasMcpLegacy;
+
+  // OAuth MCP: cloud endpoint at https://mcp.activepieces.com
+  // Legacy Bearer MCP: project-level endpoint /v1/projects/:projectId/mcp-server/http
+  const mcpUrl = hasMcpOAuth
+    ? 'https://mcp.activepieces.com'
+    : `${settings.base_url}/v1/projects/${settings.project_id}/mcp-server/http`;
 
   // Propagate MCP availability to tool context so tools can adapt
   toolCtx.mcpEnabled = mcpEnabled;
@@ -52,7 +59,7 @@ export async function runAgentLoop(
   }
 
   if (mcpEnabled) {
-    log('thinking', `[${role}] MCP mode active — agents have native Activepieces tool access.`);
+    log('thinking', `[${role}] MCP mode active — ${hasMcpOAuth ? 'OAuth cloud MCP' : 'legacy project MCP'}.`);
   }
 
   let iterations = 0;
@@ -68,6 +75,14 @@ export async function runAgentLoop(
 
     let response: any;
     if (mcpEnabled) {
+      // Refresh OAuth token if needed before each iteration
+      let authToken: string;
+      if (hasMcpOAuth) {
+        authToken = await refreshMcpTokenIfNeeded();
+      } else {
+        authToken = settings.mcp_token;
+      }
+
       response = await (client.beta.messages.create as any)(
         {
           model,
@@ -80,7 +95,7 @@ export async function runAgentLoop(
             type: 'url',
             name: 'activepieces',
             url: mcpUrl,
-            authorization_token: settings.mcp_token,
+            authorization_token: authToken,
           }],
         },
         requestOptions,

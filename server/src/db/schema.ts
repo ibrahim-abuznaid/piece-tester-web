@@ -68,6 +68,27 @@ function initTables(db: DatabaseAdapter): void {
     db.exec(`ALTER TABLE settings ADD COLUMN mcp_token TEXT NOT NULL DEFAULT ''`);
   }
 
+  // Migration: add MCP OAuth columns if missing
+  const cols3 = db.pragma(`table_info(settings)`) as { name: string }[];
+  if (!cols3.some(c => c.name === 'mcp_access_token')) {
+    db.exec(`ALTER TABLE settings ADD COLUMN mcp_access_token TEXT NOT NULL DEFAULT ''`);
+  }
+  if (!cols3.some(c => c.name === 'mcp_refresh_token')) {
+    db.exec(`ALTER TABLE settings ADD COLUMN mcp_refresh_token TEXT NOT NULL DEFAULT ''`);
+  }
+  if (!cols3.some(c => c.name === 'mcp_token_expiry')) {
+    db.exec(`ALTER TABLE settings ADD COLUMN mcp_token_expiry TEXT NOT NULL DEFAULT ''`);
+  }
+  if (!cols3.some(c => c.name === 'mcp_client_id')) {
+    db.exec(`ALTER TABLE settings ADD COLUMN mcp_client_id TEXT NOT NULL DEFAULT ''`);
+  }
+  if (!cols3.some(c => c.name === 'mcp_pkce_verifier')) {
+    db.exec(`ALTER TABLE settings ADD COLUMN mcp_pkce_verifier TEXT NOT NULL DEFAULT ''`);
+  }
+  if (!cols3.some(c => c.name === 'mcp_oauth_state')) {
+    db.exec(`ALTER TABLE settings ADD COLUMN mcp_oauth_state TEXT NOT NULL DEFAULT ''`);
+  }
+
   // Migration: add ai_config_meta column to piece_connections if missing
   const connCols = db.pragma(`table_info(piece_connections)`) as { name: string }[];
   // (table may not exist yet — the CREATE TABLE below creates it; run migration only if table exists)

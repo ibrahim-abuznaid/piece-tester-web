@@ -36,9 +36,8 @@ export default function Settings() {
   const [savingAi, setSavingAi] = useState(false);
   const [aiResult, setAiResult] = useState<{ success: boolean; message: string } | null>(null);
 
-  // MCP token state
-  const [mcpToken, setMcpToken] = useState('');
-  const [savingMcp, setSavingMcp] = useState(false);
+  // MCP state
+  const [mcpConnectedViaOAuth, setMcpConnectedViaOAuth] = useState(false);
   const [mcpResult, setMcpResult] = useState<{ success: boolean; message: string } | null>(null);
 
   useEffect(() => {
@@ -51,8 +50,26 @@ export default function Settings() {
       setAiModel(s.ai_model || 'claude-sonnet-4-6');
       setHasMcpToken(s.has_mcp_token || false);
       setMcpTokenMasked(s.mcp_token_masked || '');
+      setMcpConnectedViaOAuth(s.mcp_connected_via_oauth || false);
       setLoading(false);
     });
+
+    // Handle OAuth callback result passed via hash query params
+    const hash = window.location.hash; // e.g. "#/settings?mcp_connected=1"
+    const qIdx = hash.indexOf('?');
+    if (qIdx !== -1) {
+      const params = new URLSearchParams(hash.slice(qIdx + 1));
+      if (params.get('mcp_connected') === '1') {
+        setMcpResult({ success: true, message: 'Activepieces MCP connected successfully!' });
+        setHasMcpToken(true);
+        setMcpConnectedViaOAuth(true);
+        // Clean up URL
+        window.history.replaceState(null, '', '/#/settings');
+      } else if (params.get('mcp_error')) {
+        setMcpResult({ success: false, message: `MCP connection failed: ${params.get('mcp_error')}` });
+        window.history.replaceState(null, '', '/#/settings');
+      }
+    }
   }, []);
 
   const handleSave = async () => {
@@ -131,24 +148,15 @@ export default function Settings() {
     setAiResult(null);
   };
 
-  const handleSaveMcpToken = async () => {
-    setSavingMcp(true);
-    setMcpResult(null);
-    try {
-      const res = await api.saveMcpToken(mcpToken.trim());
-      setMcpResult({ success: true, message: res.message || 'MCP token saved!' });
-      setHasMcpToken(true);
-      setMcpTokenMasked('...' + mcpToken.trim().slice(-8));
-      setMcpToken('');
-    } catch (err: any) {
-      setMcpResult({ success: false, message: err.message });
-    }
-    setSavingMcp(false);
+  const handleMcpConnect = () => {
+    // Full-page navigation to server OAuth redirect
+    window.location.href = '/api/settings/mcp-connect';
   };
 
-  const handleRemoveMcpToken = async () => {
-    await api.removeMcpToken();
+  const handleMcpDisconnect = async () => {
+    await api.mcpDisconnect();
     setHasMcpToken(false);
+    setMcpConnectedViaOAuth(false);
     setMcpTokenMasked('');
     setMcpResult(null);
   };
@@ -414,46 +422,46 @@ export default function Settings() {
           )}
         </div>
         <div className="text-sm text-gray-400 space-y-1">
-          <p>Connect your <strong className="text-gray-300">Activepieces MCP token</strong> to give AI agents native access to 35+ Activepieces tools.</p>
+          <p>Connect your <strong className="text-gray-300">Activepieces account</strong> via OAuth to give AI agents native access to 35+ Activepieces tools.</p>
           <p>When enabled, agents can resolve live dropdown values, validate configs before execution, and test steps directly — <strong className="text-cyan-300">no JWT required for agent testing</strong>.</p>
         </div>
 
         {hasMcpToken ? (
           <div className="space-y-3">
             <div className="bg-cyan-900/20 border border-cyan-800/40 rounded p-3 text-sm text-cyan-300">
-              <p>MCP is active. Token: <code className="bg-gray-800 px-1.5 py-0.5 rounded text-xs font-mono">{mcpTokenMasked}</code></p>
-              <p className="text-xs text-gray-400 mt-1">Agents will use <code className="bg-gray-800 px-1 rounded">ap_get_piece_props</code>, <code className="bg-gray-800 px-1 rounded">ap_validate_step_config</code>, and more.</p>
+              {mcpConnectedViaOAuth ? (
+                <>
+                  <p className="font-medium">Connected via OAuth</p>
+                  <p className="text-xs text-gray-400 mt-1">Agents have full access to all Activepieces MCP tools including <code className="bg-gray-800 px-1 rounded">ap_test_step</code>, <code className="bg-gray-800 px-1 rounded">ap_validate_step_config</code>, and more.</p>
+                </>
+              ) : (
+                <>
+                  <p>MCP is active (legacy token).</p>
+                  <p className="text-xs text-gray-400 mt-1">Reconnect via OAuth to access all 35+ tools.</p>
+                </>
+              )}
             </div>
-            <button onClick={handleRemoveMcpToken} className="px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded text-sm font-medium flex items-center gap-2">
-              <Trash2 size={14} /> Remove Token
-            </button>
+            <div className="flex gap-2">
+              <button onClick={handleMcpConnect} className="px-4 py-2 bg-cyan-700 hover:bg-cyan-600 rounded text-sm font-medium flex items-center gap-2">
+                <Plug size={14} /> Reconnect
+              </button>
+              <button onClick={handleMcpDisconnect} className="px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded text-sm font-medium flex items-center gap-2">
+                <Trash2 size={14} /> Disconnect
+              </button>
+            </div>
           </div>
         ) : (
           <div className="space-y-3">
             <div className="bg-gray-800/50 border border-gray-700 rounded p-3 text-xs text-gray-400 space-y-1">
-              <p><strong className="text-gray-300">How to get your MCP token:</strong></p>
-              <p>1. Open the Activepieces dashboard → Settings → <strong className="text-gray-300">MCP Server</strong></p>
-              <p>2. Press <strong className="text-gray-300">F12</strong> → Network tab → refresh the page</p>
-              <p>3. Click the <strong className="text-gray-300">mcp-server</strong> request → Response tab</p>
-              <p>4. Copy the <code className="bg-gray-700 px-1 rounded">token</code> value from the JSON</p>
-            </div>
-            <div>
-              <label className="block text-sm text-gray-400 mb-1">MCP Token</label>
-              <input
-                className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm focus:outline-none focus:border-cyan-500 font-mono"
-                type="password"
-                value={mcpToken}
-                onChange={(e) => setMcpToken(e.target.value)}
-                placeholder="Paste your MCP token here..."
-              />
+              <p><strong className="text-gray-300">OAuth authorization flow:</strong></p>
+              <p>Click the button below to be redirected to Activepieces where you can authorize this app to connect via MCP. You will be brought back automatically.</p>
             </div>
             <button
-              onClick={handleSaveMcpToken}
-              disabled={savingMcp || !mcpToken.trim()}
-              className="px-4 py-2 bg-cyan-600 hover:bg-cyan-700 rounded text-sm font-medium disabled:opacity-50 flex items-center gap-2"
+              onClick={handleMcpConnect}
+              className="px-4 py-2 bg-cyan-600 hover:bg-cyan-700 rounded text-sm font-medium flex items-center gap-2"
             >
-              {savingMcp ? <Loader2 size={14} className="animate-spin" /> : <Plug size={14} />}
-              Save MCP Token
+              <Plug size={14} />
+              Connect to Activepieces MCP
             </button>
           </div>
         )}

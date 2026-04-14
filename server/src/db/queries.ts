@@ -12,6 +12,13 @@ export interface SettingsRow {
   anthropic_api_key: string;
   ai_model: string;
   mcp_token: string;
+  // MCP OAuth 2.1 fields
+  mcp_access_token: string;
+  mcp_refresh_token: string;
+  mcp_token_expiry: string;  // ISO timestamp
+  mcp_client_id: string;
+  mcp_pkce_verifier: string; // temporary during OAuth flow
+  mcp_oauth_state: string;   // temporary CSRF state
   updated_at: string;
 }
 
@@ -31,6 +38,12 @@ export function updateSettings(s: Partial<Omit<SettingsRow, 'id' | 'updated_at'>
       anthropic_api_key = ?,
       ai_model = ?,
       mcp_token = ?,
+      mcp_access_token = ?,
+      mcp_refresh_token = ?,
+      mcp_token_expiry = ?,
+      mcp_client_id = ?,
+      mcp_pkce_verifier = ?,
+      mcp_oauth_state = ?,
       updated_at = datetime('now')
     WHERE id = 1
   `, [
@@ -42,6 +55,12 @@ export function updateSettings(s: Partial<Omit<SettingsRow, 'id' | 'updated_at'>
     s.anthropic_api_key ?? current.anthropic_api_key,
     s.ai_model ?? current.ai_model,
     s.mcp_token ?? current.mcp_token,
+    s.mcp_access_token ?? current.mcp_access_token,
+    s.mcp_refresh_token ?? current.mcp_refresh_token,
+    s.mcp_token_expiry ?? current.mcp_token_expiry,
+    s.mcp_client_id ?? current.mcp_client_id,
+    s.mcp_pkce_verifier ?? current.mcp_pkce_verifier,
+    s.mcp_oauth_state ?? current.mcp_oauth_state,
   ]);
   return getSettings();
 }
