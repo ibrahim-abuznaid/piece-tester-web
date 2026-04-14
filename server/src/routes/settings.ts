@@ -181,10 +181,14 @@ router.post('/save-mcp-token', async (req, res) => {
   }
 
   const s = getSettings();
-  const mcpUrl = s.base_url.replace(/\/api$/, '/mcp');
+  if (!s.project_id) {
+    return res.status(400).json({ error: 'Project ID must be configured first (API Connection section).' });
+  }
+
+  // Bearer-token MCP endpoint: /api/v1/projects/:projectId/mcp-server/http
+  const mcpUrl = `${s.base_url}/v1/projects/${s.project_id}/mcp-server/http`;
 
   try {
-    // Validate by calling tools/list on the MCP server
     const response = await fetch(mcpUrl, {
       method: 'POST',
       headers: {
@@ -195,7 +199,8 @@ router.post('/save-mcp-token', async (req, res) => {
     });
 
     if (!response.ok) {
-      return res.status(400).json({ success: false, error: `MCP server returned ${response.status}: ${await response.text()}` });
+      const body = await response.text();
+      return res.status(400).json({ success: false, error: `MCP server returned ${response.status}: ${body}` });
     }
 
     const data = await response.json() as any;

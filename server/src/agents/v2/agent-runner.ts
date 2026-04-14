@@ -40,8 +40,9 @@ export async function runAgentLoop(
   const messages: Anthropic.Messages.MessageParam[] = [...config.initialMessages];
 
   // MCP mode: use beta API with mcp_servers when token is configured
-  const mcpEnabled = !!settings.mcp_token;
-  const mcpUrl = settings.base_url.replace(/\/api$/, '/mcp');
+  const mcpEnabled = !!settings.mcp_token && !!settings.project_id;
+  // Bearer-token MCP endpoint: /api/v1/projects/:projectId/mcp-server/http
+  const mcpUrl = `${settings.base_url}/v1/projects/${settings.project_id}/mcp-server/http`;
 
   // Propagate MCP availability to tool context so tools can adapt
   toolCtx.mcpEnabled = mcpEnabled;
