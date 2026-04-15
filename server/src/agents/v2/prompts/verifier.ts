@@ -48,7 +48,8 @@ Brief summary of your analysis.
 - Be specific: reference exact step IDs, field names, and expected values.
 - Do NOT modify the plan -- only report issues.
 - If a step uses an action name that doesn't exist, that's always an error.
-- If inputMapping references a step that hasn't run yet, that's always an error.`;
+- If inputMapping references a step that hasn't run yet, that's always an error.
+- NEVER flag \${steps.step_1.output.xxx} as wrong syntax. \${steps.<id>.output.<path>} IS the correct and only valid inputMapping syntax in this system. Do NOT suggest {{...}} as a replacement.`;
 
 /**
  * MCP-augmented verifier prompt.
@@ -115,7 +116,8 @@ Brief summary of your analysis.
 - Do NOT modify the plan -- only report issues.
 - ap_validate_step_config errors are always [severity: error] issues.
 - If a step uses an action name that doesn't exist, that's always an error.
-- If inputMapping references a step that hasn't run yet, that's always an error.`;
+- If inputMapping references a step that hasn't run yet, that's always an error.
+- NEVER flag \${steps.step_1.output.xxx} as wrong syntax. \${steps.<id>.output.<path>} IS the correct and only valid inputMapping syntax in this system. Do NOT suggest {{...}} as a replacement.`;
 
 export function buildVerifierUserPrompt(
   piece: PieceMetadataFull,

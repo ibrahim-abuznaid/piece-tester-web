@@ -97,6 +97,15 @@ Use these for any field that must be unique per run (names, subjects, titles, ke
 export const INPUT_MAPPING_DOC = `## inputMapping -- Piping Outputs Between Steps
 Use \${steps.<stepId>.output.<path>} in inputMapping to reference previous step outputs at runtime.
 
+CRITICAL -- THIS IS THE ONLY VALID SYNTAX: \${steps.<stepId>.output.<path>}
+- Correct: \${steps.step_1.output.data.id}
+- Correct: \${steps.step_1.output.ts}
+- WRONG (Activepieces flow syntax, NOT used here): {{step_1.output.id}}
+- WRONG (missing "steps." prefix): \${step_1.output.id}
+- WRONG (JavaScript template literal, not evaluated): \`\${...}\`
+
+NEVER flag \${steps.xxx} as "wrong syntax" -- it IS the correct format for this system's plan executor.
+
 Example for "Add reaction to message":
 - Step 1 (setup): send_message with input: { "channel": "C12345", "text": "[AI Test] {{$uuid}}" }
 - Step 2 (test): add_reaction with:
