@@ -365,6 +365,36 @@ export interface PlanExecutionCallbacks {
   onError: (message: string) => void;
 }
 
+/** One item in the Needs-Attention inbox — a failing (piece, action), classified into a lane. */
+export interface AttentionItem {
+  plan_id: number;
+  piece_name: string;
+  action_name: string;
+  bucket: 'reauth' | 'likely_broken' | 'watching' | 'noise';
+  category: string;
+  fail_streak: number;
+  flaky: boolean;
+  error: string | null;
+  reason: string;
+  failing_since: string | null;
+  last_run_at: string | null;
+  last_run_id: number;
+  muted: boolean;
+  mute_id: number | null;
+}
+
+/** Current-state health of one piece (latest scheduled outcome per action). */
+export interface PieceHealthRow {
+  piece_name: string;
+  status: 'failing' | 'healthy' | 'unknown';
+  actions_total: number;
+  actions_passing: number;
+  actions_failing: number;
+  last_run_at: string | null;
+  failing_actions: { action: string; error: string | null }[];
+  recent: string[]; // last ~12 run statuses, oldest→newest
+}
+
 export interface PlanRunRecord {
   id: number;
   plan_id: number;
@@ -375,6 +405,10 @@ export interface PlanRunRecord {
   paused_prompt: string | null;
   started_at: string;
   completed_at: string | null;
+  /** Schedule fire that spawned this run (shared by the whole batch); null for manual runs. */
+  wave_id: string | null;
+  /** Which schedule fired this run; null for manual runs. */
+  schedule_id: number | null;
   // Joined from test_plans
   piece_name: string;
   target_action: string;
@@ -877,6 +911,11 @@ export const api = {
     const qs = p.toString();
     return request<any>('GET', `/reports/stats${qs ? `?${qs}` : ''}`);
   },
+  getPieceHealth: () => request<PieceHealthRow[]>('GET', '/reports/piece-health'),
+  getAttention: () => request<AttentionItem[]>('GET', '/reports/attention'),
+  quarantineItem: (params: { piece_name: string; action_name?: string; reason?: string; expires_at?: string }) =>
+    request<any>('POST', '/reports/quarantine', params),
+  unquarantineItem: (id: number) => request<{ success: boolean }>('DELETE', `/reports/quarantine/${id}`),
   getReportPieceBreakdown: (dateFrom?: string, dateTo?: string) => {
     const p = new URLSearchParams();
     if (dateFrom) p.set('date_from', dateFrom);

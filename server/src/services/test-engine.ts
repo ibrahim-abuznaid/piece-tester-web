@@ -1,6 +1,6 @@
 import { ActivepiecesClient, TERMINAL_STATUSES, type FlowRunStatus, type PieceMetadataFull } from './ap-client.js';
 import { buildConnectionValue, makeExternalId, type ConnectionType } from './connection-builder.js';
-import { getSettings, listConnections, listTestPlans, createTestRun, createTestResult, updateTestRun, type PieceConnectionRow, type ScheduleTarget } from '../db/queries.js';
+import { getSettings, listConnections, listTestPlans, createTestRun, createTestResult, updateTestRun, type PieceConnectionRow, type ScheduleTarget, type WaveInfo } from '../db/queries.js';
 import { executePlan } from './plan-executor.js';
 
 const POLL_INTERVAL_MS = 3_000;
@@ -61,8 +61,12 @@ export async function runTests(pieceNames?: string[]): Promise<number> {
  * Run scheduled tests for the given targets.
  * targets = [] means "all pieces, all actions".
  * Also runs all approved test plans matching the targets (in the background).
+ *
+ * `wave` identifies the schedule fire that triggered this batch; it's stamped onto
+ * every run created here (legacy test_runs + test plan runs) so the whole batch can
+ * be grouped as one "wave" and linked back to its schedule.
  */
-export async function runScheduledTests(targets?: ScheduleTarget[] | null): Promise<number> {
+export async function runScheduledTests(targets?: ScheduleTarget[] | null, wave?: WaveInfo): Promise<number> {
   const connections = listConnections();
 
   // ── Determine which connections/actions to test (legacy engine) ──
@@ -93,7 +97,7 @@ export async function runScheduledTests(targets?: ScheduleTarget[] | null): Prom
       return { ...conn, actions_config: JSON.stringify(filtered) };
     });
 
-    const run = createTestRun('scheduled');
+    const run = createTestRun('scheduled', wave);
     runId = run.id;
     executeTestRun(run.id, filteredConns).catch(err => {
       console.error('[test-engine] Fatal error in scheduled run', run.id, err);
@@ -131,7 +135,7 @@ export async function runScheduledTests(targets?: ScheduleTarget[] | null): Prom
     (async () => {
       for (const plan of validPlans) {
         try {
-          await executePlan(plan.id, () => {}, 'scheduled');
+          await executePlan(plan.id, () => {}, 'scheduled', undefined, wave);
         } catch (err) {
           console.error(`[scheduler] Plan #${plan.id} (${plan.target_action}) failed:`, err);
         }

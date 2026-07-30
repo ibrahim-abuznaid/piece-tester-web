@@ -1,10 +1,11 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useQuery, useQueryClient, useMutation } from '@tanstack/react-query';
+import { Link } from 'react-router-dom';
 import { api } from '../lib/api';
 import {
   BarChart3, TrendingUp, TrendingDown, AlertTriangle, CheckCircle,
   XCircle, Bug, Wrench, Zap, HelpCircle, Brain, Loader2,
-  ChevronDown, ChevronRight, Clock, Shield, Activity, Target,
+  ChevronDown, ChevronRight, Clock, Shield, Activity,
   Calendar, Eye, CircleCheck, Undo2, MessageSquare, Play, RotateCcw,
 } from 'lucide-react';
 
@@ -115,7 +116,7 @@ export default function Reports() {
       <div className="flex items-center gap-1 mb-6 border-b border-gray-800 pb-1">
         {([
           { id: 'overview' as TabId, label: 'Overview', icon: BarChart3 },
-          { id: 'pieces' as TabId, label: 'Piece Health', icon: Target },
+          { id: 'pieces' as TabId, label: 'Piece Trends', icon: TrendingUp },
           { id: 'failures' as TabId, label: 'Failures', icon: XCircle },
           { id: 'ai-analysis' as TabId, label: 'AI Analysis', icon: Brain },
         ]).map(t => (
@@ -135,7 +136,7 @@ export default function Reports() {
       </div>
 
       {tab === 'overview' && <OverviewTab dateFrom={dateFrom} dateTo={dateTo} />}
-      {tab === 'pieces' && <PieceHealthTab dateFrom={dateFrom} dateTo={dateTo} />}
+      {tab === 'pieces' && <PieceTrendsTab dateFrom={dateFrom} dateTo={dateTo} />}
       {tab === 'failures' && <FailuresTab dateFrom={dateFrom} dateTo={dateTo} />}
       {tab === 'ai-analysis' && <AiAnalysisTab timeRange={timeRange} customFrom={customFrom} customTo={customTo} dateFrom={dateFrom} dateTo={dateTo} />}
     </div>
@@ -197,10 +198,13 @@ function OverviewTab({ dateFrom, dateTo }: { dateFrom?: string; dateTo?: string 
 }
 
 // ══════════════════════════════════════════════════════════════
-//  Piece Health Tab
+//  Piece Trends Tab
+//  Reliability of each piece OVER the selected time range (success-rate %,
+//  run counts, averages). This is the "over time" lens — distinct from the
+//  Health board (`/`), which shows each piece's CURRENT status right now.
 // ══════════════════════════════════════════════════════════════
 
-function PieceHealthTab({ dateFrom, dateTo }: { dateFrom?: string; dateTo?: string }) {
+function PieceTrendsTab({ dateFrom, dateTo }: { dateFrom?: string; dateTo?: string }) {
   const { data: breakdown, isLoading } = useQuery({
     queryKey: ['report-piece-breakdown', dateFrom, dateTo],
     queryFn: () => api.getReportPieceBreakdown(dateFrom, dateTo),
@@ -220,6 +224,11 @@ function PieceHealthTab({ dateFrom, dateTo }: { dateFrom?: string; dateTo?: stri
 
   return (
     <div className="space-y-4">
+      <p className="text-xs text-gray-500">
+        How reliable each piece has been <span className="text-gray-300">over the selected time range</span> —
+        success rate, run counts, and averages. For each piece's <span className="text-gray-300">current</span> status,
+        see the <Link to="/" className="text-primary-400 hover:underline">Health board</Link>.
+      </p>
       <div className="flex items-center gap-2 text-sm">
         <span className="text-gray-500">Sort by:</span>
         {(['failed', 'total_runs', 'success_rate'] as const).map(s => (
@@ -230,13 +239,13 @@ function PieceHealthTab({ dateFrom, dateTo }: { dateFrom?: string; dateTo?: stri
         ))}
       </div>
       <div className="space-y-2">
-        {sorted.map(piece => <PieceHealthCard key={piece.piece_name} piece={piece} />)}
+        {sorted.map(piece => <PieceTrendCard key={piece.piece_name} piece={piece} />)}
       </div>
     </div>
   );
 }
 
-function PieceHealthCard({ piece }: { piece: any }) {
+function PieceTrendCard({ piece }: { piece: any }) {
   const rate = piece.total_runs > 0 ? Math.round((piece.passed / piece.total_runs) * 100) : 0;
   const barColor = rate >= 80 ? 'bg-green-500' : rate >= 50 ? 'bg-yellow-500' : 'bg-red-500';
   const statusColor = rate >= 80 ? 'text-green-400' : rate >= 50 ? 'text-yellow-400' : 'text-red-400';
@@ -275,6 +284,10 @@ function FailuresTab({ dateFrom, dateTo }: { dateFrom?: string; dateTo?: string 
     queryKey: ['report-failures', dateFrom, dateTo],
     queryFn: () => api.getReportFailures(50, dateFrom, dateTo),
   });
+  // schedule_id → label, so each failure names the schedule fire it came from.
+  const { data: schedules = [] } = useQuery({ queryKey: ['schedules'], queryFn: api.listSchedules });
+  const scheduleLabels: Record<number, string> = {};
+  for (const s of schedules as any[]) scheduleLabels[s.id] = s.label || `Schedule #${s.id}`;
   const [expandedRun, setExpandedRun] = useState<number | null>(null);
 
   if (isLoading) return <LoadingState message="Loading failures..." />;
@@ -308,6 +321,9 @@ function FailuresTab({ dateFrom, dateTo }: { dateFrom?: string; dateTo?: string 
                 </div>
                 <div className="flex items-center gap-2 text-[10px] text-gray-500">
                   <span>{f.trigger_type}</span>
+                  {f.schedule_id != null && scheduleLabels[f.schedule_id] && (
+                    <span className="text-purple-300/80" title="Fired by this schedule">· {scheduleLabels[f.schedule_id]}</span>
+                  )}
                   <span>{formatRelativeTime(f.started_at)}</span>
                 </div>
                 {expanded ? <ChevronDown size={14} className="text-gray-500" /> : <ChevronRight size={14} className="text-gray-500" />}

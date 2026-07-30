@@ -2,6 +2,11 @@ import { Router } from 'express';
 import {
   getReportOverviewStats,
   getPieceBreakdown,
+  getPieceHealth,
+  getAttentionItems,
+  listQuarantine,
+  addQuarantine,
+  removeQuarantine,
   getRunTrends,
   getRecentFailures,
   listReportAnalyses,
@@ -36,6 +41,53 @@ router.get('/piece-breakdown', (req, res) => {
     const dateTo = req.query.date_to as string | undefined;
     const breakdown = getPieceBreakdown(dateFrom, dateTo);
     res.json(breakdown);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Current-state health board: latest scheduled outcome per piece, failing first.
+router.get('/piece-health', (_req, res) => {
+  try {
+    res.json(getPieceHealth());
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Needs-Attention inbox: failing (piece, action)s collapsed + classified into lanes.
+router.get('/attention', (_req, res) => {
+  try {
+    res.json(getAttentionItems());
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Quarantine (mute) management.
+router.get('/quarantine', (_req, res) => {
+  try {
+    res.json(listQuarantine());
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.post('/quarantine', (req, res) => {
+  try {
+    const { piece_name, action_name, reason, expires_at } = req.body;
+    if (!piece_name) { res.status(400).json({ error: 'piece_name is required' }); return; }
+    res.json(addQuarantine({ piece_name, action_name, reason, expires_at }));
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.delete('/quarantine/:id', (req, res) => {
+  try {
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) { res.status(400).json({ error: 'Invalid ID' }); return; }
+    res.json({ success: removeQuarantine(id) });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }

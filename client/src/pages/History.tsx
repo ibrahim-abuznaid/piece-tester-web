@@ -78,6 +78,11 @@ function PlanRunHistory({ pieceFilter }: { pieceFilter: string }) {
     refetchInterval: 10_000,
   });
 
+  // schedule_id → label, so scheduled runs can name the schedule that fired them.
+  const { data: schedules = [] } = useQuery({ queryKey: ['schedules'], queryFn: api.listSchedules });
+  const scheduleLabels: Record<number, string> = {};
+  for (const s of schedules as any[]) scheduleLabels[s.id] = s.label || `Schedule #${s.id}`;
+
   const [expandedRun, setExpandedRun] = useState<number | null>(null);
   const [showClearMenu, setShowClearMenu] = useState(false);
   const [deletingId, setDeletingId] = useState<number | null>(null);
@@ -195,6 +200,7 @@ function PlanRunHistory({ pieceFilter }: { pieceFilter: string }) {
               <PlanRunCard
                 key={run.id}
                 run={run}
+                scheduleLabels={scheduleLabels}
                 expanded={expandedRun === run.id}
                 onToggle={() => setExpandedRun(expandedRun === run.id ? null : run.id)}
                 onDelete={() => handleDeleteRun(run.id)}
@@ -208,13 +214,18 @@ function PlanRunHistory({ pieceFilter }: { pieceFilter: string }) {
   );
 }
 
-function PlanRunCard({ run, expanded, onToggle, onDelete, isDeleting }: {
+function PlanRunCard({ run, scheduleLabels, expanded, onToggle, onDelete, isDeleting }: {
   run: PlanRunRecord;
+  scheduleLabels: Record<number, string>;
   expanded: boolean;
   onToggle: () => void;
   onDelete: () => void;
   isDeleting?: boolean;
 }) {
+  // For scheduled runs, name the schedule fire ("wave") that produced this run.
+  const schedName = run.trigger_type === 'scheduled' && run.schedule_id != null
+    ? scheduleLabels[run.schedule_id]
+    : undefined;
   const statusIcon = run.status === 'completed' ? <CheckCircle size={14} className="text-green-400" />
     : run.status === 'failed' ? <XCircle size={14} className="text-red-400" />
     : run.status === 'running' ? <Loader2 size={14} className="text-blue-400 animate-spin" />
@@ -257,6 +268,9 @@ function PlanRunCard({ run, expanded, onToggle, onDelete, isDeleting }: {
               {triggerIcon}
               {run.trigger_type}
             </span>
+            {schedName && (
+              <span className="text-[10px] text-purple-300/80" title="Fired by this schedule">· {schedName}</span>
+            )}
             <span className="text-[10px] text-gray-600">#{run.id}</span>
           </div>
         </div>

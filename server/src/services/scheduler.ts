@@ -43,9 +43,12 @@ export function initScheduler(): void {
     let task: cron.ScheduledTask;
     try {
       task = cron.schedule(schedule.cron_expression, async () => {
-        console.log(`[scheduler] Running "${label}" (targets: ${targetDesc}, tz: ${tz})`);
+        // One wave_id per fire: every run this fire spawns shares it, so the whole
+        // batch can be grouped as a single "wave" and linked back to this schedule.
+        const waveId = `w${schedule.id}-${Date.now()}`;
+        console.log(`[scheduler] Running "${label}" (wave: ${waveId}, targets: ${targetDesc}, tz: ${tz})`);
         try {
-          await runScheduledTests(targets);
+          await runScheduledTests(targets, { wave_id: waveId, schedule_id: schedule.id });
           updateSchedule(schedule.id, { last_run_at: new Date().toISOString() });
         } catch (err) {
           console.error(`[scheduler] "${label}" failed:`, err);
