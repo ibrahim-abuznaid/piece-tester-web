@@ -211,6 +211,17 @@ export function deleteConnection(id: number): boolean {
 
 // ── Test Runs ──
 
+/**
+ * Identifies the schedule fire ("wave") that spawned a run.
+ * A single cron fire generates one wave_id shared by every run it creates, so runs
+ * can be grouped by fire and linked back to the schedule. Both fields are undefined
+ * for manual (non-scheduled) runs.
+ */
+export interface WaveInfo {
+  wave_id?: string;
+  schedule_id?: number;
+}
+
 export interface TestRunRow {
   id: number;
   trigger_type: string;
@@ -221,13 +232,15 @@ export interface TestRunRow {
   passed: number;
   failed: number;
   errors: number;
+  wave_id: string | null;
+  schedule_id: number | null;
 }
 
-export function createTestRun(triggerType: string): TestRunRow {
+export function createTestRun(triggerType: string, wave?: WaveInfo): TestRunRow {
   const result = getDb().run(`
-    INSERT INTO test_runs (trigger_type, status, started_at)
-    VALUES (?, 'running', datetime('now'))
-  `, [triggerType]);
+    INSERT INTO test_runs (trigger_type, status, started_at, wave_id, schedule_id)
+    VALUES (?, 'running', datetime('now'), ?, ?)
+  `, [triggerType, wave?.wave_id ?? null, wave?.schedule_id ?? null]);
   return getTestRun(result.lastId)!;
 }
 
@@ -537,13 +550,15 @@ export interface TestPlanRunRow {
   paused_prompt: string | null;
   started_at: string;
   completed_at: string | null;
+  wave_id: string | null;     // schedule fire that spawned this run; NULL for manual runs
+  schedule_id: number | null; // which schedule fired this run; NULL for manual runs
 }
 
-export function createPlanRun(planId: number, triggerType: string = 'manual'): TestPlanRunRow {
+export function createPlanRun(planId: number, triggerType: string = 'manual', wave?: WaveInfo): TestPlanRunRow {
   const result = getDb().run(`
-    INSERT INTO test_plan_runs (plan_id, status, trigger_type, step_results)
-    VALUES (?, 'running', ?, '[]')
-  `, [planId, triggerType]);
+    INSERT INTO test_plan_runs (plan_id, status, trigger_type, step_results, wave_id, schedule_id)
+    VALUES (?, 'running', ?, '[]', ?, ?)
+  `, [planId, triggerType, wave?.wave_id ?? null, wave?.schedule_id ?? null]);
   return getPlanRun(result.lastId)!;
 }
 
@@ -720,6 +735,249 @@ export function getPieceBreakdown(dateFrom?: string, dateTo?: string): PieceBrea
   `, params);
 }
 
+// ── Piece Health (current-state board) ──
+// Unlike getPieceBreakdown (aggregates over a date range = analytics), this reports the
+// CURRENT health of each piece: the outcome of the LATEST scheduled run of each of its
+// actions. This is the operational "are my 100 pieces OK right now?" view. Failing pieces
+// sort to the top; each carries the failing action(s) + a short error hint, plus a
+// sparkline of its recent run outcomes.
+
+export interface PieceHealthRow {
+  piece_name: string;
+  status: 'failing' | 'healthy' | 'unknown';
+  actions_total: number;
+  actions_passing: number;
+  actions_failing: number;
+  last_run_at: string | null;
+  failing_actions: { action: string; error: string | null }[];
+  recent: string[]; // last ~12 run statuses, oldest→newest, for a sparkline
+}
+
+/** Pull the first failed step's message out of a run's step_results JSON, shortened. */
+function extractFirstStepError(stepResultsJson: string): string | null {
+  try {
+    const steps = JSON.parse(stepResultsJson);
+    if (!Array.isArray(steps)) return null;
+    const failed = steps.find((s: any) => s && (s.status === 'failed' || s.status === 'assert_failed') && s.error);
+    if (!failed) return null;
+    let msg = String(failed.error);
+    try { const o = JSON.parse(msg); if (o && typeof o.message === 'string') msg = o.message; } catch { /* not JSON */ }
+    msg = msg.split('\n')[0].trim();
+    return msg.length > 100 ? msg.slice(0, 100) + '…' : msg;
+  } catch { return null; }
+}
+
+export function getPieceHealth(): PieceHealthRow[] {
+  const db = getDb();
+
+  // Latest scheduled run per plan (= per piece+action): its current status + error.
+  const latest = db.all<{ piece_name: string; target_action: string; last_status: string; last_run_at: string | null; step_results: string }>(`
+    SELECT p.piece_name, p.target_action,
+           r.status AS last_status, r.started_at AS last_run_at, r.step_results
+    FROM test_plans p
+    JOIN test_plan_runs r ON r.id = (
+      SELECT r2.id FROM test_plan_runs r2
+      WHERE r2.plan_id = p.id AND r2.trigger_type = 'scheduled'
+      ORDER BY r2.id DESC LIMIT 1
+    )
+  `);
+
+  // Last ~12 scheduled runs per piece (any action) for the sparkline.
+  const spark = db.all<{ piece_name: string; status: string; rn: number }>(`
+    WITH ranked AS (
+      SELECT p.piece_name AS piece_name, r.status AS status,
+        ROW_NUMBER() OVER (PARTITION BY p.piece_name ORDER BY r.id DESC) AS rn
+      FROM test_plans p JOIN test_plan_runs r ON r.plan_id = p.id
+      WHERE r.trigger_type = 'scheduled'
+    )
+    SELECT piece_name, status, rn FROM ranked WHERE rn <= 12 ORDER BY piece_name, rn DESC
+  `);
+
+  const recentByPiece = new Map<string, string[]>();
+  for (const row of spark) {
+    if (!recentByPiece.has(row.piece_name)) recentByPiece.set(row.piece_name, []);
+    recentByPiece.get(row.piece_name)!.push(row.status);
+  }
+
+  const byPiece = new Map<string, PieceHealthRow>();
+  for (const row of latest) {
+    let h = byPiece.get(row.piece_name);
+    if (!h) {
+      h = {
+        piece_name: row.piece_name, status: 'unknown',
+        actions_total: 0, actions_passing: 0, actions_failing: 0,
+        last_run_at: null, failing_actions: [], recent: recentByPiece.get(row.piece_name) ?? [],
+      };
+      byPiece.set(row.piece_name, h);
+    }
+    h.actions_total++;
+    if (row.last_status === 'completed') h.actions_passing++;
+    else if (row.last_status === 'failed') {
+      h.actions_failing++;
+      h.failing_actions.push({ action: row.target_action, error: extractFirstStepError(row.step_results) });
+    }
+    if (!h.last_run_at || (row.last_run_at && row.last_run_at > h.last_run_at)) h.last_run_at = row.last_run_at;
+  }
+
+  const result = [...byPiece.values()];
+  for (const h of result) {
+    h.status = h.actions_failing > 0 ? 'failing' : h.actions_passing > 0 ? 'healthy' : 'unknown';
+  }
+  // Failing first (most failing actions first), then alphabetical.
+  result.sort((a, b) => (b.actions_failing - a.actions_failing) || a.piece_name.localeCompare(b.piece_name));
+  return result;
+}
+
+// ── Quarantine (muted pieces/actions) ──
+
+export interface QuarantineRow {
+  id: number;
+  piece_name: string;
+  action_name: string | null;
+  reason: string;
+  created_at: string;
+  expires_at: string | null;
+}
+
+/** Active mutes only (expired ones are ignored). */
+export function listQuarantine(): QuarantineRow[] {
+  return getDb().all<QuarantineRow>(
+    `SELECT * FROM quarantined_items WHERE expires_at IS NULL OR expires_at > datetime('now') ORDER BY id DESC`,
+  );
+}
+
+export function addQuarantine(params: { piece_name: string; action_name?: string | null; reason?: string; expires_at?: string | null }): QuarantineRow {
+  const res = getDb().run(
+    `INSERT INTO quarantined_items (piece_name, action_name, reason, expires_at) VALUES (?, ?, ?, ?)`,
+    [params.piece_name, params.action_name ?? null, params.reason ?? '', params.expires_at ?? null],
+  );
+  return getDb().get<QuarantineRow>('SELECT * FROM quarantined_items WHERE id = ?', [res.lastId])!;
+}
+
+export function removeQuarantine(id: number): boolean {
+  return getDb().run('DELETE FROM quarantined_items WHERE id = ?', [id]).changes > 0;
+}
+
+// ── Needs-Attention inbox ──
+// Collapses failing runs into one item per (piece, action), classified into a lane
+// with a transparent reason. Derived entirely from existing run history — no engine
+// changes. The strict-vs-inclusive filtering is applied client-side over these buckets.
+
+export interface AttentionItem {
+  plan_id: number;
+  piece_name: string;
+  action_name: string;
+  bucket: 'reauth' | 'likely_broken' | 'watching' | 'noise';
+  category: string;          // errorCategory or 'assert_failed'
+  fail_streak: number;       // consecutive most-recent scheduled runs that failed
+  flaky: boolean;            // recent history mixes passes and fails (not a clean streak)
+  error: string | null;      // short one-line hint
+  reason: string;            // human "why it's in this lane"
+  failing_since: string | null;
+  last_run_at: string | null;
+  last_run_id: number;
+  muted: boolean;
+  mute_id: number | null;
+}
+
+function shortenError(raw: string | null | undefined): string | null {
+  if (!raw) return null;
+  let msg = String(raw);
+  try { const o = JSON.parse(msg); if (o && typeof o.message === 'string') msg = o.message; } catch { /* not JSON */ }
+  msg = msg.split('\n')[0].trim();
+  return msg.length > 120 ? msg.slice(0, 120) + '…' : msg;
+}
+
+/** Classify a failed run from its step_results: a thrown step gives its errorCategory; else an assertion failure. */
+function analyzeFailedRun(stepResultsJson: string): { category: string; error: string | null } {
+  try {
+    const steps = JSON.parse(stepResultsJson);
+    if (!Array.isArray(steps)) return { category: 'unknown', error: null };
+    const thrown = steps.find((s: any) => s && s.status === 'failed');
+    if (thrown) return { category: thrown.errorCategory || 'piece_error', error: shortenError(thrown.error) };
+    const asserted = steps.find((s: any) => s && s.status === 'assert_failed');
+    if (asserted) return { category: 'assert_failed', error: shortenError(asserted.error) };
+    return { category: 'unknown', error: null };
+  } catch { return { category: 'unknown', error: null }; }
+}
+
+export function getAttentionItems(): AttentionItem[] {
+  const db = getDb();
+
+  // Plans whose LATEST scheduled run failed = candidate attention items.
+  const latest = db.all<{ plan_id: number; piece_name: string; target_action: string; run_id: number; last_run_at: string | null; step_results: string }>(`
+    SELECT p.id AS plan_id, p.piece_name, p.target_action,
+           r.id AS run_id, r.started_at AS last_run_at, r.step_results
+    FROM test_plans p
+    JOIN test_plan_runs r ON r.id = (
+      SELECT r2.id FROM test_plan_runs r2
+      WHERE r2.plan_id = p.id AND r2.trigger_type = 'scheduled'
+      ORDER BY r2.id DESC LIMIT 1
+    )
+    WHERE r.status = 'failed'
+  `);
+  if (latest.length === 0) return [];
+
+  // Recent statuses per plan (newest first) for fail-streak + flaky detection.
+  const recent = db.all<{ plan_id: number; status: string; started_at: string; rn: number }>(`
+    WITH ranked AS (
+      SELECT r.plan_id AS plan_id, r.status AS status, r.started_at AS started_at,
+        ROW_NUMBER() OVER (PARTITION BY r.plan_id ORDER BY r.id DESC) AS rn
+      FROM test_plan_runs r
+      WHERE r.trigger_type = 'scheduled'
+    )
+    SELECT plan_id, status, started_at, rn FROM ranked WHERE rn <= 10 ORDER BY plan_id, rn
+  `);
+  const historyByPlan = new Map<number, { status: string; started_at: string }[]>();
+  for (const row of recent) {
+    if (!historyByPlan.has(row.plan_id)) historyByPlan.set(row.plan_id, []);
+    historyByPlan.get(row.plan_id)!.push({ status: row.status, started_at: row.started_at });
+  }
+
+  const quarantine = listQuarantine();
+  const matchMute = (piece: string, action: string) =>
+    quarantine.find(q => q.piece_name === piece && (q.action_name === null || q.action_name === action)) ?? null;
+
+  const items: AttentionItem[] = [];
+  for (const row of latest) {
+    const hist = historyByPlan.get(row.plan_id) ?? [];
+    let streak = 0;
+    for (const h of hist) { if (h.status === 'failed') streak++; else break; }
+    if (streak === 0) streak = 1; // latest is failed by construction
+    const failing_since = hist.slice(0, streak).at(-1)?.started_at ?? row.last_run_at;
+    const flaky = hist.some(h => h.status === 'completed') && streak < 2;
+
+    const { category, error } = analyzeFailedRun(row.step_results);
+
+    let bucket: AttentionItem['bucket'];
+    if (category === 'auth') bucket = 'reauth';
+    else if (category === 'transient' || category === 'rate_limit') bucket = 'noise';
+    else bucket = streak >= 2 ? 'likely_broken' : 'watching';
+
+    let reason: string;
+    if (bucket === 'reauth') reason = 'connection auth failed — needs re-auth';
+    else if (bucket === 'noise') reason = `${category} — likely environment/flake`;
+    else if (bucket === 'likely_broken') reason = `failed ${streak}× in a row · ${category}`;
+    else reason = flaky ? `flaky — recently passed and failed · ${category}` : `first failure · ${category}`;
+
+    const mute = matchMute(row.piece_name, row.target_action);
+
+    items.push({
+      plan_id: row.plan_id,
+      piece_name: row.piece_name,
+      action_name: row.target_action,
+      bucket, category, fail_streak: streak, flaky,
+      error, reason, failing_since, last_run_at: row.last_run_at, last_run_id: row.run_id,
+      muted: mute !== null, mute_id: mute?.id ?? null,
+    });
+  }
+
+  const order: Record<string, number> = { likely_broken: 0, reauth: 1, watching: 2, noise: 3 };
+  items.sort((a, b) =>
+    (order[a.bucket] - order[b.bucket]) || (b.fail_streak - a.fail_streak) || a.piece_name.localeCompare(b.piece_name));
+  return items;
+}
+
 export interface TrendDataPoint {
   date: string;
   passed: number;
@@ -762,6 +1020,8 @@ export interface FailureDetail {
   started_at: string;
   completed_at: string | null;
   trigger_type: string;
+  wave_id: string | null;
+  schedule_id: number | null;
 }
 
 export function getRecentFailures(limit: number = 50, dateFrom?: string, dateTo?: string): FailureDetail[] {
@@ -781,7 +1041,8 @@ export function getRecentFailures(limit: number = 50, dateFrom?: string, dateTo?
 
   return getDb().all<FailureDetail>(`
     SELECT r.id AS run_id, r.plan_id, p.piece_name, p.target_action,
-           r.status, r.step_results, r.started_at, r.completed_at, r.trigger_type
+           r.status, r.step_results, r.started_at, r.completed_at, r.trigger_type,
+           r.wave_id, r.schedule_id
     FROM test_plan_runs r
     JOIN test_plans p ON r.plan_id = p.id
     WHERE ${conditions.join(' AND ')}

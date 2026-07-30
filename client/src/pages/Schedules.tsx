@@ -121,21 +121,46 @@ function firstFailedStepError(run: PlanRunRecord): string | null {
   return s?.error ? shortError(s.error) : null;
 }
 
-interface Wave { key: string; startTs: string; runs: PlanRunRecord[]; }
+interface Wave {
+  key: string;
+  startTs: string;
+  scheduleId: number | null;   // which schedule fired this wave (null if unknown/legacy)
+  grouping: 'wave' | 'time';   // 'wave' = exact wave_id; 'time' = legacy gap heuristic
+  runs: PlanRunRecord[];
+}
 
-// A scheduled cron fire produces many runs close together. Cluster them into
-// "waves": a new wave starts when there's a >10min idle gap between consecutive runs.
+// A scheduled cron fire produces many runs at once — a "wave". Runs stamped with a
+// wave_id (fired after wave tracking landed) group EXACTLY by that id, so a wave maps
+// 1:1 to a real cron fire and can be linked back to its schedule. Older runs with no
+// wave_id fall back to the original heuristic: a new wave starts on a >10min idle gap.
 function clusterWaves(runs: PlanRunRecord[]): Wave[] {
   const sorted = [...runs].sort((a, b) => parseTs(b.started_at) - parseTs(a.started_at));
   const GAP_MS = 10 * 60 * 1000;
   const waves: Wave[] = [];
-  let cur: Wave | null = null;
+  const byWaveId = new Map<string, Wave>();
+  let legacyCur: Wave | null = null;
+
   for (const r of sorted) {
-    const fits = cur && (parseTs(cur.startTs) - parseTs(r.started_at)) <= GAP_MS;
-    if (!fits) { cur = { key: `w-${r.id}`, startTs: r.started_at, runs: [] }; waves.push(cur); }
-    cur!.runs.push(r);
-    cur!.startTs = r.started_at; // sorted desc → oldest-so-far = the fire time
+    if (r.wave_id) {
+      let w = byWaveId.get(r.wave_id);
+      if (!w) {
+        w = { key: r.wave_id, startTs: r.started_at, scheduleId: r.schedule_id ?? null, grouping: 'wave', runs: [] };
+        byWaveId.set(r.wave_id, w);
+        waves.push(w);
+      }
+      w.runs.push(r);
+      w.startTs = r.started_at;   // sorted desc → oldest-so-far = the fire time
+      legacyCur = null;           // a stamped run is a hard boundary for legacy grouping
+    } else {
+      const fits = legacyCur && (parseTs(legacyCur.startTs) - parseTs(r.started_at)) <= GAP_MS;
+      if (!fits) { legacyCur = { key: `t-${r.id}`, startTs: r.started_at, scheduleId: null, grouping: 'time', runs: [] }; waves.push(legacyCur); }
+      legacyCur!.runs.push(r);
+      legacyCur!.startTs = r.started_at;
+    }
   }
+
+  // Order waves newest-fire-first (map insertion order isn't guaranteed chronological).
+  waves.sort((a, b) => parseTs(b.startTs) - parseTs(a.startTs));
   return waves;
 }
 
@@ -224,6 +249,10 @@ export default function Schedules() {
 
   const scheduledHistory = (allHistory as any[]).filter(r => r.trigger_type === 'scheduled');
   const scheduledPlanRuns = (allPlanRuns as PlanRunRecord[]).filter(r => r.trigger_type === 'scheduled');
+
+  // schedule_id → human label, so each wave can name the schedule that fired it.
+  const scheduleLabels: Record<number, string> = {};
+  for (const s of schedules as any[]) scheduleLabels[s.id] = s.label || `Schedule #${s.id}`;
 
   // ── Form state ──
   const [showForm, setShowForm] = useState(false);
@@ -441,9 +470,10 @@ export default function Schedules() {
           {/* What this tab is, vs the global Test Logs page */}
           <div className="flex items-start justify-between gap-4">
             <p className="text-xs text-gray-500 max-w-2xl">
-              History of runs triggered by your <span className="text-gray-300">schedules</span>.
-              For <span className="text-gray-300">all</span> test runs — including manual tests you start
-              from a piece — see{' '}
+              Runs your <span className="text-gray-300">schedules</span> fired, grouped into
+              {' '}<span className="text-gray-300">waves</span> — one wave = one schedule fire, named by the
+              schedule that triggered it. For <span className="text-gray-300">all</span> test runs —
+              including manual tests you start from a piece — see{' '}
               <Link to="/history" className="text-primary-400 hover:underline">Test Logs</Link>.
             </p>
             <button
@@ -463,7 +493,7 @@ export default function Schedules() {
               Plan Runs
               <span className="text-xs font-normal text-gray-500 ml-1">({scheduledPlanRuns.length})</span>
             </h3>
-            <ExpandablePlanRuns runs={scheduledPlanRuns} />
+            <ExpandablePlanRuns runs={scheduledPlanRuns} scheduleLabels={scheduleLabels} />
           </section>
 
           {/* ── Archived legacy runs (scheduled) ── */}
@@ -854,7 +884,7 @@ function TargetPicker({
 //  Expandable plan-run cards (reused from History page style)
 // ══════════════════════════════════════════════════════════════
 
-function ExpandablePlanRuns({ runs }: { runs: PlanRunRecord[] }) {
+function ExpandablePlanRuns({ runs, scheduleLabels }: { runs: PlanRunRecord[]; scheduleLabels: Record<number, string> }) {
   const [failedOnly, setFailedOnly] = useState(false);
   const [expandedWave, setExpandedWave] = useState<string | null>(null); // null = default(first open), '__none__' = all closed
   const [expandedRun, setExpandedRun] = useState<number | null>(null);
@@ -909,6 +939,7 @@ function ExpandablePlanRuns({ runs }: { runs: PlanRunRecord[] }) {
             <WaveGroup
               key={wave.key}
               wave={wave}
+              scheduleLabels={scheduleLabels}
               open={openKey === wave.key}
               onToggle={() => toggleWave(wave.key)}
               expandedRun={expandedRun}
@@ -923,8 +954,9 @@ function ExpandablePlanRuns({ runs }: { runs: PlanRunRecord[] }) {
 
 // One collapsible group per schedule fire ("wave"): summary on the header,
 // the individual runs inside.
-function WaveGroup({ wave, open, onToggle, expandedRun, onToggleRun }: {
+function WaveGroup({ wave, scheduleLabels, open, onToggle, expandedRun, onToggleRun }: {
   wave: Wave;
+  scheduleLabels: Record<number, string>;
   open: boolean;
   onToggle: () => void;
   expandedRun: number | null;
@@ -940,6 +972,11 @@ function WaveGroup({ wave, open, onToggle, expandedRun, onToggleRun }: {
     : <CheckCircle size={14} className="text-green-400" />;
   const border = failed > 0 ? 'border-red-500/20' : running > 0 ? 'border-blue-500/20' : 'border-gray-800';
 
+  // Name the schedule that fired this wave. Falls back to a generic "scheduled" badge
+  // when the schedule was deleted, or a muted "grouped by time" note for legacy runs
+  // that predate wave tracking (grouped by the 10-min heuristic, not a real fire).
+  const schedName = wave.scheduleId != null ? scheduleLabels[wave.scheduleId] : undefined;
+
   return (
     <div className={`border rounded-lg ${border} bg-gray-900/60 overflow-hidden`}>
       <button
@@ -949,9 +986,19 @@ function WaveGroup({ wave, open, onToggle, expandedRun, onToggleRun }: {
         {open ? <ChevronDown size={14} className="text-gray-500" /> : <ChevronRight size={14} className="text-gray-500" />}
         {icon}
         <span className="text-sm font-medium text-gray-200">{formatDateTime(wave.startTs)}</span>
-        <span className="flex items-center gap-1 text-[10px] text-gray-500 bg-gray-800 px-1.5 py-0.5 rounded">
-          <Calendar size={10} className="text-purple-400" /> scheduled
-        </span>
+        {schedName ? (
+          <span className="flex items-center gap-1 text-[10px] text-purple-300 bg-purple-500/10 border border-purple-500/20 px-1.5 py-0.5 rounded" title="Fired by this schedule">
+            <CalendarClock size={10} className="text-purple-400" /> {schedName}
+          </span>
+        ) : wave.grouping === 'time' ? (
+          <span className="flex items-center gap-1 text-[10px] text-gray-500 bg-gray-800 px-1.5 py-0.5 rounded" title="Legacy run grouped by time — predates wave tracking">
+            <Calendar size={10} className="text-gray-500" /> grouped by time
+          </span>
+        ) : (
+          <span className="flex items-center gap-1 text-[10px] text-gray-500 bg-gray-800 px-1.5 py-0.5 rounded">
+            <Calendar size={10} className="text-purple-400" /> scheduled
+          </span>
+        )}
         <div className="flex-1" />
         <div className="flex items-center gap-3 text-xs">
           <span className={failed > 0 ? 'text-gray-400' : 'text-green-400'}>{passed}/{total} passed</span>

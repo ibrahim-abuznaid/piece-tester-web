@@ -1,10 +1,10 @@
 import { useState } from 'react';
 import { NavLink, Outlet } from 'react-router-dom';
-import { LayoutDashboard, Puzzle, Link2, Play, ScrollText, CalendarClock, BarChart3, Settings, ListChecks, Square } from 'lucide-react';
+import { Activity, Puzzle, Link2, Play, ScrollText, CalendarClock, BarChart3, Settings, ListChecks, Square } from 'lucide-react';
 import { api } from '../lib/api';
 
 const nav = [
-  { to: '/', label: 'Dashboard', icon: LayoutDashboard },
+  { to: '/', label: 'Health', icon: Activity },
   { to: '/pieces', label: 'Pieces', icon: Puzzle },
   { to: '/connections', label: 'Connections', icon: Link2 },
   { to: '/test-runner', label: 'Test Runner', icon: Play },

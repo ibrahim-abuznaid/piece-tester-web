@@ -148,7 +148,9 @@ function initTables(db: DatabaseAdapter): void {
       total_tests INTEGER DEFAULT 0,
       passed INTEGER DEFAULT 0,
       failed INTEGER DEFAULT 0,
-      errors INTEGER DEFAULT 0
+      errors INTEGER DEFAULT 0,
+      wave_id TEXT,        -- groups all runs from a single schedule fire; NULL for manual runs
+      schedule_id INTEGER  -- which schedule fired this run; NULL for manual runs
     );
 
     CREATE TABLE IF NOT EXISTS test_results (
@@ -206,7 +208,9 @@ function initTables(db: DatabaseAdapter): void {
       step_results TEXT NOT NULL DEFAULT '[]',
       paused_prompt TEXT,
       started_at TEXT DEFAULT (datetime('now')),
-      completed_at TEXT
+      completed_at TEXT,
+      wave_id TEXT,        -- groups all runs from a single schedule fire; NULL for manual runs
+      schedule_id INTEGER  -- which schedule fired this run; NULL for manual runs
     );
   `);
 
@@ -245,6 +249,19 @@ function initTables(db: DatabaseAdapter): void {
       note TEXT DEFAULT '',
       resolved_at TEXT DEFAULT (datetime('now')),
       UNIQUE(analysis_id, category, item_index)
+    );
+  `);
+
+  db.exec(`
+    -- Muted (quarantined) pieces/actions: excluded from the Needs-Attention inbox.
+    -- action_name NULL = the whole piece is muted. expires_at NULL = indefinite.
+    CREATE TABLE IF NOT EXISTS quarantined_items (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      piece_name TEXT NOT NULL,
+      action_name TEXT,
+      reason TEXT NOT NULL DEFAULT '',
+      created_at TEXT DEFAULT (datetime('now')),
+      expires_at TEXT
     );
   `);
 
@@ -291,6 +308,25 @@ function initTables(db: DatabaseAdapter): void {
   const planRunCols = db.pragma(`table_info(test_plan_runs)`) as { name: string }[];
   if (planRunCols.length > 0 && !planRunCols.some(c => c.name === 'trigger_type')) {
     db.exec(`ALTER TABLE test_plan_runs ADD COLUMN trigger_type TEXT NOT NULL DEFAULT 'manual'`);
+  }
+
+  // Migration: add wave_id + schedule_id to test_plan_runs and test_runs (existing DBs).
+  // A "wave" = every run spawned by a single schedule fire, sharing one wave_id.
+  // This replaces the client-side 10-minute-gap heuristic with a persisted, exact grouping,
+  // so Schedules / History / Reports can all group runs identically and link them back to
+  // the schedule that fired them. NULL wave_id = a manual (non-scheduled) run.
+  if (planRunCols.length > 0 && !planRunCols.some(c => c.name === 'wave_id')) {
+    db.exec(`ALTER TABLE test_plan_runs ADD COLUMN wave_id TEXT`);
+  }
+  if (planRunCols.length > 0 && !planRunCols.some(c => c.name === 'schedule_id')) {
+    db.exec(`ALTER TABLE test_plan_runs ADD COLUMN schedule_id INTEGER`);
+  }
+  const testRunCols = db.pragma(`table_info(test_runs)`) as { name: string }[];
+  if (testRunCols.length > 0 && !testRunCols.some(c => c.name === 'wave_id')) {
+    db.exec(`ALTER TABLE test_runs ADD COLUMN wave_id TEXT`);
+  }
+  if (testRunCols.length > 0 && !testRunCols.some(c => c.name === 'schedule_id')) {
+    db.exec(`ALTER TABLE test_runs ADD COLUMN schedule_id INTEGER`);
   }
 
   // Migration: add automation_status column to test_plans if missing

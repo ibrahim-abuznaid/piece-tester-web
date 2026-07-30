@@ -6,7 +6,7 @@
 import { EventEmitter } from 'events';
 import {
   createPlanRun, getPlanRun, updatePlanRun,
-  getTestPlan, type TestPlanRunRow,
+  getTestPlan, type TestPlanRunRow, type WaveInfo,
 } from '../db/queries.js';
 import { executeActionOnAP, type TestPlanStep, type PlanAssertion } from './ai-config-generator.js';
 import {
@@ -298,6 +298,7 @@ export async function executePlan(
   onProgress: (progress: PlanProgress) => void,
   triggerType: string = 'manual',
   signal?: AbortSignal,
+  wave?: WaveInfo,
 ): Promise<TestPlanRunRow> {
   const plan = getTestPlan(planId);
   if (!plan) throw new Error(`Plan ${planId} not found`);
@@ -309,8 +310,8 @@ export async function executePlan(
   const client = createClient();
   const pieceMeta: PieceMetadataFull = await client.getPieceMetadata(plan.piece_name);
 
-  // Create run
-  const run = createPlanRun(planId, triggerType);
+  // Create run (stamped with the schedule fire's wave, if any)
+  const run = createPlanRun(planId, triggerType, wave);
   const runId = run.id;
   const emitter = getResumeEmitter(runId);
 
