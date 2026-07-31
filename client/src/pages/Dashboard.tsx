@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Link, useNavigate } from 'react-router-dom';
 import { api, type PieceHealthRow } from '../lib/api';
 import NeedsAttention from '../components/NeedsAttention';
+import ErrorPlaybook from '../components/ErrorPlaybook';
 import {
   Search, RefreshCw, CalendarClock, BarChart3, ChevronRight, ChevronDown,
   AlertTriangle, CheckCircle2, HelpCircle,
@@ -203,16 +204,24 @@ function HealthRow({ row }: { row: PieceHealthRow }) {
       </button>
 
       {open && canExpand && (
-        <div className="border-t border-gray-800/50 px-4 py-2.5 space-y-1.5 bg-gray-950/40">
+        <div className="border-t border-gray-800/50 px-4 py-2.5 space-y-3 bg-gray-950/40">
           {row.failing_actions.map(f => (
-            <div key={f.action} className="text-xs">
-              <span className="text-gray-300 font-medium">✗ {f.action}</span>
-              {f.error && <span className="text-red-400/70"> — {f.error}</span>}
+            <div key={f.action}>
+              <div className="text-xs">
+                <span className="text-gray-300 font-medium">✗ {f.action}</span>
+                {f.error && <span className="text-red-400/70"> — {f.error}</span>}
+              </div>
+              <ErrorPlaybook
+                pieceName={row.piece_name}
+                actionName={f.action}
+                category={f.category}
+                planId={f.plan_id}
+              />
             </div>
           ))}
           <div className="flex items-center gap-4 mt-1">
             <button
-              onClick={() => navigate('/history')}
+              onClick={() => navigate(`/history?piece=${encodeURIComponent(cleanPiece(row.piece_name))}`)}
               className="text-[11px] text-primary-400 hover:underline"
             >
               View this piece's runs →

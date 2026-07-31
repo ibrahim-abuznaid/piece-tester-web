@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { api, type PlanRunRecord, type StepResult } from '../lib/api';
 import TestResultBadge from '../components/TestResultBadge';
@@ -11,8 +12,15 @@ import {
 type TabId = 'plan-runs' | 'legacy-runs';
 
 export default function History() {
+  const [searchParams] = useSearchParams();
   const [tab, setTab] = useState<TabId>('plan-runs');
-  const [pieceFilter, setPieceFilter] = useState('');
+  const [pieceFilter, setPieceFilter] = useState(searchParams.get('piece') ?? '');
+
+  // Keep the filter in sync when arriving via a ?piece= deep-link (e.g. from the Health tab).
+  useEffect(() => {
+    const p = searchParams.get('piece');
+    if (p) setPieceFilter(p);
+  }, [searchParams]);
 
   return (
     <div>

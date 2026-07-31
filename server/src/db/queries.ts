@@ -749,7 +749,7 @@ export interface PieceHealthRow {
   actions_passing: number;
   actions_failing: number;
   last_run_at: string | null;
-  failing_actions: { action: string; error: string | null }[];
+  failing_actions: { action: string; error: string | null; category: string; plan_id: number }[];
   recent: string[]; // last ~12 run statuses, oldest→newest, for a sparkline
 }
 
@@ -771,8 +771,8 @@ export function getPieceHealth(): PieceHealthRow[] {
   const db = getDb();
 
   // Latest scheduled run per plan (= per piece+action): its current status + error.
-  const latest = db.all<{ piece_name: string; target_action: string; last_status: string; last_run_at: string | null; step_results: string }>(`
-    SELECT p.piece_name, p.target_action,
+  const latest = db.all<{ plan_id: number; piece_name: string; target_action: string; last_status: string; last_run_at: string | null; step_results: string }>(`
+    SELECT p.id AS plan_id, p.piece_name, p.target_action,
            r.status AS last_status, r.started_at AS last_run_at, r.step_results
     FROM test_plans p
     JOIN test_plan_runs r ON r.id = (
@@ -814,7 +814,15 @@ export function getPieceHealth(): PieceHealthRow[] {
     if (row.last_status === 'completed') h.actions_passing++;
     else if (row.last_status === 'failed') {
       h.actions_failing++;
-      h.failing_actions.push({ action: row.target_action, error: extractFirstStepError(row.step_results) });
+      // Reuse the attention-inbox classifier so the health board and the inbox agree on
+      // the error category that drives the "what you can do" playbook.
+      const { category } = analyzeFailedRun(row.step_results);
+      h.failing_actions.push({
+        action: row.target_action,
+        error: extractFirstStepError(row.step_results),
+        category,
+        plan_id: row.plan_id,
+      });
     }
     if (!h.last_run_at || (row.last_run_at && row.last_run_at > h.last_run_at)) h.last_run_at = row.last_run_at;
   }

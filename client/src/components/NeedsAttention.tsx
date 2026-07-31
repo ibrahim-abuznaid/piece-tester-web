@@ -2,6 +2,7 @@ import { useState, type ReactNode } from 'react';
 import { useQuery, useQueryClient, useMutation } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import { api, type AttentionItem } from '../lib/api';
+import ErrorPlaybook from './ErrorPlaybook';
 import {
   ShieldAlert, KeyRound, XCircle, AlertTriangle, Zap, VolumeX, Undo2,
   RotateCcw, Loader2, CheckCircle, ChevronDown, ChevronRight,
@@ -116,6 +117,7 @@ function CollapsibleLane({ open, onToggle, label, hint, children }: {
 function AttentionRow({ item }: { item: AttentionItem }) {
   const qc = useQueryClient();
   const navigate = useNavigate();
+  const [open, setOpen] = useState(false);
   const [retest, setRetest] = useState<'idle' | 'running' | 'passed' | 'failed'>('idle');
   const [retestRunId, setRetestRunId] = useState<number | null>(null);
 
@@ -167,6 +169,10 @@ function AttentionRow({ item }: { item: AttentionItem }) {
   return (
     <div className={`border rounded-lg ${border} bg-gray-900 px-4 py-2.5`}>
       <div className="flex items-center gap-3">
+        <button onClick={() => setOpen(o => !o)} title={open ? 'Hide guidance' : 'What can I do about this?'}
+          className="text-gray-500 hover:text-gray-300 shrink-0">
+          {open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+        </button>
         {laneIcon}
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2 flex-wrap">
@@ -188,7 +194,7 @@ function AttentionRow({ item }: { item: AttentionItem }) {
               <RotateCcw size={11} /> Retest
             </button>
           )}
-          <button onClick={() => navigate('/history')} title="View this piece's runs"
+          <button onClick={() => navigate(`/history?piece=${encodeURIComponent(clean(item.piece_name))}`)} title="View this piece's runs"
             className="px-2 py-1 rounded text-[11px] text-gray-500 hover:text-gray-200 hover:bg-gray-800">
             Runs
           </button>
@@ -201,6 +207,20 @@ function AttentionRow({ item }: { item: AttentionItem }) {
           </button>
         </div>
       </div>
+
+      {open && (
+        <ErrorPlaybook
+          pieceName={item.piece_name}
+          actionName={item.action_name}
+          category={item.category}
+          planId={item.plan_id}
+          failStreak={item.fail_streak}
+          flaky={item.flaky}
+          muted={item.muted}
+          muteId={item.mute_id}
+          showRunActions={false}
+        />
+      )}
     </div>
   );
 }
