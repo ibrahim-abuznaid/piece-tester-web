@@ -987,6 +987,176 @@ export function getAttentionItems(): AttentionItem[] {
   return items;
 }
 
+// ── Scheduled Runs: wave-centric aggregation (redesigned feed) ──
+// A "wave" = one schedule fire (shared wave_id). These power the sweep-first Scheduled
+// Runs view: a summary per fire + a failures-first Piece → Target drill — WITHOUT ever
+// shipping step_results to the client (loaded lazily per run via getPlanRun on expand).
+// The list scales with the number of FAILING targets, not the total run count.
+
+export interface WaveSummary {
+  wave_id: string;
+  schedule_id: number | null;
+  schedule_label: string | null;
+  started_at: string;
+  completed_at: string | null;
+  total: number;
+  passed: number;
+  failed: number;
+  running: number;
+}
+
+/** One row per schedule fire, newest first. Cheap: pure aggregate, no step_results. */
+export function getScheduledWaves(limit = 30): WaveSummary[] {
+  return getDb().all<WaveSummary>(`
+    SELECT r.wave_id AS wave_id,
+           r.schedule_id AS schedule_id,
+           s.label AS schedule_label,
+           MIN(r.started_at) AS started_at,
+           MAX(r.completed_at) AS completed_at,
+           COUNT(*) AS total,
+           SUM(CASE WHEN r.status = 'completed' THEN 1 ELSE 0 END) AS passed,
+           SUM(CASE WHEN r.status = 'failed' THEN 1 ELSE 0 END) AS failed,
+           SUM(CASE WHEN r.status = 'running' THEN 1 ELSE 0 END) AS running
+    FROM test_plan_runs r
+    LEFT JOIN schedules s ON s.id = r.schedule_id
+    WHERE r.trigger_type = 'scheduled' AND r.wave_id IS NOT NULL
+    GROUP BY r.wave_id
+    ORDER BY started_at DESC
+    LIMIT ?
+  `, [limit]);
+}
+
+export interface WaveFailingRun {
+  run_id: number;
+  target_action: string;
+  target_type: string;    // 'action' | 'trigger'
+  category: string;       // errorCategory | 'assert_failed' | 'unknown'
+  error: string | null;   // short one-line hint
+  duration_ms: number | null;
+  started_at: string;
+}
+
+export interface WavePiece {
+  piece_name: string;
+  total: number;
+  passed: number;
+  failed: number;
+  running: number;
+  worst_category: string | null;
+  failing: WaveFailingRun[];   // only failing runs are enumerated; passing are just counted
+}
+
+export interface WaveDetail {
+  wave_id: string;
+  schedule_id: number | null;
+  schedule_label: string | null;
+  started_at: string;
+  total: number;
+  passed: number;
+  failed: number;
+  running: number;
+  pieces: WavePiece[];         // failing pieces first
+}
+
+// How piece-implicating a category is — drives worst_category + failure ordering.
+function categorySeverity(cat: string | null): number {
+  switch (cat) {
+    case 'piece_error': return 6;
+    case 'assert_failed': return 5;
+    case 'not_found': return 4;
+    case 'bad_request': return 3;
+    case 'auth': return 2;
+    case 'rate_limit':
+    case 'transient': return 1;
+    default: return 0;
+  }
+}
+
+// Both timestamps are naive-UTC ("2026-07-29 10:45:01"); parse both the same way so the
+// delta is correct regardless of the server's local zone (avoids the History.tsx TZ bug).
+function runDurationMs(started?: string | null, completed?: string | null): number | null {
+  if (!started || !completed) return null;
+  const toUtc = (s: string) => Date.parse(/[zZ]|[+-]\d{2}:?\d{2}$/.test(s) ? s : s.replace(' ', 'T') + 'Z');
+  const a = toUtc(started), b = toUtc(completed);
+  return Number.isFinite(a) && Number.isFinite(b) ? Math.max(0, b - a) : null;
+}
+
+/**
+ * Per-piece rollup for one wave. Two queries: cheap counts over ALL runs, and step_results
+ * ONLY for the failing runs (so the payload + parse cost scale with failures, not total runs).
+ */
+export function getWaveDetail(waveId: string): WaveDetail | null {
+  const db = getDb();
+
+  const pieceCounts = db.all<{ piece_name: string; total: number; passed: number; failed: number; running: number }>(`
+    SELECT p.piece_name AS piece_name,
+           COUNT(*) AS total,
+           SUM(CASE WHEN r.status = 'completed' THEN 1 ELSE 0 END) AS passed,
+           SUM(CASE WHEN r.status = 'failed' THEN 1 ELSE 0 END) AS failed,
+           SUM(CASE WHEN r.status = 'running' THEN 1 ELSE 0 END) AS running
+    FROM test_plan_runs r
+    JOIN test_plans p ON p.id = r.plan_id
+    WHERE r.wave_id = ?
+    GROUP BY p.piece_name
+  `, [waveId]);
+  if (pieceCounts.length === 0) return null;
+
+  const failingRows = db.all<{ id: number; started_at: string; completed_at: string | null; step_results: string; piece_name: string; target_action: string; target_type: string }>(`
+    SELECT r.id, r.started_at, r.completed_at, r.step_results,
+           p.piece_name, p.target_action, p.target_type
+    FROM test_plan_runs r
+    JOIN test_plans p ON p.id = r.plan_id
+    WHERE r.wave_id = ? AND r.status = 'failed'
+  `, [waveId]);
+
+  const meta = db.get<{ schedule_id: number | null; started_at: string; label: string | null }>(`
+    SELECT r.schedule_id AS schedule_id, MIN(r.started_at) AS started_at, s.label AS label
+    FROM test_plan_runs r
+    LEFT JOIN schedules s ON s.id = r.schedule_id
+    WHERE r.wave_id = ?
+  `, [waveId]);
+
+  const byPiece = new Map<string, WavePiece>();
+  for (const c of pieceCounts) {
+    byPiece.set(c.piece_name, {
+      piece_name: c.piece_name, total: c.total, passed: c.passed, failed: c.failed, running: c.running,
+      worst_category: null, failing: [],
+    });
+  }
+  for (const r of failingRows) {
+    const wp = byPiece.get(r.piece_name);
+    if (!wp) continue;
+    const { category, error } = analyzeFailedRun(r.step_results);
+    wp.failing.push({
+      run_id: r.id, target_action: r.target_action, target_type: r.target_type,
+      category, error, duration_ms: runDurationMs(r.started_at, r.completed_at), started_at: r.started_at,
+    });
+  }
+
+  const pieces = [...byPiece.values()];
+  for (const wp of pieces) {
+    wp.worst_category = wp.failing.reduce<string | null>(
+      (w, f) => (categorySeverity(f.category) > categorySeverity(w) ? f.category : w), null);
+    wp.failing.sort((a, b) =>
+      categorySeverity(b.category) - categorySeverity(a.category) || a.target_action.localeCompare(b.target_action));
+  }
+  // Failing pieces first (most failures first), then alphabetical.
+  pieces.sort((a, b) => (b.failed - a.failed) || a.piece_name.localeCompare(b.piece_name));
+
+  const agg = pieces.reduce((s, p) => ({
+    total: s.total + p.total, passed: s.passed + p.passed, failed: s.failed + p.failed, running: s.running + p.running,
+  }), { total: 0, passed: 0, failed: 0, running: 0 });
+
+  return {
+    wave_id: waveId,
+    schedule_id: meta?.schedule_id ?? null,
+    schedule_label: meta?.label || null,
+    started_at: meta?.started_at ?? '',
+    ...agg,
+    pieces,
+  };
+}
+
 export interface TrendDataPoint {
   date: string;
   passed: number;
