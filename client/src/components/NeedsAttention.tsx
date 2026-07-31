@@ -214,6 +214,7 @@ function AttentionRow({ item }: { item: AttentionItem }) {
           actionName={item.action_name}
           category={item.category}
           planId={item.plan_id}
+          lastRunId={item.last_run_id}
           failStreak={item.fail_streak}
           flaky={item.flaky}
           muted={item.muted}

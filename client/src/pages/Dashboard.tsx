@@ -216,6 +216,7 @@ function HealthRow({ row }: { row: PieceHealthRow }) {
                 actionName={f.action}
                 category={f.category}
                 planId={f.plan_id}
+                lastRunId={f.run_id}
               />
             </div>
           ))}

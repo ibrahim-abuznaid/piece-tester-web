@@ -1,5 +1,5 @@
-import { useState, useEffect } from 'react';
-import { Link } from 'react-router-dom';
+import { useState, useEffect, useRef } from 'react';
+import { Link, useSearchParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, PlanRunRecord, StepResult } from '../lib/api';
 import TestResultBadge from '../components/TestResultBadge';
@@ -216,7 +216,16 @@ function parseTargets(raw: string): ScheduleTarget[] {
 
 export default function Schedules() {
   const qc = useQueryClient();
-  const [tab, setTab] = useState<Tab>('schedules');
+  const [searchParams] = useSearchParams();
+  // Deep-link: /schedules?tab=logs&run=<id> opens the Scheduled Runs feed on a specific run
+  // (e.g. from the Health tab's "View run details").
+  const [tab, setTab] = useState<Tab>(searchParams.get('tab') === 'logs' ? 'logs' : 'schedules');
+  const focusRunId = searchParams.get('run') ? Number(searchParams.get('run')) : null;
+
+  // If the deep-link params change while already on the page, follow them.
+  useEffect(() => {
+    if (searchParams.get('tab') === 'logs') setTab('logs');
+  }, [searchParams]);
 
   // ── Schedules data ──
   const { data: schedules = [], isLoading } = useQuery({
@@ -493,7 +502,7 @@ export default function Schedules() {
               Plan Runs
               <span className="text-xs font-normal text-gray-500 ml-1">({scheduledPlanRuns.length})</span>
             </h3>
-            <ExpandablePlanRuns runs={scheduledPlanRuns} scheduleLabels={scheduleLabels} />
+            <ExpandablePlanRuns runs={scheduledPlanRuns} scheduleLabels={scheduleLabels} focusRunId={focusRunId} />
           </section>
 
           {/* ── Archived legacy runs (scheduled) ── */}
@@ -884,10 +893,24 @@ function TargetPicker({
 //  Expandable plan-run cards (reused from History page style)
 // ══════════════════════════════════════════════════════════════
 
-function ExpandablePlanRuns({ runs, scheduleLabels }: { runs: PlanRunRecord[]; scheduleLabels: Record<number, string> }) {
+function ExpandablePlanRuns({ runs, scheduleLabels, focusRunId }: { runs: PlanRunRecord[]; scheduleLabels: Record<number, string>; focusRunId?: number | null }) {
   const [failedOnly, setFailedOnly] = useState(false);
   const [expandedWave, setExpandedWave] = useState<string | null>(null); // null = default(first open), '__none__' = all closed
   const [expandedRun, setExpandedRun] = useState<number | null>(null);
+
+  // Deep-link focus: once the target run has loaded, open its wave, expand it, and scroll to it.
+  // Guarded so it only auto-focuses once (the user can freely collapse it afterward).
+  const didFocusRef = useRef(false);
+  useEffect(() => {
+    if (didFocusRef.current || focusRunId == null || runs.length === 0) return;
+    const wave = clusterWaves(runs).find(w => w.runs.some(r => r.id === focusRunId));
+    if (!wave) return; // run not in the loaded set (older than the fetch window)
+    didFocusRef.current = true;
+    setExpandedRun(focusRunId);
+    setExpandedWave(wave.key);
+    requestAnimationFrame(() =>
+      document.getElementById(`plan-run-${focusRunId}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' }));
+  }, [focusRunId, runs]);
 
   if (runs.length === 0) {
     return (
@@ -1043,7 +1066,7 @@ function PlanRunCard({ run, expanded, onToggle }: { run: PlanRunRecord; expanded
     : <Clock size={14} className="text-gray-500" />;
 
   return (
-    <div className={`border rounded-lg ${statusBorder} bg-gray-900 overflow-hidden`}>
+    <div id={`plan-run-${run.id}`} className={`border rounded-lg ${statusBorder} bg-gray-900 overflow-hidden`}>
       <button
         onClick={onToggle}
         className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-gray-800/50 transition-colors"

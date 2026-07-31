@@ -391,7 +391,7 @@ export interface PieceHealthRow {
   actions_passing: number;
   actions_failing: number;
   last_run_at: string | null;
-  failing_actions: { action: string; error: string | null; category: string; plan_id: number }[];
+  failing_actions: { action: string; error: string | null; category: string; plan_id: number; run_id: number }[];
   recent: string[]; // last ~12 run statuses, oldest→newest
 }
 

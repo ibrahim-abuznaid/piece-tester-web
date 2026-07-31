@@ -26,6 +26,8 @@ export interface ErrorPlaybookProps {
   category: string;
   /** Enables the Retest action + a precise plan link. */
   planId?: number;
+  /** The specific failed run — lets "View run details" jump to it in the Scheduled Runs feed. */
+  lastRunId?: number;
   /** Consecutive failures — drives the confidence note. */
   failStreak?: number;
   /** Recently mixed pass/fail — drives the confidence note. */
@@ -154,14 +156,18 @@ function confidenceNote(p: ErrorPlaybookProps): string | null {
 }
 
 export default function ErrorPlaybook(props: ErrorPlaybookProps) {
-  const { pieceName, actionName, category, planId, muted, muteId, showRunActions = true } = props;
+  const { pieceName, actionName, category, planId, lastRunId, muted, muteId, showRunActions = true } = props;
   const navigate = useNavigate();
   const qc = useQueryClient();
 
   const targets = {
     connections: '/connections',
     pieceHub: `/pieces/${encodeURIComponent(pieceName)}`,
-    runs: `/history?piece=${encodeURIComponent(clean(pieceName))}`,
+    // "View run details" jumps straight to THIS failed run in the wave-grouped Scheduled
+    // Runs feed (it's a scheduled run); fall back to the piece-filtered Test Logs otherwise.
+    runs: lastRunId != null
+      ? `/schedules?tab=logs&run=${lastRunId}`
+      : `/history?piece=${encodeURIComponent(clean(pieceName))}`,
     schedules: '/schedules',
   };
   const play = buildPlaybook(category, targets);
