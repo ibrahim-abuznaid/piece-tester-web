@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api';
-import { Plus, Trash2, Download, X, Check } from 'lucide-react';
+import { Plus, Trash2, Download, X, Check, Search } from 'lucide-react';
 
 const CONNECTION_TYPES = ['SECRET_TEXT', 'BASIC_AUTH', 'OAUTH2', 'CUSTOM_AUTH', 'NO_AUTH'] as const;
 
@@ -9,6 +9,8 @@ export default function Connections() {
   const qc = useQueryClient();
   const { data: connections, isLoading } = useQuery({ queryKey: ['connections'], queryFn: api.listConnections });
   const [showForm, setShowForm] = useState(false);
+  const [search, setSearch] = useState('');
+  const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'inactive'>('all');
   const [editId, setEditId] = useState<number | null>(null);
   const [form, setForm] = useState({ piece_name: '', display_name: '', connection_type: 'SECRET_TEXT' as string, connection_value: '{}', actions_config: '{}' });
 
@@ -51,10 +53,22 @@ export default function Connections() {
     else createMut.mutate(payload);
   }
 
+  const list: any[] = connections ?? [];
+  const q = search.trim().toLowerCase();
+  const filtered = list.filter((c) => {
+    if (statusFilter === 'active' && !c.is_active) return false;
+    if (statusFilter === 'inactive' && c.is_active) return false;
+    if (!q) return true;
+    return (c.display_name || '').toLowerCase().includes(q) || (c.piece_name || '').toLowerCase().includes(q);
+  });
+
   return (
     <div>
       <div className="flex items-center justify-between mb-6">
-        <h2 className="text-2xl font-bold">Connections</h2>
+        <div className="flex items-baseline gap-2">
+          <h2 className="text-2xl font-bold">Connections</h2>
+          {!!list.length && <span className="text-sm text-gray-500">{list.length}</span>}
+        </div>
         <button onClick={() => { resetForm(); setShowForm(true); }} className="flex items-center gap-2 px-3 py-2 bg-primary-600 hover:bg-primary-700 rounded text-sm font-medium">
           <Plus size={16} /> Add Connection
         </button>
@@ -106,37 +120,70 @@ export default function Connections() {
       {/* Connections list */}
       {isLoading ? (
         <p className="text-gray-400">Loading...</p>
-      ) : !connections?.length ? (
+      ) : !list.length ? (
         <p className="text-gray-500">No connections configured yet. Add one to start testing pieces.</p>
       ) : (
-        <div className="space-y-3">
-          {connections.map((c: any) => (
-            <div key={c.id} className={`bg-gray-900 border rounded-lg p-4 flex items-center justify-between ${c.is_active ? 'border-green-500/30' : 'border-gray-800 opacity-70'}`}>
-              <div>
-                <div className="flex items-center gap-2">
-                  <p className="font-medium text-sm">{c.display_name}</p>
-                  {c.is_active ? (
-                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-green-500/20 text-green-400 flex items-center gap-1"><Check size={9} /> Active</span>
-                  ) : (
-                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-gray-800 text-gray-500">Inactive</span>
-                  )}
-                </div>
-                <p className="text-xs text-gray-500 mt-0.5">{c.piece_name}</p>
-                <div className="flex gap-3 mt-1 text-xs text-gray-500">
-                  <span className="bg-gray-800 px-2 py-0.5 rounded">{c.connection_type}</span>
-                  <span>{Object.keys(c.actions_config || {}).length} actions configured</span>
-                </div>
-              </div>
-              <div className="flex gap-2">
-                {!c.is_active && (
-                  <button onClick={() => activateMut.mutate(c.id)} className="px-3 py-1.5 bg-primary-600/20 text-primary-400 hover:bg-primary-600/30 rounded text-xs">Activate</button>
-                )}
-                <button onClick={() => startEdit(c)} className="px-3 py-1.5 bg-gray-800 hover:bg-gray-700 rounded text-xs">Edit</button>
-                <button onClick={() => { if (confirm('Delete this connection?')) deleteMut.mutate(c.id); }} className="p-1.5 text-red-400 hover:bg-red-500/10 rounded"><Trash2 size={14} /></button>
-              </div>
+        <>
+          {/* Toolbar: search + status filter (scales to hundreds of connections) */}
+          <div className="flex flex-wrap items-center gap-3 mb-4">
+            <div className="relative flex-1 min-w-[220px]">
+              <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500" />
+              <input
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Search by name or piece…"
+                className="w-full bg-gray-800 border border-gray-700 rounded pl-9 pr-3 py-2 text-sm"
+              />
             </div>
-          ))}
-        </div>
+            <div className="flex bg-gray-800 border border-gray-700 rounded overflow-hidden text-xs">
+              {(['all', 'active', 'inactive'] as const).map((f) => (
+                <button
+                  key={f}
+                  onClick={() => setStatusFilter(f)}
+                  className={`px-3 py-2 capitalize ${statusFilter === f ? 'bg-primary-600 text-white' : 'text-gray-400 hover:bg-gray-700'}`}
+                >
+                  {f}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <p className="text-xs text-gray-500 mb-2">
+            Showing {filtered.length} of {list.length}
+          </p>
+
+          {!filtered.length ? (
+            <p className="text-gray-500 text-sm py-8 text-center">No connections match your filters.</p>
+          ) : (
+            <div className="space-y-2">
+              {filtered.map((c: any) => (
+                <div key={c.id} className={`bg-gray-900 border rounded-lg px-3 py-2.5 flex items-center justify-between gap-3 ${c.is_active ? 'border-green-500/30' : 'border-gray-800 opacity-70'}`}>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2">
+                      <p className="font-medium text-sm truncate">{c.display_name}</p>
+                      {c.is_active ? (
+                        <span className="shrink-0 text-[10px] px-1.5 py-0.5 rounded bg-green-500/20 text-green-400 flex items-center gap-1"><Check size={9} /> Active</span>
+                      ) : (
+                        <span className="shrink-0 text-[10px] px-1.5 py-0.5 rounded bg-gray-800 text-gray-500">Inactive</span>
+                      )}
+                    </div>
+                    <p className="text-xs text-gray-500 mt-0.5 truncate">{c.piece_name}</p>
+                  </div>
+                  <div className="flex items-center gap-3 text-xs text-gray-500 shrink-0">
+                    <span className="bg-gray-800 px-2 py-0.5 rounded">{c.connection_type}</span>
+                  </div>
+                  <div className="flex gap-2 shrink-0">
+                    {!c.is_active && (
+                      <button onClick={() => activateMut.mutate(c.id)} className="px-3 py-1.5 bg-primary-600/20 text-primary-400 hover:bg-primary-600/30 rounded text-xs">Activate</button>
+                    )}
+                    <button onClick={() => startEdit(c)} className="px-3 py-1.5 bg-gray-800 hover:bg-gray-700 rounded text-xs">Edit</button>
+                    <button onClick={() => { if (confirm('Delete this connection?')) deleteMut.mutate(c.id); }} className="p-1.5 text-red-400 hover:bg-red-500/10 rounded"><Trash2 size={14} /></button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </>
       )}
     </div>
   );

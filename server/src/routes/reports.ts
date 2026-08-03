@@ -4,6 +4,8 @@ import {
   getPieceBreakdown,
   getPieceHealth,
   getAttentionItems,
+  getScheduledWaves,
+  getWaveDetail,
   listQuarantine,
   addQuarantine,
   removeQuarantine,
@@ -65,6 +67,26 @@ router.get('/attention', (_req, res) => {
 });
 
 // Quarantine (mute) management.
+// Scheduled Runs feed — sweep summaries + per-wave failures-first rollup (no step_results).
+router.get('/waves', (req, res) => {
+  try {
+    const limit = req.query.limit ? parseInt(req.query.limit as string, 10) : 30;
+    res.json(getScheduledWaves(Number.isFinite(limit) ? limit : 30));
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.get('/waves/:waveId', (req, res) => {
+  try {
+    const detail = getWaveDetail(req.params.waveId);
+    if (!detail) return res.status(404).json({ error: 'Wave not found' });
+    res.json(detail);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 router.get('/quarantine', (_req, res) => {
   try {
     res.json(listQuarantine());

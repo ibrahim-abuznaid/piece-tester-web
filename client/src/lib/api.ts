@@ -391,8 +391,56 @@ export interface PieceHealthRow {
   actions_passing: number;
   actions_failing: number;
   last_run_at: string | null;
-  failing_actions: { action: string; error: string | null }[];
+  failing_actions: { action: string; error: string | null; category: string; plan_id: number; run_id: number }[];
   recent: string[]; // last ~12 run statuses, oldest→newest
+}
+
+/** One schedule fire ("wave/sweep") — a summary row in the Scheduled Runs feed. */
+export interface WaveSummary {
+  wave_id: string;
+  schedule_id: number | null;
+  schedule_label: string | null;
+  started_at: string;
+  completed_at: string | null;
+  total: number;
+  passed: number;
+  failed: number;
+  running: number;
+}
+
+/** A failing (target) within a wave — enough to triage without loading step_results. */
+export interface WaveFailingRun {
+  run_id: number;
+  target_action: string;
+  target_type: string; // 'action' | 'trigger'
+  category: string;
+  error: string | null;
+  duration_ms: number | null;
+  started_at: string;
+}
+
+/** Per-piece rollup within a wave (failing runs enumerated, passing only counted). */
+export interface WavePiece {
+  piece_name: string;
+  total: number;
+  passed: number;
+  failed: number;
+  running: number;
+  worst_category: string | null;
+  failing: WaveFailingRun[];
+}
+
+/** Full detail of one wave — the failures-first drill for the Scheduled Runs feed. */
+export interface WaveDetail {
+  wave_id: string;
+  schedule_id: number | null;
+  schedule_label: string | null;
+  started_at: string;
+  total: number;
+  passed: number;
+  failed: number;
+  running: number;
+  pieces: WavePiece[];
 }
 
 export interface PlanRunRecord {
@@ -913,6 +961,8 @@ export const api = {
   },
   getPieceHealth: () => request<PieceHealthRow[]>('GET', '/reports/piece-health'),
   getAttention: () => request<AttentionItem[]>('GET', '/reports/attention'),
+  getScheduledWaves: (limit = 30) => request<WaveSummary[]>('GET', `/reports/waves?limit=${limit}`),
+  getWaveDetail: (waveId: string) => request<WaveDetail>('GET', `/reports/waves/${encodeURIComponent(waveId)}`),
   quarantineItem: (params: { piece_name: string; action_name?: string; reason?: string; expires_at?: string }) =>
     request<any>('POST', '/reports/quarantine', params),
   unquarantineItem: (id: number) => request<{ success: boolean }>('DELETE', `/reports/quarantine/${id}`),

@@ -191,3 +191,13 @@ export const NO_CUSTOM_HTTP_RULE = `## CRITICAL: Never Use Custom HTTP/API Calls
 ABSOLUTELY NEVER create steps that use custom_api_call, http_request, send_http_request, custom_action, or ANY action that sends a raw/custom HTTP request.
 These ALWAYS fail because auth tokens are managed internally by each piece.
 ONLY use the piece's own named/typed actions.`;
+
+/** Rule that the single test step must exercise the exact target action. */
+export const TARGET_ACTION_RULE = `## CRITICAL: The test step MUST use the EXACT target action
+The single \`test\` step MUST invoke the target action under test (the action named in the spec/context). NEVER substitute a different action — not a generic query/SOQL action (e.g. run_query), not a "search"/"advanced" variant, not custom_api_call — to make the test pass or to route around a bug in the target action.
+- The entire purpose is to test THAT action. Testing a different one is a FALSE PASS that hides real bugs.
+- If the target action is broken (throws, sends a malformed request, returns the wrong shape), the test SHOULD fail and surface the real error. A failing test on a genuinely broken action is a CORRECT and valuable outcome — do NOT engineer around it.
+- Setup/verify/cleanup steps MAY use other actions; only the \`test\` step is pinned to the target action.
+
+## Dynamic dropdowns are plain values — FILL them, don't avoid them
+A DROPDOWN / MULTI_SELECT_DROPDOWN value at execution time is just a plain scalar: the underlying API id/name (e.g. object="Contact", field="Email"). The executor passes it straight through — you do NOT need the live dropdown UI to run the action. Fill dynamic dropdowns with a concrete valid value taken from the source code or ap_get_piece_props. For cascading dropdowns (a prop whose refreshers depend on another prop, e.g. field depends on object), choose the parent value first, then a valid child value for it. Never swap to a different action just because the target action has dynamic dropdowns.`;

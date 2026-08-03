@@ -41,6 +41,15 @@ function validatePlanDeterministically(actionName: string, steps: TestPlanStep[]
 
   if (testSteps.length !== 1) {
     issues.push(`Expected exactly one test step, found ${testSteps.length}.`);
+  } else {
+    const testAction = testSteps[0].actionName;
+    if (testAction !== actionName) {
+      issues.push(
+        `The test step must exercise the target action "${actionName}", but it uses "${testAction}". ` +
+          `Do NOT substitute a different action to work around a bug in the target action — ` +
+          `if "${actionName}" is broken, the test SHOULD fail and surface the real error.`,
+      );
+    }
   }
 
   if (targetEffect === 'read') {

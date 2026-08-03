@@ -48,7 +48,8 @@ When you are done researching, respond with a structured summary in this EXACT f
 - Do NOT create or modify any resources -- research only
 - Do NOT call set_test_plan -- that is for the planner agent
 - Be thorough: fetch source code FIRST, then explore the API
-- Keep your findings factual and specific -- include exact IDs, exact field names, exact types`;
+- Keep your findings factual and specific -- include exact IDs, exact field names, exact types
+- The plan will test THIS action. Do NOT recommend substituting a different action (e.g. run_query, a "search"/"advanced" variant) to work around a bug you find in the target action. If the source reveals a bug, REPORT it as a finding and recommend concrete input values that exercise the real action -- the test is meant to catch that bug, not route around it.`;
 
 /**
  * MCP-augmented research prompt.
@@ -117,7 +118,8 @@ When you are done researching, respond with a structured summary in this EXACT f
 - Do NOT call set_test_plan -- that is for the planner agent
 - Be thorough: fetch source code AND call ap_get_piece_props for live dropdown values
 - Include the connection externalId in your findings -- the planner needs it
-- Keep your findings factual and specific -- include exact IDs, exact field names, exact types`;
+- Keep your findings factual and specific -- include exact IDs, exact field names, exact types
+- The plan will test THIS action. Do NOT recommend substituting a different action (e.g. run_query, a "search"/"advanced" variant) to work around a bug you find in the target action. If the source reveals a bug, REPORT it as a finding and recommend concrete input values that exercise the real action -- the test is meant to catch that bug, not route around it.`;
 
 export function buildResearchUserPrompt(
   piece: PieceMetadataFull,

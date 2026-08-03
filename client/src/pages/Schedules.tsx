@@ -1,13 +1,11 @@
 import { useState, useEffect } from 'react';
-import { Link } from 'react-router-dom';
+import { useSearchParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { api, PlanRunRecord, StepResult } from '../lib/api';
-import TestResultBadge from '../components/TestResultBadge';
+import { api } from '../lib/api';
+import ScheduledRunsFeed from '../components/ScheduledRunsFeed';
 import {
   Plus, Trash2, Pencil, Clock, CheckCircle, XCircle,
-  Power, PowerOff, CalendarClock, ScrollText, RefreshCw,
-  ChevronDown, ChevronRight, Loader2, SkipForward, MessageSquare,
-  Calendar, Play, Filter, Archive,
+  Power, PowerOff, CalendarClock, ScrollText, ChevronRight,
 } from 'lucide-react';
 
 // ── Types ──────────────────────────────────────────────────────────────────
@@ -87,82 +85,6 @@ function formatDateTime(iso: string): string {
   } catch { return iso; }
 }
 
-// Treat the naive-UTC `started_at` ("2026-06-22 08:48:37") as UTC so durations
-// aren't skewed by the local offset; `completed_at` is already ISO-UTC ("...Z").
-function parseTs(s?: string | null): number {
-  if (!s) return NaN;
-  if (/[zZ]$|[+-]\d{2}:?\d{2}$/.test(s)) return new Date(s).getTime();
-  return new Date(s.replace(' ', 'T') + 'Z').getTime();
-}
-
-function runDurationSec(run: PlanRunRecord): number | null {
-  if (!run.completed_at) return null;
-  const d = Math.round((parseTs(run.completed_at) - parseTs(run.started_at)) / 1000);
-  return Number.isFinite(d) && d >= 0 ? d : null;
-}
-
-function safeParseSteps(s: string): StepResult[] {
-  try { return JSON.parse(s) as StepResult[]; } catch { return []; }
-}
-
-/** Collapse a (often huge JSON) error into a one-line readable snippet. */
-function shortError(err: string): string {
-  let msg = err;
-  try { const o = JSON.parse(err); if (o && typeof o.message === 'string') msg = o.message; } catch { /* not JSON */ }
-  msg = msg.split('\n')[0].trim();
-  return msg.length > 130 ? msg.slice(0, 130) + '…' : msg;
-}
-
-function firstFailedStepError(run: PlanRunRecord): string | null {
-  const steps: StepResult[] = Array.isArray(run.step_results)
-    ? run.step_results
-    : (typeof run.step_results === 'string' ? safeParseSteps(run.step_results as any) : []);
-  const s = steps.find(x => x.status === 'failed');
-  return s?.error ? shortError(s.error) : null;
-}
-
-interface Wave {
-  key: string;
-  startTs: string;
-  scheduleId: number | null;   // which schedule fired this wave (null if unknown/legacy)
-  grouping: 'wave' | 'time';   // 'wave' = exact wave_id; 'time' = legacy gap heuristic
-  runs: PlanRunRecord[];
-}
-
-// A scheduled cron fire produces many runs at once — a "wave". Runs stamped with a
-// wave_id (fired after wave tracking landed) group EXACTLY by that id, so a wave maps
-// 1:1 to a real cron fire and can be linked back to its schedule. Older runs with no
-// wave_id fall back to the original heuristic: a new wave starts on a >10min idle gap.
-function clusterWaves(runs: PlanRunRecord[]): Wave[] {
-  const sorted = [...runs].sort((a, b) => parseTs(b.started_at) - parseTs(a.started_at));
-  const GAP_MS = 10 * 60 * 1000;
-  const waves: Wave[] = [];
-  const byWaveId = new Map<string, Wave>();
-  let legacyCur: Wave | null = null;
-
-  for (const r of sorted) {
-    if (r.wave_id) {
-      let w = byWaveId.get(r.wave_id);
-      if (!w) {
-        w = { key: r.wave_id, startTs: r.started_at, scheduleId: r.schedule_id ?? null, grouping: 'wave', runs: [] };
-        byWaveId.set(r.wave_id, w);
-        waves.push(w);
-      }
-      w.runs.push(r);
-      w.startTs = r.started_at;   // sorted desc → oldest-so-far = the fire time
-      legacyCur = null;           // a stamped run is a hard boundary for legacy grouping
-    } else {
-      const fits = legacyCur && (parseTs(legacyCur.startTs) - parseTs(r.started_at)) <= GAP_MS;
-      if (!fits) { legacyCur = { key: `t-${r.id}`, startTs: r.started_at, scheduleId: null, grouping: 'time', runs: [] }; waves.push(legacyCur); }
-      legacyCur!.runs.push(r);
-      legacyCur!.startTs = r.started_at;
-    }
-  }
-
-  // Order waves newest-fire-first (map insertion order isn't guaranteed chronological).
-  waves.sort((a, b) => parseTs(b.startTs) - parseTs(a.startTs));
-  return waves;
-}
 
 // ── Target type ────────────────────────────────────────────────────────────
 
@@ -216,7 +138,16 @@ function parseTargets(raw: string): ScheduleTarget[] {
 
 export default function Schedules() {
   const qc = useQueryClient();
-  const [tab, setTab] = useState<Tab>('schedules');
+  const [searchParams] = useSearchParams();
+  // Deep-link: /schedules?tab=logs&run=<id> opens the Scheduled Runs feed on a specific run
+  // (e.g. from the Health tab's "View run details").
+  const [tab, setTab] = useState<Tab>(searchParams.get('tab') === 'logs' ? 'logs' : 'schedules');
+  const focusRunId = searchParams.get('run') ? Number(searchParams.get('run')) : null;
+
+  // If the deep-link params change while already on the page, follow them.
+  useEffect(() => {
+    if (searchParams.get('tab') === 'logs') setTab('logs');
+  }, [searchParams]);
 
   // ── Schedules data ──
   const { data: schedules = [], isLoading } = useQuery({
@@ -233,26 +164,8 @@ export default function Schedules() {
     return acc;
   }, []);
 
-  // ── Log data: classic test runs (trigger_type=scheduled) ──
-  const { data: allHistory = [], refetch: refetchHistory, isFetching: fetchingHistory } = useQuery({
-    queryKey: ['history-all-logs'],
-    queryFn: () => api.listHistory(100, 0),
-    enabled: tab === 'logs',
-  });
-
-  // ── Log data: plan runs (trigger_type=scheduled) ──
-  const { data: allPlanRuns = [], refetch: refetchPlanRuns, isFetching: fetchingPlanRuns } = useQuery({
-    queryKey: ['plan-runs-all-logs'],
-    queryFn: () => api.listAllPlanRuns({ limit: 100 }),
-    enabled: tab === 'logs',
-  });
-
-  const scheduledHistory = (allHistory as any[]).filter(r => r.trigger_type === 'scheduled');
-  const scheduledPlanRuns = (allPlanRuns as PlanRunRecord[]).filter(r => r.trigger_type === 'scheduled');
-
-  // schedule_id → human label, so each wave can name the schedule that fired it.
-  const scheduleLabels: Record<number, string> = {};
-  for (const s of schedules as any[]) scheduleLabels[s.id] = s.label || `Schedule #${s.id}`;
+  // Scheduled Runs feed data is now fetched inside <ScheduledRunsFeed/> as slim server-side
+  // aggregates (getScheduledWaves / getWaveDetail) — no more shipping every run + step_results.
 
   // ── Form state ──
   const [showForm, setShowForm] = useState(false);
@@ -464,48 +377,9 @@ export default function Schedules() {
         </>
       )}
 
-      {/* ══════════════ TAB: RUN LOGS ══════════════ */}
+      {/* ══════════════ TAB: SCHEDULED RUNS ══════════════ */}
       {tab === 'logs' && (
-        <div className="space-y-8">
-          {/* What this tab is, vs the global Test Logs page */}
-          <div className="flex items-start justify-between gap-4">
-            <p className="text-xs text-gray-500 max-w-2xl">
-              Runs your <span className="text-gray-300">schedules</span> fired, grouped into
-              {' '}<span className="text-gray-300">waves</span> — one wave = one schedule fire, named by the
-              schedule that triggered it. For <span className="text-gray-300">all</span> test runs —
-              including manual tests you start from a piece — see{' '}
-              <Link to="/history" className="text-primary-400 hover:underline">Test Logs</Link>.
-            </p>
-            <button
-              onClick={() => { refetchHistory(); refetchPlanRuns(); }}
-              disabled={fetchingHistory || fetchingPlanRuns}
-              className="flex items-center gap-2 px-3 py-1.5 bg-gray-800 hover:bg-gray-700 rounded text-sm text-gray-400 disabled:opacity-50 shrink-0"
-            >
-              <RefreshCw size={14} className={fetchingHistory || fetchingPlanRuns ? 'animate-spin' : ''} />
-              Refresh
-            </button>
-          </div>
-
-              {/* ── Plan Runs (scheduled) ── */}
-          <section>
-            <h3 className="text-base font-semibold mb-3 flex items-center gap-2">
-              <CalendarClock size={16} className="text-primary-400" />
-              Plan Runs
-              <span className="text-xs font-normal text-gray-500 ml-1">({scheduledPlanRuns.length})</span>
-            </h3>
-            <ExpandablePlanRuns runs={scheduledPlanRuns} scheduleLabels={scheduleLabels} />
-          </section>
-
-          {/* ── Archived legacy runs (scheduled) ── */}
-          <section>
-            <h3 className="text-base font-semibold mb-3 flex items-center gap-2">
-              <Archive size={16} className="text-blue-400" />
-              Archived Runs (v1)
-              <span className="text-xs font-normal text-gray-500 ml-1">({scheduledHistory.length})</span>
-            </h3>
-            <ExpandableLegacyRuns runs={scheduledHistory} />
-          </section>
-        </div>
+        <ScheduledRunsFeed focusRunId={focusRunId} />
       )}
 
       {/* ══════════════ CREATE / EDIT MODAL ══════════════ */}
@@ -880,349 +754,3 @@ function TargetPicker({
   );
 }
 
-// ══════════════════════════════════════════════════════════════
-//  Expandable plan-run cards (reused from History page style)
-// ══════════════════════════════════════════════════════════════
-
-function ExpandablePlanRuns({ runs, scheduleLabels }: { runs: PlanRunRecord[]; scheduleLabels: Record<number, string> }) {
-  const [failedOnly, setFailedOnly] = useState(false);
-  const [expandedWave, setExpandedWave] = useState<string | null>(null); // null = default(first open), '__none__' = all closed
-  const [expandedRun, setExpandedRun] = useState<number | null>(null);
-
-  if (runs.length === 0) {
-    return (
-      <p className="text-sm text-gray-500 bg-gray-900 border border-gray-800 rounded-lg p-4">
-        No scheduled plan runs yet. Runs will appear here after your schedules fire.
-      </p>
-    );
-  }
-
-  const total = runs.length;
-  const passed = runs.filter(r => r.status === 'completed').length;
-  const failed = runs.filter(r => r.status === 'failed').length;
-  const running = runs.filter(r => r.status === 'running').length;
-
-  const view = failedOnly ? runs.filter(r => r.status === 'failed') : runs;
-  const waves = clusterWaves(view);
-
-  // Most recent wave is open by default; '__none__' means the user closed it.
-  const openKey = expandedWave === null ? (waves[0]?.key ?? null)
-    : expandedWave === '__none__' ? null
-    : expandedWave;
-  const toggleWave = (key: string) => setExpandedWave(openKey === key ? '__none__' : key);
-
-  return (
-    <div className="space-y-3">
-      {/* Summary + filter */}
-      <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-xs">
-        <span className="text-gray-400">{total} runs</span>
-        <span className="text-green-400">{passed} passed</span>
-        <span className="text-red-400">{failed} failed</span>
-        {running > 0 && <span className="text-blue-400">{running} running</span>}
-        <button
-          onClick={() => setFailedOnly(v => !v)}
-          className={`ml-auto flex items-center gap-1.5 px-2.5 py-1 rounded border transition-colors ${
-            failedOnly ? 'border-red-500/50 text-red-400 bg-red-500/10' : 'border-gray-700 text-gray-400 hover:text-gray-200'
-          }`}
-        >
-          <Filter size={11} /> Failed only
-        </button>
-      </div>
-
-      {waves.length === 0 ? (
-        <p className="text-sm text-gray-500 bg-gray-900 border border-gray-800 rounded-lg p-4">
-          {failedOnly ? 'No failed runs in this view. 🎉' : 'No runs to show.'}
-        </p>
-      ) : (
-        <div className="space-y-2">
-          {waves.map(wave => (
-            <WaveGroup
-              key={wave.key}
-              wave={wave}
-              scheduleLabels={scheduleLabels}
-              open={openKey === wave.key}
-              onToggle={() => toggleWave(wave.key)}
-              expandedRun={expandedRun}
-              onToggleRun={(id) => setExpandedRun(expandedRun === id ? null : id)}
-            />
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-// One collapsible group per schedule fire ("wave"): summary on the header,
-// the individual runs inside.
-function WaveGroup({ wave, scheduleLabels, open, onToggle, expandedRun, onToggleRun }: {
-  wave: Wave;
-  scheduleLabels: Record<number, string>;
-  open: boolean;
-  onToggle: () => void;
-  expandedRun: number | null;
-  onToggleRun: (id: number) => void;
-}) {
-  const total = wave.runs.length;
-  const passed = wave.runs.filter(r => r.status === 'completed').length;
-  const failed = wave.runs.filter(r => r.status === 'failed').length;
-  const running = wave.runs.filter(r => r.status === 'running').length;
-
-  const icon = running > 0 ? <Loader2 size={14} className="text-blue-400 animate-spin" />
-    : failed > 0 ? <XCircle size={14} className="text-red-400" />
-    : <CheckCircle size={14} className="text-green-400" />;
-  const border = failed > 0 ? 'border-red-500/20' : running > 0 ? 'border-blue-500/20' : 'border-gray-800';
-
-  // Name the schedule that fired this wave. Falls back to a generic "scheduled" badge
-  // when the schedule was deleted, or a muted "grouped by time" note for legacy runs
-  // that predate wave tracking (grouped by the 10-min heuristic, not a real fire).
-  const schedName = wave.scheduleId != null ? scheduleLabels[wave.scheduleId] : undefined;
-
-  return (
-    <div className={`border rounded-lg ${border} bg-gray-900/60 overflow-hidden`}>
-      <button
-        onClick={onToggle}
-        className="w-full flex items-center gap-3 px-4 py-2.5 text-left hover:bg-gray-800/40 transition-colors"
-      >
-        {open ? <ChevronDown size={14} className="text-gray-500" /> : <ChevronRight size={14} className="text-gray-500" />}
-        {icon}
-        <span className="text-sm font-medium text-gray-200">{formatDateTime(wave.startTs)}</span>
-        {schedName ? (
-          <span className="flex items-center gap-1 text-[10px] text-purple-300 bg-purple-500/10 border border-purple-500/20 px-1.5 py-0.5 rounded" title="Fired by this schedule">
-            <CalendarClock size={10} className="text-purple-400" /> {schedName}
-          </span>
-        ) : wave.grouping === 'time' ? (
-          <span className="flex items-center gap-1 text-[10px] text-gray-500 bg-gray-800 px-1.5 py-0.5 rounded" title="Legacy run grouped by time — predates wave tracking">
-            <Calendar size={10} className="text-gray-500" /> grouped by time
-          </span>
-        ) : (
-          <span className="flex items-center gap-1 text-[10px] text-gray-500 bg-gray-800 px-1.5 py-0.5 rounded">
-            <Calendar size={10} className="text-purple-400" /> scheduled
-          </span>
-        )}
-        <div className="flex-1" />
-        <div className="flex items-center gap-3 text-xs">
-          <span className={failed > 0 ? 'text-gray-400' : 'text-green-400'}>{passed}/{total} passed</span>
-          {failed > 0 && <span className="text-red-400 font-medium">{failed} failed</span>}
-          {running > 0 && <span className="text-blue-400">{running} running</span>}
-        </div>
-      </button>
-
-      {open && (
-        <div className="border-t border-gray-800/50 px-2 py-2 space-y-1.5 bg-gray-950/30">
-          {wave.runs.map(run => (
-            <PlanRunCard
-              key={run.id}
-              run={run}
-              expanded={expandedRun === run.id}
-              onToggle={() => onToggleRun(run.id)}
-            />
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function PlanRunCard({ run, expanded, onToggle }: { run: PlanRunRecord; expanded: boolean; onToggle: () => void }) {
-  const stepResults: StepResult[] = Array.isArray(run.step_results)
-    ? run.step_results
-    : (typeof run.step_results === 'string' ? JSON.parse(run.step_results as any) : []);
-
-  const stepsCompleted = stepResults.filter(s => s.status === 'completed').length;
-  const stepsFailed    = stepResults.filter(s => s.status === 'failed').length;
-  const totalSteps     = stepResults.length;
-  const duration = runDurationSec(run);
-
-  const statusBorder = run.status === 'completed' ? 'border-green-500/20'
-    : run.status === 'failed' ? 'border-red-500/20'
-    : 'border-gray-800';
-
-  const statusIcon = run.status === 'completed' ? <CheckCircle size={14} className="text-green-400" />
-    : run.status === 'failed' ? <XCircle size={14} className="text-red-400" />
-    : run.status === 'running' ? <Loader2 size={14} className="text-blue-400 animate-spin" />
-    : <Clock size={14} className="text-gray-500" />;
-
-  return (
-    <div className={`border rounded-lg ${statusBorder} bg-gray-900 overflow-hidden`}>
-      <button
-        onClick={onToggle}
-        className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-gray-800/50 transition-colors"
-      >
-        {statusIcon}
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2">
-            <span className="text-sm font-medium text-gray-200">{run.target_action}</span>
-            <span className="text-[10px] text-gray-500 bg-gray-800 px-1.5 py-0.5 rounded">{run.piece_name}</span>
-          </div>
-          <div className="flex items-center gap-2 mt-0.5">
-            <span className="flex items-center gap-1 text-[10px] text-gray-500">
-              <Calendar size={10} className="text-purple-400" /> scheduled
-            </span>
-            <span className="text-[10px] text-gray-600">#{run.id}</span>
-          </div>
-        </div>
-
-        {/* Step mini-dots */}
-        <div className="flex items-center gap-0.5">
-          {stepResults.map((sr, i) => {
-            const color = sr.status === 'completed' ? 'bg-green-500'
-              : sr.status === 'failed' ? 'bg-red-500'
-              : sr.status === 'running' ? 'bg-blue-500 animate-pulse'
-              : sr.status === 'waiting' ? 'bg-yellow-500'
-              : sr.status === 'skipped' ? 'bg-gray-600' : 'bg-gray-700';
-            return <div key={i} className={`w-2.5 h-1.5 rounded-sm ${color}`} />;
-          })}
-        </div>
-
-        <div className="flex items-center gap-3 text-[10px] text-gray-500">
-          <span>{stepsCompleted}/{totalSteps} steps</span>
-          {stepsFailed > 0 && <span className="text-red-400">{stepsFailed} failed</span>}
-          {duration != null && <span>{duration}s</span>}
-          <span>{formatDateTime(run.started_at)}</span>
-        </div>
-
-        {expanded ? <ChevronDown size={14} className="text-gray-500 flex-shrink-0" /> : <ChevronRight size={14} className="text-gray-500 flex-shrink-0" />}
-      </button>
-
-      {run.status === 'failed' && !expanded && (() => {
-        const reason = firstFailedStepError(run);
-        return reason ? (
-          <div className="px-4 pb-2.5 -mt-1 ml-7 flex items-start gap-1.5 text-[11px] text-red-300/80">
-            <span className="text-red-500 shrink-0">└</span>
-            <span className="font-mono break-all">{reason}</span>
-          </div>
-        ) : null;
-      })()}
-
-      {expanded && (
-        <div className="border-t border-gray-800/50 px-4 py-3 space-y-1">
-          {stepResults.length === 0 && <p className="text-xs text-gray-500">No step results recorded.</p>}
-          {stepResults.map((sr, idx) => (
-            <StepResultRow key={sr.stepId || String(idx)} sr={sr} idx={idx} />
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function StepResultRow({ sr, idx }: { sr: StepResult; idx: number }) {
-  const [showOutput, setShowOutput] = useState(false);
-
-  const icon = sr.status === 'completed' ? <CheckCircle size={12} className="text-green-400" />
-    : sr.status === 'failed' ? <XCircle size={12} className="text-red-400" />
-    : sr.status === 'running' ? <Loader2 size={12} className="text-blue-400 animate-spin" />
-    : sr.status === 'waiting' ? <MessageSquare size={12} className="text-yellow-400" />
-    : sr.status === 'skipped' ? <SkipForward size={12} className="text-gray-600" />
-    : <Clock size={12} className="text-gray-600" />;
-
-  return (
-    <div>
-      <div className={`flex items-center gap-2 px-2 py-1.5 rounded text-xs ${
-        sr.status === 'failed' ? 'bg-red-500/5' :
-        sr.status === 'completed' ? 'bg-green-500/5' : ''
-      }`}>
-        <span className="text-[10px] text-gray-600 w-3 text-right">{idx + 1}</span>
-        {icon}
-        <span className="flex-1 truncate text-gray-300">{sr.label || sr.stepId}</span>
-        {sr.label && <span className="text-[10px] text-gray-600 font-mono shrink-0">{sr.stepId}</span>}
-        {sr.duration_ms > 0 && (
-          <span className="text-[10px] text-gray-500">{(sr.duration_ms / 1000).toFixed(1)}s</span>
-        )}
-        {sr.output != null && sr.status === 'completed' && (
-          <button
-            onClick={() => setShowOutput(!showOutput)}
-            className="text-[10px] text-gray-500 hover:text-gray-300 px-1"
-          >
-            {showOutput ? 'hide' : 'output'}
-          </button>
-        )}
-      </div>
-      {sr.error && (
-        <div className="ml-8 mt-1 text-[10px] text-red-400 bg-red-500/5 rounded p-1.5 font-mono whitespace-pre-wrap">
-          {sr.error}
-        </div>
-      )}
-      {showOutput && sr.output != null && (
-        <div className="ml-8 mt-1 text-[10px] text-green-400/60 bg-green-500/5 rounded p-1.5 font-mono max-h-40 overflow-y-auto whitespace-pre-wrap">
-          {typeof sr.output === 'string' ? sr.output : JSON.stringify(sr.output, null, 2)}
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ══════════════════════════════════════════════════════════════
-//  Expandable legacy test-run rows
-// ══════════════════════════════════════════════════════════════
-
-function ExpandableLegacyRuns({ runs }: { runs: any[] }) {
-  const [expandedId, setExpandedId] = useState<number | null>(null);
-  const [detail, setDetail] = useState<any>(null);
-
-  async function toggle(id: number) {
-    if (expandedId === id) { setExpandedId(null); setDetail(null); return; }
-    setExpandedId(id);
-    setDetail(null);
-    const data = await api.getHistoryRun(id);
-    setDetail(data);
-  }
-
-  if (runs.length === 0) {
-    return (
-      <p className="text-sm text-gray-500 bg-gray-900 border border-gray-800 rounded-lg p-4">
-        No scheduled test runs yet.
-      </p>
-    );
-  }
-
-  return (
-    <div className="space-y-2">
-      {runs.map((r: any) => (
-        <div key={r.id} className="bg-gray-900 border border-gray-800 rounded-lg overflow-hidden">
-          <button
-            onClick={() => toggle(r.id)}
-            className="w-full flex items-center justify-between px-4 py-3 hover:bg-gray-800/50 transition-colors text-left"
-          >
-            <div className="flex items-center gap-3">
-              {expandedId === r.id ? <ChevronDown size={14} className="text-gray-500" /> : <ChevronRight size={14} className="text-gray-500" />}
-              <span className="text-sm font-medium">Run #{r.id}</span>
-              <TestResultBadge status={r.status} />
-              <span className="text-[10px] px-1.5 py-0.5 rounded bg-purple-500/10 text-purple-400">scheduled</span>
-            </div>
-            <div className="flex items-center gap-4 text-xs text-gray-500">
-              <span className="text-green-400">{r.passed ?? 0} passed</span>
-              <span className="text-red-400">{(r.failed ?? 0) + (r.errors ?? 0)} failed</span>
-              <span className="text-gray-500">{r.total_tests ?? 0} total</span>
-              <span>{formatDateTime(r.started_at)}</span>
-            </div>
-          </button>
-
-          {expandedId === r.id && (
-            <div className="border-t border-gray-800 px-4 py-3 space-y-2">
-              {!detail && <p className="text-xs text-gray-500 flex items-center gap-2"><Loader2 size={12} className="animate-spin" /> Loading details…</p>}
-              {detail && detail.results?.length === 0 && <p className="text-xs text-gray-500">No individual results recorded.</p>}
-              {detail?.results?.map((res: any, i: number) => (
-                <div key={i} className="flex items-center justify-between py-1.5 px-3 bg-gray-800/50 rounded text-sm">
-                  <div className="flex items-center gap-3">
-                    <TestResultBadge status={res.status} />
-                    <span className="text-gray-300">{res.piece_name}</span>
-                    <span className="text-gray-500 text-xs">{res.action_name}</span>
-                  </div>
-                  <div className="flex items-center gap-3 text-xs text-gray-500">
-                    {res.duration_ms > 0 && <span>{(res.duration_ms / 1000).toFixed(1)}s</span>}
-                    {res.error_message && (
-                      <span className="text-red-400 max-w-xs truncate" title={res.error_message}>
-                        {res.error_message}
-                      </span>
-                    )}
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      ))}
-    </div>
-  );
-}
