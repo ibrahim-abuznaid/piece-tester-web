@@ -1,4 +1,4 @@
-import { RUNTIME_TOKENS_DOC, INPUT_MAPPING_DOC, NO_CUSTOM_HTTP_RULE } from './shared.js';
+import { RUNTIME_TOKENS_DOC, INPUT_MAPPING_DOC, NO_CUSTOM_HTTP_RULE, TARGET_ACTION_RULE } from './shared.js';
 
 export const PLANNER_SYSTEM_PROMPT = `You are a PLANNER agent for an Activepieces test planning system.
 
@@ -28,6 +28,7 @@ ${INPUT_MAPPING_DOC}
 - Setup steps CREATE fresh resources each run -- this solves idempotency automatically.
 - Use \`{{$uuid}}\` or \`{{$timestamp}}\` tokens in resource names for uniqueness.
 - AVOID requiresApproval: true -- plans run unattended on schedules.
+- The test step MUST use the EXACT target action -- never substitute a different action to dodge a bug (see rule below).
 - The test step MUST have ALL required fields filled.
 - ALWAYS add output \`assertions\` to the test step (1-4 of them): checks on the step output that prove the piece actually did the right thing, not merely that it returned without error. A green with NO assertions only proves "didn't throw". Assert that created IDs exist (op:exists), returned lists are non_empty, and echoed fields equal the input (op:equals). Each assertion is { path, op, value? } where path is a dot-path into the output ("" = whole output).
 - Keep plans concise: typically 2-4 steps (setup + test, maybe verify/cleanup).
@@ -36,6 +37,8 @@ ${INPUT_MAPPING_DOC}
 - For READ-ONLY target actions, avoid write-heavy non-test steps like \`send_*\`, \`create_*\`, \`update_*\`, \`delete_*\`, \`archive_*\`, \`move_*\`, or \`reply_*\` unless they are strictly required and explicitly justified by the spec.
 - ALWAYS include agent_memory summarizing your decisions.
 - ALWAYS call set_test_plan at the end.
+
+${TARGET_ACTION_RULE}
 
 ${NO_CUSTOM_HTTP_RULE}`;
 
@@ -85,6 +88,7 @@ Do NOT wrap it with {{connections.xxx}} -- pass the bare externalId.
 - Setup steps CREATE fresh resources each run -- this solves idempotency automatically.
 - Use \`{{$uuid}}\` or \`{{$timestamp}}\` tokens in resource names for uniqueness.
 - AVOID requiresApproval: true -- plans run unattended on schedules.
+- The test step MUST use the EXACT target action -- never substitute a different action to dodge a bug (see rule below).
 - The test step MUST have ALL required fields filled.
 - ALWAYS add output \`assertions\` to the test step (1-4 of them): checks on the step output that prove the piece actually did the right thing, not merely that it returned without error. A green with NO assertions only proves "didn't throw". Assert that created IDs exist (op:exists), returned lists are non_empty, and echoed fields equal the input (op:equals). Each assertion is { path, op, value? } where path is a dot-path into the output ("" = whole output).
 - Keep plans concise: typically 2-4 steps (setup + test, maybe verify/cleanup).
@@ -93,6 +97,8 @@ Do NOT wrap it with {{connections.xxx}} -- pass the bare externalId.
 - ALWAYS include agent_memory summarizing your decisions.
 - ALWAYS validate all steps with ap_validate_step_config before calling set_test_plan.
 - ALWAYS call set_test_plan at the end.
+
+${TARGET_ACTION_RULE}
 
 ${NO_CUSTOM_HTTP_RULE}`;
 

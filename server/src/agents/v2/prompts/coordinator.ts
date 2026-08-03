@@ -6,7 +6,7 @@
 
 import type { PieceMetadataFull, PieceActionMeta } from '../../../services/ap-client.js';
 import type { ResearchFindings } from '../types.js';
-import { buildPieceContext, buildActionProperties, buildActionsList, buildLessonsBlock, buildMemoryBlock, RUNTIME_TOKENS_DOC, INPUT_MAPPING_DOC, NO_CUSTOM_HTTP_RULE } from './shared.js';
+import { buildPieceContext, buildActionProperties, buildActionsList, buildLessonsBlock, buildMemoryBlock, RUNTIME_TOKENS_DOC, INPUT_MAPPING_DOC, NO_CUSTOM_HTTP_RULE, TARGET_ACTION_RULE } from './shared.js';
 
 const AUTH_PROP_TYPES = ['OAUTH2', 'SECRET_TEXT', 'BASIC_AUTH', 'CUSTOM_AUTH'];
 const SKIP_PROP_TYPES = ['MARKDOWN'];
@@ -181,10 +181,13 @@ export function synthesizePlannerSpec(
   lines.push('');
   lines.push(INPUT_MAPPING_DOC);
   lines.push('');
+  lines.push(TARGET_ACTION_RULE);
+  lines.push('');
   lines.push(NO_CUSTOM_HTTP_RULE);
 
   lines.push('');
   lines.push('## Instructions');
+  lines.push(`The single test step MUST use the target action "${actionName}". Fill its dynamic dropdown props with concrete valid values -- do NOT swap in a different action.`);
   if (findings.targetEffect === 'read') {
     lines.push('Create a plan for a READ-ONLY target action.');
     lines.push('Prefer a single test step or read-only supporting steps.');
