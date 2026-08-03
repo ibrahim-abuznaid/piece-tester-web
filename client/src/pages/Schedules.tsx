@@ -3,6 +3,7 @@ import { useSearchParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import ScheduledRunsFeed from '../components/ScheduledRunsFeed';
+import CoverageCockpit from '../components/CoverageCockpit';
 import {
   Plus, Trash2, Pencil, Clock, CheckCircle, XCircle,
   Power, PowerOff, CalendarClock, ScrollText, ChevronRight,
@@ -249,9 +250,9 @@ export default function Schedules() {
       <div className="flex items-center justify-between mb-6">
         <div>
           <h2 className="text-2xl font-bold">Schedules</h2>
-          <p className="text-sm text-gray-500 mt-0.5">Automatically run tests on a recurring schedule.</p>
+          <p className="text-sm text-gray-500 mt-0.5">Get your pieces under continuous testing.</p>
         </div>
-        {tab === 'schedules' && (
+        {false && tab === 'schedules' && (
           <button
             onClick={openCreate}
             className="flex items-center gap-2 px-4 py-2 bg-primary-600 hover:bg-primary-700 rounded text-sm font-medium"
@@ -281,8 +282,9 @@ export default function Schedules() {
         ))}
       </div>
 
-      {/* ══════════════ TAB: SCHEDULES ══════════════ */}
-      {tab === 'schedules' && (
+      {/* ══════════════ TAB: COVERAGE ══════════════ */}
+      {tab === 'schedules' && <CoverageCockpit />}
+      {false && tab === 'schedules' && (
         <>
           {isLoading ? (
             <p className="text-gray-500 text-sm">Loading…</p>
