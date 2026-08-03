@@ -5,8 +5,16 @@
 set -e
 cd /opt/piece-tester
 
-echo "==> Pulling latest code..."
-git pull
+echo "==> Pulling latest code (main)..."
+git fetch origin
+git checkout main
+git reset --hard origin/main
+
+echo "==> Installing dependencies..."
+npm ci
+
+echo "==> Building client..."
+npm run build
 
 echo "==> Stopping PM2 process (if running)..."
 pm2 stop piece-tester 2>/dev/null || true
@@ -21,4 +29,5 @@ pm2 start ecosystem.config.cjs
 pm2 save
 
 echo "==> Deploy complete."
+curl -s localhost:4000/api/health && echo "  <- health OK"
 pm2 list
