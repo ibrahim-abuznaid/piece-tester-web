@@ -265,8 +265,8 @@ export default function Schedules() {
       {/* ── Tabs ── */}
       <div className="flex border-b border-gray-800 mb-6">
         {([
-          { id: 'schedules', label: 'Schedules', icon: CalendarClock },
-          { id: 'logs',      label: 'Scheduled Runs',  icon: ScrollText },
+          { id: 'schedules', label: 'Coverage', icon: CalendarClock },
+          { id: 'logs',      label: 'Runs',  icon: ScrollText },
         ] as { id: Tab; label: string; icon: any }[]).map(({ id, label, icon: Icon }) => (
           <button
             key={id}

@@ -257,6 +257,7 @@ export default function CoverageCockpit() {
                   onEnroll={() => enroll([r.piece_name], DEFAULT_CADENCE)}
                   onGenPlans={() => genPlans([r.piece_name])}
                   onOpenPlans={() => navigate(`/pieces/${encodeURIComponent(r.piece_name)}`)}
+                  onOpenRuns={() => navigate(`/schedules?tab=logs&run=${r.last_run_id}`)}
                   onEdit={() => setModal({
                     mode: 'cadence',
                     pieces: [r.piece_name],
@@ -298,7 +299,7 @@ function validConfig(c: any): ScheduleConfig | undefined {
 // ── Row ──────────────────────────────────────────────────────────────────────
 
 function Row({
-  r, checked, onToggle, onConnect, onEnroll, onGenPlans, onOpenPlans, onEdit, busy,
+  r, checked, onToggle, onConnect, onEnroll, onGenPlans, onOpenPlans, onOpenRuns, onEdit, busy,
 }: {
   r: CoverageRow;
   checked: boolean;
@@ -307,6 +308,7 @@ function Row({
   onEnroll: () => void;
   onGenPlans: () => void;
   onOpenPlans: () => void;
+  onOpenRuns: () => void;
   onEdit: () => void;
   busy: boolean;
 }) {
@@ -320,7 +322,17 @@ function Row({
       <div className="min-w-0">
         <div className="flex items-center gap-2">
           {r.logo_url && <img src={r.logo_url} alt="" className="w-4 h-4 rounded-sm flex-shrink-0" />}
-          <span className="truncate font-medium">{r.display_name}</span>
+          {r.last_run_id ? (
+            <button
+              onClick={onOpenRuns}
+              title="Go to this piece's latest run"
+              className="truncate font-medium text-left hover:text-primary-300 hover:underline"
+            >
+              {r.display_name}
+            </button>
+          ) : (
+            <span className="truncate font-medium">{r.display_name}</span>
+          )}
         </div>
         <div className="text-[11px] text-gray-600 truncate">{shortName(r.piece_name)}</div>
       </div>

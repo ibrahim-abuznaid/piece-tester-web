@@ -417,6 +417,7 @@ export interface CoverageRow {
   health: 'failing' | 'healthy' | 'unknown' | null;
   actions_failing: number;
   last_run_at: string | null;
+  last_run_id: number | null;
 }
 
 /** One schedule fire ("wave/sweep") — a summary row in the Scheduled Runs feed. */
@@ -465,6 +466,8 @@ export interface WaveDetail {
   failed: number;
   running: number;
   pieces: WavePiece[];
+  covered_total: number;
+  covered_untested: number;
 }
 
 export interface PlanRunRecord {

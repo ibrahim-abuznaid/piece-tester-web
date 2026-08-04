@@ -46,13 +46,25 @@ export function describeConfig(cfg: ScheduleConfig, tz: string): string {
   }
 }
 
+/** Compact cadence label for badges/feeds: "Daily 06:00", "Hourly :00", "Weekly Mon 06:00". */
+export function shortLabel(cfg: ScheduleConfig): string {
+  const pad = (n: number) => String(n).padStart(2, '0');
+  const t = `${pad(cfg.hour)}:${pad(cfg.minute)}`;
+  switch (cfg.frequency) {
+    case 'hourly':  return `Hourly :${pad(cfg.minute)}`;
+    case 'daily':   return `Daily ${t}`;
+    case 'weekly':  return `Weekly ${DAYS_OF_WEEK[cfg.dayOfWeek].slice(0, 3)} ${t}`;
+    case 'monthly': return `Monthly d${cfg.dayOfMonth} ${t}`;
+  }
+}
+
 /** Turn a config + timezone into the payload the coverage endpoints expect. */
 export function buildCadencePayload(cfg: ScheduleConfig, timezone: string): CadencePayload {
   return {
     cron_expression: configToCron(cfg),
     schedule_config: JSON.stringify(cfg),
     timezone,
-    label: describeConfig(cfg, timezone),
+    label: shortLabel(cfg),
   };
 }
 

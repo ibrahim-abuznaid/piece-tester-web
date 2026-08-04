@@ -1056,6 +1056,8 @@ export interface WaveDetail {
   failed: number;
   running: number;
   pieces: WavePiece[];         // failing pieces first
+  covered_total: number;       // pieces covered right now (enabled-schedule targets)
+  covered_untested: number;    // covered pieces with no approved plans (a run can't test them)
 }
 
 // How piece-implicating a category is — drives worst_category + failure ordering.
@@ -1154,6 +1156,7 @@ export function getWaveDetail(waveId: string): WaveDetail | null {
     started_at: meta?.started_at ?? '',
     ...agg,
     pieces,
+    ...getCoverageCounts(),
   };
 }
 
@@ -1563,6 +1566,7 @@ export interface CoverageRow {
   health: 'failing' | 'healthy' | 'unknown' | null; // null = never run
   actions_failing: number;
   last_run_at: string | null;
+  last_run_id: number | null; // latest SCHEDULED run for the piece (for the Runs deep-link)
 }
 
 /** A cadence payload sent by the client (already turned into cron + config). */
@@ -1629,6 +1633,15 @@ export function getCoverage(
   // Current health per piece (reused verbatim from the Health board).
   const healthMap = new Map(getPieceHealth().map(h => [h.piece_name, h]));
 
+  // Latest SCHEDULED run per piece (max id = most recent) — used to deep-link the Runs feed.
+  const lastRunRows = db.all<{ piece_name: string; last_run_id: number }>(`
+    SELECT p.piece_name AS piece_name, MAX(r.id) AS last_run_id
+    FROM test_plan_runs r JOIN test_plans p ON p.id = r.plan_id
+    WHERE r.trigger_type = 'scheduled'
+    GROUP BY p.piece_name
+  `);
+  const lastRunMap = new Map(lastRunRows.map(r => [r.piece_name, r.last_run_id]));
+
   return catalog.map(p => {
     const cover = coverMap.get(p.name);
     const covered = !!cover || !!allPiecesSchedule;
@@ -1650,6 +1663,7 @@ export function getCoverage(
       health: h ? h.status : null,
       actions_failing: h ? h.actions_failing : 0,
       last_run_at: h ? h.last_run_at : null,
+      last_run_id: lastRunMap.get(p.name) ?? null,
     };
   });
 }
@@ -1713,4 +1727,26 @@ export function unenrollPieces(pieceNames: string[]): void {
 export function setPiecesCadence(pieceNames: string[], cadence: CadenceInput): void {
   unenrollPieces(pieceNames);
   enrollPieces(pieceNames, cadence);
+}
+
+/**
+ * Counts for the Runs feed's coverage context: how many pieces are covered right now
+ * (targets of an enabled schedule), and how many of those have no approved plans — so a
+ * run can't actually test them.
+ */
+export function getCoverageCounts(): { covered_total: number; covered_untested: number } {
+  const db = getDb();
+  const covered = new Set<string>();
+  for (const s of listSchedules()) {
+    if (!s.enabled) continue;
+    for (const t of parseTargetsJson(s.targets)) covered.add(t.piece_name);
+  }
+  if (covered.size === 0) return { covered_total: 0, covered_untested: 0 };
+  const approved = new Set(
+    db.all<{ piece_name: string }>(`SELECT DISTINCT piece_name FROM test_plans WHERE status = 'approved'`)
+      .map(r => r.piece_name),
+  );
+  let untested = 0;
+  for (const p of covered) if (!approved.has(p)) untested++;
+  return { covered_total: covered.size, covered_untested: untested };
 }

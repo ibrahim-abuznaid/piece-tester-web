@@ -10,9 +10,9 @@ import {
 } from 'lucide-react';
 
 /**
- * Sweep-first Scheduled Runs feed (Phase 1 of the redesign — see docs/SCHEDULED-RUNS-UX.md).
+ * Runs feed — each run is one schedule fire testing your covered pieces (see docs/SCHEDULED-RUNS-UX.md).
  *
- * Left: a rail of sweeps (one per schedule fire). Right: the selected sweep's summary + a
+ * Left: a rail of runs (one per schedule fire). Right: the selected run's summary + a
  * failures-first Piece → Target drill. step_results are NEVER in the list — a run's steps load
  * lazily (getPlanRun) only when you expand it. Scales with #failures, not #runs.
  */
@@ -85,12 +85,13 @@ export default function ScheduledRunsFeed({ focusRunId }: { focusRunId?: number 
     if (selectedWaveId == null && waves.length > 0) setSelectedWaveId(waves[0].wave_id);
   }, [waves, selectedWaveId]);
 
-  if (isLoading) return <p className="text-sm text-gray-400">Loading sweeps…</p>;
+  if (isLoading) return <p className="text-sm text-gray-400">Loading runs…</p>;
 
   if (waves.length === 0) {
     return (
       <p className="text-sm text-gray-500 bg-gray-900 border border-gray-800 rounded-lg p-4">
-        No scheduled sweeps yet. Runs appear here after a schedule fires.
+        No runs yet — enroll pieces in{' '}
+        <Link to="/schedules" className="text-primary-400 hover:underline">Coverage</Link> to start.
       </p>
     );
   }
@@ -106,9 +107,10 @@ export default function ScheduledRunsFeed({ focusRunId }: { focusRunId?: number 
     <div className="space-y-4">
       <div className="flex items-start justify-between gap-4">
         <p className="text-xs text-gray-500 max-w-2xl">
-          Each <span className="text-gray-300">sweep</span> is one schedule fire. Pick one to see what it
-          did — failures first, grouped by piece. For <span className="text-gray-300">all</span> runs
-          (including manual tests) see <Link to="/history" className="text-primary-400 hover:underline">Test Logs</Link>.
+          Each <span className="text-gray-300">run</span> tests your <span className="text-gray-300">covered</span> pieces
+          on a cadence. Pick one to see what it did — failures first, grouped by piece. For{' '}
+          <span className="text-gray-300">all</span> runs (including manual tests) see{' '}
+          <Link to="/history" className="text-primary-400 hover:underline">Test Logs</Link>.
         </p>
         <button
           onClick={() => refetch()}
@@ -137,7 +139,7 @@ export default function ScheduledRunsFeed({ focusRunId }: { focusRunId?: number 
                 expandedRun={expandedRun}
                 onToggleRun={id => setExpandedRun(expandedRun === id ? null : id)}
               />
-            : <p className="text-sm text-gray-500">Select a sweep.</p>}
+            : <p className="text-sm text-gray-500">Select a run.</p>}
         </div>
       </div>
     </div>
@@ -189,7 +191,7 @@ function WaveDetailView({
   });
   const [showPassing, setShowPassing] = useState(false);
 
-  if (isLoading || !detail) return <p className="text-sm text-gray-400">Loading sweep…</p>;
+  if (isLoading || !detail) return <p className="text-sm text-gray-400">Loading run…</p>;
 
   const failingPieces = detail.pieces.filter(p => p.failed > 0);
   const passingPieces = detail.pieces.filter(p => p.failed === 0);
@@ -205,19 +207,29 @@ function WaveDetailView({
               <CalendarClock size={9} /> {detail.schedule_label}
             </span>
           )}
-          <span className="text-xs text-gray-500">· {detail.pieces.length} pieces · {detail.total} targets</span>
+          <span className="text-xs text-gray-500">
+            · {detail.pieces.length}{detail.covered_total > 0 ? ` of ${detail.covered_total} covered` : ' pieces'} tested
+          </span>
         </div>
         <div className="flex items-center gap-4 mt-1.5 text-sm">
           <span className="text-green-400">{detail.passed} passed</span>
-          <span className={detail.failed > 0 ? 'text-red-400 font-medium' : 'text-gray-500'}>{detail.failed} failed</span>
+          <span className={detail.failed > 0 ? 'text-red-400 font-medium' : 'text-gray-500'}>
+            {detail.failed} {detail.failed === 1 ? 'check' : 'checks'} failing
+          </span>
           {detail.running > 0 && <span className="text-blue-400">{detail.running} running</span>}
         </div>
+        {detail.covered_untested > 0 && (
+          <p className="text-xs text-amber-300/80 mt-1.5">
+            {detail.covered_untested} covered but untested (no plans) —{' '}
+            <Link to="/schedules" className="text-primary-400 hover:underline">fix in Coverage</Link>
+          </p>
+        )}
       </div>
 
       {/* Failures first */}
       {failingPieces.length === 0 ? (
         <div className="bg-gray-900 border border-gray-800 rounded-lg p-4 text-sm text-gray-400 flex items-center gap-2">
-          <CheckCircle size={15} className="text-green-400" /> Every target in this sweep passed. 🎉
+          <CheckCircle size={15} className="text-green-400" /> Every check in this run passed. 🎉
         </div>
       ) : (
         <div className="space-y-1.5">
@@ -267,7 +279,7 @@ function PieceGroup({ piece, open, onToggle, expandedRun, onToggleRun }: {
         <span className="w-2 h-2 rounded-full bg-red-500 shrink-0" />
         <span className="text-sm font-medium text-gray-200 truncate">{clean(piece.piece_name)}</span>
         <span className="text-xs text-gray-400">{piece.passed}/{piece.total} ✓</span>
-        <span className="text-xs text-red-400 font-medium">{piece.failed} failed</span>
+        <span className="text-xs text-red-400 font-medium">{piece.failed} {piece.failed === 1 ? 'check' : 'checks'} failed</span>
         <div className="ml-auto"><CategoryBadge category={piece.worst_category} /></div>
       </button>
 
