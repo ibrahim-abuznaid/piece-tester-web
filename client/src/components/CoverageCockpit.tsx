@@ -10,7 +10,7 @@ import {
   CadenceModal, ScheduleConfig, DEFAULT_CADENCE, DEFAULT_CADENCE_LABEL,
 } from './CadenceEditor';
 
-type Filter = 'all' | 'not_covered' | 'covered' | 'needs_plans' | 'failing';
+type Filter = 'all' | 'not_connected' | 'connected' | 'not_covered' | 'covered' | 'needs_plans' | 'failing';
 
 const shortName = (p: string) => p.replace(/^@[^/]+\/piece-/, '');
 
@@ -52,11 +52,13 @@ export default function CoverageCockpit() {
     return rows.filter(r => {
       if (q && !r.display_name.toLowerCase().includes(q) && !r.piece_name.toLowerCase().includes(q)) return false;
       switch (filter) {
-        case 'not_covered': return !r.covered;
-        case 'covered':     return r.covered;
-        case 'needs_plans': return r.covered && !r.has_plans;
-        case 'failing':     return r.health === 'failing';
-        default:            return true;
+        case 'not_connected': return !r.connected;
+        case 'connected':     return r.connected;
+        case 'not_covered':   return !r.covered;
+        case 'covered':       return r.covered;
+        case 'needs_plans':   return r.covered && !r.has_plans;
+        case 'failing':       return r.health === 'failing';
+        default:              return true;
       }
     });
   }, [rows, search, filter]);
@@ -156,7 +158,9 @@ export default function CoverageCockpit() {
           />
         </div>
         {([
-          ['all', 'All'], ['not_covered', 'Not covered'], ['covered', 'Covered'],
+          ['all', 'All'],
+          ['not_connected', 'Not connected'], ['connected', 'Connected'],
+          ['not_covered', 'Not covered'], ['covered', 'Covered'],
           ['needs_plans', 'Needs plans'], ['failing', 'Failing'],
         ] as [Filter, string][]).map(([f, label]) => (
           <button
