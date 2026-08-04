@@ -1,8 +1,7 @@
-import { BrowserRouter, Routes, Route } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import Layout from './components/Layout';
 import Dashboard from './pages/Dashboard';
-import Pieces from './pages/Pieces';
 import PieceDetail from './pages/PieceDetail';
 import Connections from './pages/Connections';
 import TestRunner from './pages/TestRunner';
@@ -23,7 +22,7 @@ export default function App() {
         <Routes>
           <Route element={<Layout />}>
             <Route path="/" element={<Dashboard />} />
-            <Route path="/pieces" element={<Pieces />} />
+            <Route path="/pieces" element={<Navigate to="/schedules" replace />} />
             <Route path="/pieces/:name" element={<PieceDetail />} />
             <Route path="/connections" element={<Connections />} />
             <Route path="/test-runner" element={<TestRunner />} />

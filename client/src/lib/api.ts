@@ -395,6 +395,31 @@ export interface PieceHealthRow {
   recent: string[]; // last ~12 run statuses, oldest→newest
 }
 
+export interface CadencePayload {
+  cron_expression: string;
+  schedule_config: string; // JSON string of ScheduleConfig
+  timezone: string;
+  label: string;
+}
+
+export interface CoverageRow {
+  piece_name: string;
+  display_name: string;
+  logo_url: string | null;
+  connected: boolean;
+  covered: boolean;
+  schedule_id: number | null;
+  cadence: { label: string; cron: string; config: any; timezone: string } | null;
+  has_plans: boolean;
+  plan_count: number;
+  planned_targets: number;
+  total_targets: number;
+  health: 'failing' | 'healthy' | 'unknown' | null;
+  actions_failing: number;
+  last_run_at: string | null;
+  last_run_id: number | null;
+}
+
 /** One schedule fire ("wave/sweep") — a summary row in the Scheduled Runs feed. */
 export interface WaveSummary {
   wave_id: string;
@@ -441,6 +466,8 @@ export interface WaveDetail {
   failed: number;
   running: number;
   pieces: WavePiece[];
+  covered_total: number;
+  covered_untested: number;
 }
 
 export interface PlanRunRecord {
@@ -893,6 +920,15 @@ export const api = {
   createSchedule: (data: any) => request<any>('POST', '/schedules', data),
   updateSchedule: (id: number, data: any) => request<any>('PUT', `/schedules/${id}`, data),
   deleteSchedule: (id: number) => request<any>('DELETE', `/schedules/${id}`),
+
+  // Coverage cockpit
+  getCoverage: () => request<CoverageRow[]>('GET', '/coverage'),
+  enrollPieces: (piece_names: string[], cadence: CadencePayload) =>
+    request<{ success: boolean }>('POST', '/coverage/enroll', { piece_names, cadence }),
+  unenrollPieces: (piece_names: string[]) =>
+    request<{ success: boolean }>('POST', '/coverage/unenroll', { piece_names }),
+  setPiecesCadence: (piece_names: string[], cadence: CadencePayload) =>
+    request<{ success: boolean }>('POST', '/coverage/cadence', { piece_names, cadence }),
 
   // Test Plans (v1)
   streamAiPlan,

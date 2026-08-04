@@ -370,7 +370,7 @@ export default function BatchSetup() {
         <div className="bg-gray-900 border border-gray-800 rounded-lg p-8 text-center">
           <Puzzle size={40} className="mx-auto text-gray-600 mb-3" />
           <p className="text-gray-400 mb-2">No connected pieces found.</p>
-          <p className="text-gray-500 text-sm">Go to <button onClick={() => navigate('/pieces')} className="text-primary-400 hover:underline">Pieces</button> and connect at least one piece first.</p>
+          <p className="text-gray-500 text-sm">Go to <button onClick={() => navigate('/connections')} className="text-primary-400 hover:underline">Connections</button> and connect at least one piece first.</p>
         </div>
       ) : (
         <>

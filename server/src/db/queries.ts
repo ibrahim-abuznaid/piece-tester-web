@@ -1056,6 +1056,8 @@ export interface WaveDetail {
   failed: number;
   running: number;
   pieces: WavePiece[];         // failing pieces first
+  covered_total: number;       // pieces covered right now (enabled-schedule targets)
+  covered_untested: number;    // covered pieces with no approved plans (a run can't test them)
 }
 
 // How piece-implicating a category is — drives worst_category + failure ordering.
@@ -1154,6 +1156,7 @@ export function getWaveDetail(waveId: string): WaveDetail | null {
     started_at: meta?.started_at ?? '',
     ...agg,
     pieces,
+    ...getCoverageCounts(),
   };
 }
 
@@ -1530,4 +1533,220 @@ export function updatePlanRun(id: number, updates: Partial<{
   values.push(id);
   getDb().run(`UPDATE test_plan_runs SET ${fields.join(', ')} WHERE id = ?`, values);
   return getPlanRun(id);
+}
+
+// ── Coverage cockpit ─────────────────────────────────────────────────────────
+// A piece-centric view over the whole catalog: is each piece under continuous
+// testing (covered) and what's its readiness/health. Statuses are DERIVED from
+// existing tables (connections, enabled schedules' targets, approved plans,
+// piece health) — nothing new is stored. Enrollment maps onto the existing
+// `schedules` table using "one schedule per cadence": each distinct cadence
+// (schedule_config + timezone) is a single schedule row, and pieces are members
+// of it via wildcard `{ piece_name }` targets.
+
+export interface CoverageCadence {
+  label: string;
+  cron: string;
+  config: unknown;      // parsed schedule_config
+  timezone: string;
+}
+
+export interface CoverageRow {
+  piece_name: string;
+  display_name: string;
+  logo_url: string | null;
+  connected: boolean;
+  covered: boolean;
+  schedule_id: number | null;
+  cadence: CoverageCadence | null;
+  has_plans: boolean;
+  plan_count: number;
+  planned_targets: number; // # of the piece's actions/triggers that have a plan (any status)
+  total_targets: number;   // # of actions + triggers the piece exposes (from the catalog)
+  health: 'failing' | 'healthy' | 'unknown' | null; // null = never run
+  actions_failing: number;
+  last_run_at: string | null;
+  last_run_id: number | null; // latest SCHEDULED run for the piece (for the Runs deep-link)
+}
+
+/** A cadence payload sent by the client (already turned into cron + config). */
+export interface CadenceInput {
+  cron_expression: string;
+  schedule_config: string; // JSON string
+  timezone: string;
+  label: string;
+}
+
+function parseTargetsJson(raw: string): ScheduleTarget[] {
+  try { const p = JSON.parse(raw); return Array.isArray(p) ? p : []; }
+  catch { return []; }
+}
+
+function safeParse(raw: string): unknown {
+  try { return JSON.parse(raw); } catch { return {}; }
+}
+
+/**
+ * Build the coverage rows for the given catalog (piece list fetched from AP).
+ * Kept as a pure DB read so it can be unit-tested against fixtures.
+ */
+export function getCoverage(
+  catalog: { name: string; displayName: string; logoUrl?: string | null; actions?: number; triggers?: number }[],
+): CoverageRow[] {
+  const db = getDb();
+
+  const connected = new Set(listConnections().map(c => c.piece_name));
+
+  // Covered = piece appears as a target in an ENABLED schedule. An enabled
+  // schedule with EMPTY targets means "all pieces" (legacy) — track it separately.
+  const coverMap = new Map<string, { schedule_id: number; cadence: CoverageCadence }>();
+  let allPiecesSchedule: ScheduleRow | undefined;
+  for (const s of listSchedules()) {
+    if (!s.enabled) continue;
+    const targets = parseTargetsJson(s.targets);
+    if (targets.length === 0) { if (!allPiecesSchedule) allPiecesSchedule = s; continue; }
+    const cadence: CoverageCadence = {
+      label: s.label, cron: s.cron_expression, config: safeParse(s.schedule_config), timezone: s.timezone,
+    };
+    for (const t of targets) {
+      if (!coverMap.has(t.piece_name)) coverMap.set(t.piece_name, { schedule_id: s.id, cadence });
+    }
+  }
+
+  const allCadence: CoverageCadence | null = allPiecesSchedule
+    ? { label: allPiecesSchedule.label, cron: allPiecesSchedule.cron_expression, config: safeParse(allPiecesSchedule.schedule_config), timezone: allPiecesSchedule.timezone }
+    : null;
+
+  // Approved plan counts per piece.
+  const planRows = db.all<{ piece_name: string; c: number }>(
+    `SELECT piece_name, COUNT(*) AS c FROM test_plans WHERE status = 'approved' GROUP BY piece_name`,
+  );
+  const planCount = new Map(planRows.map(r => [r.piece_name, r.c]));
+
+  // Any-status plan counts per piece — how many actions/triggers have a plan at all
+  // (a row per distinct piece+target+type), for the "N/M planned" indicator.
+  const plannedRows = db.all<{ piece_name: string; c: number }>(
+    `SELECT piece_name, COUNT(*) AS c FROM test_plans GROUP BY piece_name`,
+  );
+  const plannedMap = new Map(plannedRows.map(r => [r.piece_name, r.c]));
+
+  // Current health per piece (reused verbatim from the Health board).
+  const healthMap = new Map(getPieceHealth().map(h => [h.piece_name, h]));
+
+  // Latest SCHEDULED run per piece (max id = most recent) — used to deep-link the Runs feed.
+  const lastRunRows = db.all<{ piece_name: string; last_run_id: number }>(`
+    SELECT p.piece_name AS piece_name, MAX(r.id) AS last_run_id
+    FROM test_plan_runs r JOIN test_plans p ON p.id = r.plan_id
+    WHERE r.trigger_type = 'scheduled'
+    GROUP BY p.piece_name
+  `);
+  const lastRunMap = new Map(lastRunRows.map(r => [r.piece_name, r.last_run_id]));
+
+  return catalog.map(p => {
+    const cover = coverMap.get(p.name);
+    const covered = !!cover || !!allPiecesSchedule;
+    const h = healthMap.get(p.name);
+    const total = (p.actions ?? 0) + (p.triggers ?? 0);
+    const rawPlanned = plannedMap.get(p.name) ?? 0;
+    return {
+      piece_name: p.name,
+      display_name: p.displayName,
+      logo_url: p.logoUrl ?? null,
+      connected: connected.has(p.name),
+      covered,
+      schedule_id: cover ? cover.schedule_id : (covered && allPiecesSchedule ? allPiecesSchedule.id : null),
+      cadence: cover ? cover.cadence : (covered ? allCadence : null),
+      has_plans: (planCount.get(p.name) ?? 0) > 0,
+      plan_count: planCount.get(p.name) ?? 0,
+      planned_targets: total ? Math.min(rawPlanned, total) : rawPlanned,
+      total_targets: total,
+      health: h ? h.status : null,
+      actions_failing: h ? h.actions_failing : 0,
+      last_run_at: h ? h.last_run_at : null,
+      last_run_id: lastRunMap.get(p.name) ?? null,
+    };
+  });
+}
+
+function normalizeConfig(raw: string): string {
+  try { return JSON.stringify(JSON.parse(raw)); } catch { return raw; }
+}
+
+/**
+ * Find the single schedule that owns a given cadence, or create it.
+ * Only schedules that already have explicit targets (i.e. cockpit-managed) are
+ * reused — a legacy empty-targets "all pieces" schedule is never appended to.
+ */
+export function findOrCreateCadenceSchedule(cadence: CadenceInput): ScheduleRow {
+  const wantConfig = normalizeConfig(cadence.schedule_config);
+  const wantTz = cadence.timezone || 'UTC';
+  const existing = listSchedules().find(s =>
+    parseTargetsJson(s.targets).length > 0 &&
+    normalizeConfig(s.schedule_config) === wantConfig &&
+    (s.timezone || 'UTC') === wantTz,
+  );
+  if (existing) return existing;
+  return createSchedule({
+    cron_expression: cadence.cron_expression,
+    label: cadence.label,
+    timezone: cadence.timezone,
+    schedule_config: cadence.schedule_config,
+    targets: '[]',
+  });
+}
+
+/** Add pieces (wildcard = all their approved plans) to the matching-cadence schedule. */
+export function enrollPieces(pieceNames: string[], cadence: CadenceInput): void {
+  const sched = findOrCreateCadenceSchedule(cadence);
+  const targets = parseTargetsJson(sched.targets);
+  const seen = new Set(targets.map(t => `${t.piece_name}|${t.action_name ?? ''}`));
+  for (const name of pieceNames) {
+    if (!seen.has(`${name}|`)) { targets.push({ piece_name: name }); seen.add(`${name}|`); }
+  }
+  updateSchedule(sched.id, { targets: JSON.stringify(targets), enabled: 1 });
+}
+
+/**
+ * Remove pieces from every explicit-target schedule they belong to. A schedule
+ * that would be left with ZERO targets is deleted rather than emptied, because
+ * empty targets mean "all pieces" — emptying it would silently cover everything.
+ */
+export function unenrollPieces(pieceNames: string[]): void {
+  const set = new Set(pieceNames);
+  for (const s of listSchedules()) {
+    const targets = parseTargetsJson(s.targets);
+    if (targets.length === 0) continue; // never touch legacy all-pieces schedules
+    const kept = targets.filter(t => !set.has(t.piece_name));
+    if (kept.length === targets.length) continue; // nothing removed
+    if (kept.length === 0) deleteSchedule(s.id);
+    else updateSchedule(s.id, { targets: JSON.stringify(kept) });
+  }
+}
+
+/** Move pieces to a new cadence: pull them out of their current schedule(s), then enroll. */
+export function setPiecesCadence(pieceNames: string[], cadence: CadenceInput): void {
+  unenrollPieces(pieceNames);
+  enrollPieces(pieceNames, cadence);
+}
+
+/**
+ * Counts for the Runs feed's coverage context: how many pieces are covered right now
+ * (targets of an enabled schedule), and how many of those have no approved plans — so a
+ * run can't actually test them.
+ */
+export function getCoverageCounts(): { covered_total: number; covered_untested: number } {
+  const db = getDb();
+  const covered = new Set<string>();
+  for (const s of listSchedules()) {
+    if (!s.enabled) continue;
+    for (const t of parseTargetsJson(s.targets)) covered.add(t.piece_name);
+  }
+  if (covered.size === 0) return { covered_total: 0, covered_untested: 0 };
+  const approved = new Set(
+    db.all<{ piece_name: string }>(`SELECT DISTINCT piece_name FROM test_plans WHERE status = 'approved'`)
+      .map(r => r.piece_name),
+  );
+  let untested = 0;
+  for (const p of covered) if (!approved.has(p)) untested++;
+  return { covered_total: covered.size, covered_untested: untested };
 }

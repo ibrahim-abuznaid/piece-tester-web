@@ -13,6 +13,7 @@ import schedulesRoutes from './routes/schedules.js';
 import testPlansRoutes from './routes/test-plans.js';
 import reportsRoutes from './routes/reports.js';
 import batchSetupRoutes from './routes/batch-setup.js';
+import coverageRoutes from './routes/coverage.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = parseInt(process.env.PORT ?? '4000');
@@ -37,6 +38,7 @@ app.use('/api/schedules', schedulesRoutes);
 app.use('/api/test-plans', testPlansRoutes);
 app.use('/api/reports', reportsRoutes);
 app.use('/api/batch-setup', batchSetupRoutes);
+app.use('/api/coverage', coverageRoutes);
 
 // ── Serve React client in production ──
 const clientDist = path.resolve(__dirname, '../../dist/client');
