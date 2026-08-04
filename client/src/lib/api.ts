@@ -412,6 +412,8 @@ export interface CoverageRow {
   cadence: { label: string; cron: string; config: any; timezone: string } | null;
   has_plans: boolean;
   plan_count: number;
+  planned_targets: number;
+  total_targets: number;
   health: 'failing' | 'healthy' | 'unknown' | null;
   actions_failing: number;
   last_run_at: string | null;

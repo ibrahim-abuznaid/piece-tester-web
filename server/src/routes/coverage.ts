@@ -13,6 +13,7 @@ router.get('/', async (_req, res) => {
     const catalog = await client.listPieces();
     res.json(db.getCoverage(catalog.map(p => ({
       name: p.name, displayName: p.displayName, logoUrl: p.logoUrl,
+      actions: p.actions, triggers: p.triggers,
     }))));
   } catch (err) {
     res.status(500).json({ error: ActivepiecesClient.formatError(err) });

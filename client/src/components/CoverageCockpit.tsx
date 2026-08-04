@@ -4,7 +4,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, CoverageRow, CadencePayload } from '../lib/api';
 import {
   Search, RefreshCw, Loader2, Link2, CalendarClock, Brain,
-  CheckCircle, XCircle, AlertTriangle, Clock, Circle,
+  CheckCircle, XCircle, AlertTriangle, Clock, Circle, Plus,
 } from 'lucide-react';
 import {
   CadenceModal, ScheduleConfig, DEFAULT_CADENCE, DEFAULT_CADENCE_LABEL,
@@ -227,13 +227,14 @@ export default function CoverageCockpit() {
       ) : (
         <div className="bg-gray-900 border border-gray-800 rounded-lg overflow-hidden">
           {/* header */}
-          <div className="grid grid-cols-[28px_1.4fr_1fr_1.1fr_1fr_110px] gap-2 px-3 py-2 border-b border-gray-800 text-[11px] uppercase tracking-wide text-gray-500">
+          <div className="grid grid-cols-[28px_1.25fr_0.85fr_0.95fr_0.7fr_0.8fr_92px] gap-2 px-3 py-2 border-b border-gray-800 text-[11px] uppercase tracking-wide text-gray-500">
             <div className="flex items-center">
               <input type="checkbox" checked={allVisibleSelected} onChange={toggleAllVisible} className="accent-primary-500 cursor-pointer" />
             </div>
             <div>Piece</div>
             <div>Coverage</div>
             <div>Readiness</div>
+            <div>Plans</div>
             <div>Cadence</div>
             <div>Next</div>
           </div>
@@ -251,6 +252,7 @@ export default function CoverageCockpit() {
                   onConnect={() => navigate(`/pieces/${encodeURIComponent(r.piece_name)}`)}
                   onEnroll={() => enroll([r.piece_name], DEFAULT_CADENCE)}
                   onGenPlans={() => genPlans([r.piece_name])}
+                  onOpenPlans={() => navigate(`/pieces/${encodeURIComponent(r.piece_name)}`)}
                   onEdit={() => setModal({
                     mode: 'cadence',
                     pieces: [r.piece_name],
@@ -292,7 +294,7 @@ function validConfig(c: any): ScheduleConfig | undefined {
 // ── Row ──────────────────────────────────────────────────────────────────────
 
 function Row({
-  r, checked, onToggle, onConnect, onEnroll, onGenPlans, onEdit, busy,
+  r, checked, onToggle, onConnect, onEnroll, onGenPlans, onOpenPlans, onEdit, busy,
 }: {
   r: CoverageRow;
   checked: boolean;
@@ -300,11 +302,12 @@ function Row({
   onConnect: () => void;
   onEnroll: () => void;
   onGenPlans: () => void;
+  onOpenPlans: () => void;
   onEdit: () => void;
   busy: boolean;
 }) {
   return (
-    <div className="grid grid-cols-[28px_1.4fr_1fr_1.1fr_1fr_110px] gap-2 px-3 py-2 border-b border-gray-800/60 last:border-b-0 items-center hover:bg-gray-800/30 text-sm">
+    <div className="grid grid-cols-[28px_1.25fr_0.85fr_0.95fr_0.7fr_0.8fr_92px] gap-2 px-3 py-2 border-b border-gray-800/60 last:border-b-0 items-center hover:bg-gray-800/30 text-sm">
       <div className="flex items-center">
         <input type="checkbox" checked={checked} onChange={onToggle} className="accent-primary-500 cursor-pointer" />
       </div>
@@ -323,6 +326,9 @@ function Row({
 
       {/* Readiness */}
       <div><ReadinessBadge r={r} /></div>
+
+      {/* Plans (of actions + triggers) */}
+      <div><PlansCell r={r} onOpen={onOpenPlans} /></div>
 
       {/* Cadence */}
       <div className="text-xs text-gray-400 truncate">
@@ -350,6 +356,23 @@ function ReadinessBadge({ r }: { r: CoverageRow }) {
   if (r.health === 'failing') return <Pill className="bg-red-500/15 text-red-300"><XCircle size={11} /> {r.actions_failing || ''} failing</Pill>;
   if (r.health === 'healthy') return <Pill className="bg-green-500/15 text-green-300"><CheckCircle size={11} /> healthy</Pill>;
   return <Pill className="bg-gray-700/40 text-gray-400"><Clock size={10} /> awaiting run</Pill>;
+}
+
+// N/M of the piece's actions+triggers that have a plan. Amber + "add" when
+// incomplete; click jumps to Piece Detail to make the missing plans.
+function PlansCell({ r, onOpen }: { r: CoverageRow; onOpen: () => void }) {
+  if (!r.total_targets) return <span className="text-xs text-gray-600">—</span>;
+  const complete = r.planned_targets >= r.total_targets;
+  return (
+    <button
+      onClick={onOpen}
+      title={`${r.planned_targets} of ${r.total_targets} actions & triggers have a plan — click to make plans`}
+      className={`inline-flex items-center gap-1 text-xs font-medium hover:underline ${complete ? 'text-green-300' : 'text-amber-300'}`}
+    >
+      {r.planned_targets}/{r.total_targets}
+      {!complete && <Plus size={11} />}
+    </button>
+  );
 }
 
 function NextButton({

@@ -1558,6 +1558,8 @@ export interface CoverageRow {
   cadence: CoverageCadence | null;
   has_plans: boolean;
   plan_count: number;
+  planned_targets: number; // # of the piece's actions/triggers that have a plan (any status)
+  total_targets: number;   // # of actions + triggers the piece exposes (from the catalog)
   health: 'failing' | 'healthy' | 'unknown' | null; // null = never run
   actions_failing: number;
   last_run_at: string | null;
@@ -1585,7 +1587,7 @@ function safeParse(raw: string): unknown {
  * Kept as a pure DB read so it can be unit-tested against fixtures.
  */
 export function getCoverage(
-  catalog: { name: string; displayName: string; logoUrl?: string | null }[],
+  catalog: { name: string; displayName: string; logoUrl?: string | null; actions?: number; triggers?: number }[],
 ): CoverageRow[] {
   const db = getDb();
 
@@ -1617,6 +1619,13 @@ export function getCoverage(
   );
   const planCount = new Map(planRows.map(r => [r.piece_name, r.c]));
 
+  // Any-status plan counts per piece — how many actions/triggers have a plan at all
+  // (a row per distinct piece+target+type), for the "N/M planned" indicator.
+  const plannedRows = db.all<{ piece_name: string; c: number }>(
+    `SELECT piece_name, COUNT(*) AS c FROM test_plans GROUP BY piece_name`,
+  );
+  const plannedMap = new Map(plannedRows.map(r => [r.piece_name, r.c]));
+
   // Current health per piece (reused verbatim from the Health board).
   const healthMap = new Map(getPieceHealth().map(h => [h.piece_name, h]));
 
@@ -1624,6 +1633,8 @@ export function getCoverage(
     const cover = coverMap.get(p.name);
     const covered = !!cover || !!allPiecesSchedule;
     const h = healthMap.get(p.name);
+    const total = (p.actions ?? 0) + (p.triggers ?? 0);
+    const rawPlanned = plannedMap.get(p.name) ?? 0;
     return {
       piece_name: p.name,
       display_name: p.displayName,
@@ -1634,6 +1645,8 @@ export function getCoverage(
       cadence: cover ? cover.cadence : (covered ? allCadence : null),
       has_plans: (planCount.get(p.name) ?? 0) > 0,
       plan_count: planCount.get(p.name) ?? 0,
+      planned_targets: total ? Math.min(rawPlanned, total) : rawPlanned,
+      total_targets: total,
       health: h ? h.status : null,
       actions_failing: h ? h.actions_failing : 0,
       last_run_at: h ? h.last_run_at : null,
