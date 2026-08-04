@@ -791,8 +791,8 @@ export default function PieceDetail() {
   return (
     <div>
       {/* Back */}
-      <button onClick={() => navigate('/pieces')} className="flex items-center gap-1 text-sm text-gray-400 hover:text-gray-200 mb-4">
-        <ArrowLeft size={16} /> Back to Pieces
+      <button onClick={() => navigate('/schedules')} className="flex items-center gap-1 text-sm text-gray-400 hover:text-gray-200 mb-4">
+        <ArrowLeft size={16} /> Back to Coverage
       </button>
 
       {/* Header */}
