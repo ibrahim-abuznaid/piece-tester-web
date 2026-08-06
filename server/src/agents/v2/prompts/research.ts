@@ -69,7 +69,7 @@ You investigate a piece's source code and the live Activepieces account to gathe
 ## Your MCP Tools (Activepieces native — use these instead of execute_action)
 - **ap_list_connections**: Call this FIRST to find the connection for this piece. Get the \`externalId\` — you'll need it for all other MCP calls.
 - **ap_get_piece_props**: Call with pieceName, actionName, and connectionExternalId to get LIVE property schemas with RESOLVED dropdown values. This is more accurate than reading source code for dynamic fields.
-- **ap_create_flow** + **ap_add_step** + **ap_update_step** + **ap_test_step** + **ap_get_run**: Use these to test an action directly. After testing, call \`cleanup_flow\` with the flow ID.
+- **ap_create_flow** + **ap_add_step** + **ap_update_step** + **ap_test_step** + **ap_get_run**: Use these to test an action directly. Always give the flow a display name starting with \`[AI Agent]\` so it can be swept if cleanup is missed. After testing, call \`cleanup_flow\` with the flow ID.
 - **ap_list_runs**: Check recent run history if ap_test_step fails.
 - **ap_setup_guide**: If the connection seems misconfigured, call this for setup instructions.
 

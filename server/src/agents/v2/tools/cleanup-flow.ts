@@ -22,12 +22,13 @@ export const cleanupFlowTool: ToolDefinition = {
     },
     required: ['flow_id'],
   },
-  async handler(input, _ctx) {
+  async handler(input, ctx) {
     const { flow_id, reason } = input as { flow_id: string; reason?: string };
     const s = getSettings();
     const client = new ActivepiecesClient(s.base_url, s.api_key, s.project_id, s.jwt_token);
     try {
       await client.deleteFlowSafely(flow_id, 3, reason || 'agent cleanup');
+      ctx.createdFlowIds?.delete(flow_id);
       return `Flow ${flow_id} deleted successfully.`;
     } catch (err: any) {
       return `Warning: Could not delete flow ${flow_id}: ${err.message}. You may need to delete it manually.`;
