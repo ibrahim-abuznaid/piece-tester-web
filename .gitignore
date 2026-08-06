@@ -6,3 +6,6 @@ data/*.db-wal
 .env
 logs/
 .superpowers/
+.agents/
+.claude/skills/
+skills-lock.json

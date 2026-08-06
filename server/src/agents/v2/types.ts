@@ -32,6 +32,7 @@ export interface ToolContext {
   triggerName?: string;
   abortSignal?: AbortSignal;
   mcpEnabled?: boolean;
+  createdFlowIds?: Set<string>;
 }
 
 export interface ToolDefinition {

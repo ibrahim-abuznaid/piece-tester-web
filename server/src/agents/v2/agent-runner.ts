@@ -1,5 +1,6 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { getSettings } from '../../db/queries.js';
+import { ActivepiecesClient } from '../../services/ap-client.js';
 import { refreshMcpTokenIfNeeded } from '../../routes/settings.js';
 import { McpProxyClient, mcpToolToAnthropic } from './mcp-proxy-client.js';
 import { ToolRegistry } from './tool-registry.js';
@@ -29,6 +30,40 @@ function applyMessageCacheBreakpoint(messages: Anthropic.Messages.MessageParam[]
   } else if (typeof last.content === 'string') {
     last.content = [{ type: 'text', text: last.content, cache_control: CACHE_CONTROL }];
   }
+}
+
+function findFlowIdIn(obj: any, depth = 0): string | null {
+  if (!obj || typeof obj !== 'object' || depth > 4) return null;
+  if (typeof obj.flowId === 'string') return obj.flowId;
+  if (typeof obj.id === 'string') return obj.id;
+  for (const key of ['flow', 'data', 'result', 'created']) {
+    const nested = findFlowIdIn(obj[key], depth + 1);
+    if (nested) return nested;
+  }
+  return null;
+}
+
+function extractCreatedFlowId(resultText: string): string | null {
+  try {
+    const id = findFlowIdIn(JSON.parse(resultText));
+    if (id) return id;
+  } catch {
+    void 0;
+  }
+  const patterns = [
+    /"(?:flowId|id)"\s*:\s*"([^"]+)"/,
+    /\(id:\s*([A-Za-z0-9_-]{8,})\)/i,
+    /\bid:\s*([A-Za-z0-9_-]{8,})/i,
+  ];
+  for (const re of patterns) {
+    const m = resultText.match(re);
+    if (m) return m[1];
+  }
+  return null;
+}
+
+function isFlowCreatingTool(name: string): boolean {
+  return name.toLowerCase().includes('create_flow');
 }
 
 /**
@@ -77,6 +112,7 @@ export async function runAgentLoop(
     : `${settings.base_url}/v1/projects/${settings.project_id}/mcp-server/http`;
 
   toolCtx.mcpEnabled = mcpEnabled;
+  if (!toolCtx.createdFlowIds) toolCtx.createdFlowIds = new Set<string>();
 
   // MCP tool names discovered at runtime (so we know which tool_use calls to proxy)
   let mcpToolNames = new Set<string>();
@@ -119,6 +155,7 @@ export async function runAgentLoop(
   let terminalOutput: unknown = null;
   let terminatedByTool = false;
 
+  try {
   while (iterations < maxIterations) {
     checkAborted(abortSignal);
     iterations++;
@@ -182,6 +219,13 @@ export async function runAgentLoop(
         if (mcpProxy && mcpToolNames.has(toolUse.name)) {
           // ── MCP tool: proxy through our local client ──
           result = await mcpProxy.callTool(toolUse.name, input);
+          if (isFlowCreatingTool(toolUse.name)) {
+            const createdId = extractCreatedFlowId(result);
+            if (createdId) {
+              toolCtx.createdFlowIds?.add(createdId);
+              log('thinking', `[${role}] Tracking created flow ${createdId} for cleanup.`);
+            }
+          }
           log('tool_result', `[${role}] MCP← ${toolUse.name}`, result.slice(0, 200));
         } else {
           // ── Local tool from registry ──
@@ -206,6 +250,23 @@ export async function runAgentLoop(
 
   if (!terminatedByTool && iterations >= maxIterations) {
     log('error', `[${role}] Reached max iterations (${maxIterations}) without terminal tool call.`);
+  }
+  } finally {
+    const leaked = toolCtx.createdFlowIds ? [...toolCtx.createdFlowIds] : [];
+    if (leaked.length > 0) {
+      log('thinking', `[${role}] Auto-cleaning ${leaked.length} test flow(s) the agent left behind: ${leaked.join(', ')}`);
+      const cleanupClient = new ActivepiecesClient(
+        settings.base_url, settings.api_key, settings.project_id, settings.jwt_token || undefined,
+      );
+      for (const flowId of leaked) {
+        try {
+          await cleanupClient.deleteFlowSafely(flowId, 3, `${role}-auto-cleanup`);
+          toolCtx.createdFlowIds?.delete(flowId);
+        } catch (err: any) {
+          log('error', `[${role}] Auto-cleanup failed for flow ${flowId}: ${err.message}`);
+        }
+      }
+    }
   }
 
   return {

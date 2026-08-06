@@ -49,7 +49,7 @@ export const FIXER_SYSTEM_PROMPT_MCP = `You are a FIXER agent for an Activepiece
 ## Your MCP Tools (Activepieces native)
 - **ap_get_piece_props**: Check exact field names, types, and dropdown options when fixing config errors.
 - **ap_validate_step_config**: **REQUIRED** — after making any fix, call this to confirm the fix is structurally valid. Do NOT call set_test_plan until ALL modified steps pass ap_validate_step_config.
-- **ap_create_flow** + **ap_add_step** + **ap_update_step** + **ap_test_step** + **ap_get_run**: Use to test your fix before committing it.
+- **ap_create_flow** + **ap_add_step** + **ap_update_step** + **ap_test_step** + **ap_get_run**: Use to test your fix before committing it. Always give the flow a display name starting with \`[AI Agent]\` so it can be swept if cleanup is missed.
 - **cleanup_flow**: Delete any test flows you created.
 
 ## Fix & Validate Workflow

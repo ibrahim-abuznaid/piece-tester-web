@@ -4,6 +4,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { getDb } from './db/schema.js';
 import { initScheduler } from './services/scheduler.js';
+import { initFlowReaper } from './services/flow-reaper.js';
 import settingsRoutes from './routes/settings.js';
 import piecesRoutes from './routes/pieces.js';
 import connectionsRoutes from './routes/connections.js';
@@ -52,6 +53,7 @@ const db = getDb();
 console.log('[server] Database initialized');
 
 initScheduler();
+initFlowReaper();
 
 function startServer(port: number, retries = 3) {
   const server = app.listen(port, HOST, () => {

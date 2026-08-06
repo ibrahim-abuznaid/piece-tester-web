@@ -102,6 +102,7 @@ export const FIXER_TOOLS_MCP = [
   TOOL_NAMES.LIST_ACTIONS,
   TOOL_NAMES.INSPECT_OUTPUT,
   TOOL_NAMES.SET_TEST_PLAN,
+  TOOL_NAMES.CLEANUP_FLOW,
 ] as const;
 
 /** Terminal tools that stop the agent loop when called. */

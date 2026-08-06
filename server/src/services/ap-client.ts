@@ -170,6 +170,13 @@ export class ActivepiecesClient {
     return data;
   }
 
+  async listFlows(limit = 100, cursor?: string): Promise<SeekPage<PopulatedFlow>> {
+    const { data } = await this.http.get<SeekPage<PopulatedFlow>>('/v1/flows', {
+      params: { projectId: this.projectId, limit, cursor },
+    });
+    return data;
+  }
+
   async deleteFlow(flowId: string): Promise<void> {
     await this.http.delete(`/v1/flows/${flowId}`, {
       headers: { 'Content-Type': undefined },
