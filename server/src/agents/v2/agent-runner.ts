@@ -11,6 +11,26 @@ function checkAborted(signal?: AbortSignal) {
   if (signal?.aborted) throw new Error('Agent aborted: client disconnected');
 }
 
+const CACHE_CONTROL = { type: 'ephemeral' as const };
+
+function applyMessageCacheBreakpoint(messages: Anthropic.Messages.MessageParam[]): void {
+  for (const m of messages) {
+    if (Array.isArray(m.content)) {
+      for (const block of m.content as any[]) {
+        if (block && typeof block === 'object') delete block.cache_control;
+      }
+    }
+  }
+  const last = messages[messages.length - 1];
+  if (!last) return;
+  if (Array.isArray(last.content)) {
+    const lastBlock = last.content[last.content.length - 1] as any;
+    if (lastBlock && typeof lastBlock === 'object') lastBlock.cache_control = CACHE_CONTROL;
+  } else if (typeof last.content === 'string') {
+    last.content = [{ type: 'text', text: last.content, cache_control: CACHE_CONTROL }];
+  }
+}
+
 /**
  * Generic agent loop used by all v2 workers.
  *
@@ -88,6 +108,10 @@ export async function runAgentLoop(
     }
   }
 
+  const cachedSystem: Anthropic.Messages.TextBlockParam[] = [
+    { type: 'text', text: systemPrompt, cache_control: CACHE_CONTROL },
+  ];
+
   // ── Agent loop ──────────────────────────────────────────────────────────────
   const messages: Anthropic.Messages.MessageParam[] = [...config.initialMessages];
 
@@ -102,8 +126,10 @@ export async function runAgentLoop(
 
     const requestOptions = abortSignal ? { signal: abortSignal } : undefined;
 
+    applyMessageCacheBreakpoint(messages);
+
     const response = await client.messages.create(
-      { model, max_tokens: 8096, system: systemPrompt, tools: allTools as any, messages },
+      { model, max_tokens: 8096, system: cachedSystem, tools: allTools as any, messages },
       requestOptions,
     );
 
@@ -111,7 +137,8 @@ export async function runAgentLoop(
     if (costTracker) {
       costTracker.trackResponse(model, response, role);
       const totals = costTracker.getTotals();
-      log('thinking', `[${role}] Tokens: ${response.usage?.input_tokens || 0}→in ${response.usage?.output_tokens || 0}→out | Session: $${totals.cost_usd.toFixed(4)}`);
+      const u: any = response.usage || {};
+      log('thinking', `[${role}] Tokens: ${u.input_tokens || 0}→in ${u.output_tokens || 0}→out | cache ${u.cache_read_input_tokens || 0}r/${u.cache_creation_input_tokens || 0}w | Session: $${totals.cost_usd.toFixed(4)}`);
     }
 
     const assistantContent = response.content;
