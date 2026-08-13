@@ -251,8 +251,8 @@ function WaveDetailView({
         </div>
       )}
 
-      {/* All-clear only when nothing is failing AND nothing is still running */}
-      {failingPieces.length === 0 && runningPieces.length === 0 && (
+      {/* All-clear only when there are passing pieces and nothing failing or still running */}
+      {failingPieces.length === 0 && runningPieces.length === 0 && passingPieces.length > 0 && (
         <div className="bg-gray-900 border border-gray-800 rounded-lg p-4 text-sm text-gray-400 flex items-center gap-2">
           <CheckCircle size={15} className="text-green-400" /> Every check in this run passed. 🎉
         </div>
@@ -286,13 +286,18 @@ const LANE_STYLE = {
   passing: { border: 'border-gray-800', dot: 'bg-green-500' },
 } as const;
 
+// Segmented count for a piece header: only nonzero parts, "·"-separated with no leading dot.
 function PieceCounts({ piece }: { piece: WavePiece }) {
+  const { passed, running, failed } = piece;
+  const empty = passed === 0 && running === 0 && failed === 0;
   return (
-    <span className="flex items-center gap-2 text-xs">
-      <span className="text-gray-400">{piece.passed} passed</span>
-      {piece.running > 0 && <span className="text-blue-400">· {piece.running} running</span>}
-      {piece.failed > 0 && (
-        <span className="text-red-400 font-medium">· {piece.failed} failed</span>
+    <span className="flex items-center gap-1.5 text-xs">
+      {(passed > 0 || empty) && <span className="text-gray-400">{passed} passed</span>}
+      {running > 0 && (
+        <span className="text-blue-400">{passed > 0 ? '· ' : ''}{running} running</span>
+      )}
+      {failed > 0 && (
+        <span className="text-red-400 font-medium">{passed > 0 || running > 0 ? '· ' : ''}{failed} failed</span>
       )}
     </span>
   );
