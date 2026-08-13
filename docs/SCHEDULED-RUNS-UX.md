@@ -49,10 +49,12 @@ fix. Errors and remediation are reused, never rebuilt here.
 ## 5. Tech (Phase 1, built)
 - Server-side aggregation, no `step_results` in lists:
   - `GET /reports/waves` — one row per fire (counts, duration, schedule label).
-  - `GET /reports/waves/:id` — per-piece rollup; enumerates only FAILING runs, counts passing.
+  - `GET /reports/waves/:id` — per-piece rollup; enumerates ALL runs (status-tagged), with
+    category/error attached only to failing runs. No `step_results` in the payload.
   - Single-run steps load lazily via `GET /test-plans/runs/:id` on expand.
 - `getScheduledWaves` / `getWaveDetail` in `queries.ts`; slim `WaveSummary`/`WaveDetail` types.
-- Payload scales with #failures, not #runs (verified: a 1-failure wave ≈ 600 bytes).
+- Run metadata (no `step_results`) scales with #runs; JSON-parse of `step_results` still scales
+  with #failures; a single run's steps still load lazily via `GET /test-plans/runs/:id` on expand.
 
 ## 6. Phased path
 1. **(done)** Kill the flat list → server-side aggregates + failures-first drill.

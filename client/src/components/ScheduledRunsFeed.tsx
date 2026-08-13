@@ -12,9 +12,10 @@ import {
 /**
  * Runs feed — each run is one schedule fire testing your covered pieces (see docs/SCHEDULED-RUNS-UX.md).
  *
- * Left: a rail of runs (one per schedule fire). Right: the selected run's summary + a
- * failures-first Piece → Target drill. step_results are NEVER in the list — a run's steps load
- * lazily (getPlanRun) only when you expand it. Scales with #failures, not #runs.
+ * Left: a rail of runs (one per schedule fire). Right: the selected run's summary split into
+ * Failing / In-progress / Passing lanes. Every piece expands to ALL its targets (action/trigger);
+ * step_results are NEVER in the list — a run's steps load lazily (getPlanRun) only when you expand
+ * a target. Run metadata scales with #runs; step_results parse cost scales with #failures.
  */
 
 const clean = (n: string) => n.replace('@activepieces/piece-', '');
