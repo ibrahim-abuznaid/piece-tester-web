@@ -5,6 +5,7 @@ import { fileURLToPath } from 'url';
 import { getDb } from './db/schema.js';
 import { initScheduler } from './services/scheduler.js';
 import { initFlowReaper } from './services/flow-reaper.js';
+import { reconcileOrphanedRuns } from './db/queries.js';
 import settingsRoutes from './routes/settings.js';
 import piecesRoutes from './routes/pieces.js';
 import connectionsRoutes from './routes/connections.js';
@@ -52,12 +53,23 @@ app.get('*', (_req, res) => {
 const db = getDb();
 console.log('[server] Database initialized');
 
-initScheduler();
-initFlowReaper();
+let backgroundStarted = false;
+function startBackgroundWork() {
+  if (backgroundStarted) return;
+  backgroundStarted = true;
+
+  // Any run still `running` at boot is from a dead process — close it out honestly.
+  const reconciled = reconcileOrphanedRuns();
+  if (reconciled > 0) console.log(`[server] Reconciled ${reconciled} orphaned run(s) → interrupted`);
+
+  initScheduler();
+  initFlowReaper();
+}
 
 function startServer(port: number, retries = 3) {
   const server = app.listen(port, HOST, () => {
     console.log(`[server] Piece Tester running at http://${HOST}:${port}`);
+    startBackgroundWork();
   });
 
   server.on('error', (err: NodeJS.ErrnoException) => {

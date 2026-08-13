@@ -566,6 +566,17 @@ export function getPlanRun(id: number): TestPlanRunRow | undefined {
   return getDb().get<TestPlanRunRow>('SELECT * FROM test_plan_runs WHERE id = ?', [id]);
 }
 
+export function reconcileOrphanedRuns(): number {
+  const db = getDb();
+  const plan = db.run(
+    `UPDATE test_plan_runs SET status = 'interrupted', completed_at = datetime('now') WHERE status = 'running'`,
+  );
+  const legacy = db.run(
+    `UPDATE test_runs SET status = 'interrupted', finished_at = datetime('now') WHERE status = 'running'`,
+  );
+  return plan.changes + legacy.changes;
+}
+
 export function listPlanRuns(planId: number): TestPlanRunRow[] {
   return getDb().all<TestPlanRunRow>(
     'SELECT * FROM test_plan_runs WHERE plan_id = ? ORDER BY id DESC',
