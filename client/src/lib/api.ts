@@ -433,18 +433,19 @@ export interface WaveSummary {
   running: number;
 }
 
-/** A failing (target) within a wave — enough to triage without loading step_results. */
-export interface WaveFailingRun {
+/** One run (target) within a wave — enough to list/drill without loading step_results. */
+export interface WaveRun {
   run_id: number;
   target_action: string;
-  target_type: string; // 'action' | 'trigger'
-  category: string;
-  error: string | null;
+  target_type: string;     // 'action' | 'trigger'
+  status: string;          // 'completed' | 'failed' | 'running' | …
+  category: string | null; // failed runs only
+  error: string | null;    // failed runs only (short one-line hint)
   duration_ms: number | null;
   started_at: string;
 }
 
-/** Per-piece rollup within a wave (failing runs enumerated, passing only counted). */
+/** Per-piece rollup within a wave — all runs enumerated; step_results still load lazily. */
 export interface WavePiece {
   piece_name: string;
   total: number;
@@ -452,7 +453,7 @@ export interface WavePiece {
   failed: number;
   running: number;
   worst_category: string | null;
-  failing: WaveFailingRun[];
+  runs: WaveRun[];
 }
 
 /** Full detail of one wave — the failures-first drill for the Scheduled Runs feed. */

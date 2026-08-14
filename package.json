@@ -9,7 +9,8 @@
     "dev:client": "vite --config client/vite.config.ts",
     "build:client": "vite build --config client/vite.config.ts",
     "start": "tsx server/src/index.ts",
-    "build": "npm run build:client"
+    "build": "npm run build:client",
+    "test": "vitest run"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.74.0",

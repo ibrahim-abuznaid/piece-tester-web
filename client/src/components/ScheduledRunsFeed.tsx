@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import {
-  api, type WaveSummary, type WaveDetail, type WavePiece, type WaveFailingRun, type StepResult,
+  api, type WaveSummary, type WaveDetail, type WavePiece, type WaveRun, type StepResult,
 } from '../lib/api';
 import {
   CalendarClock, ChevronDown, ChevronRight, CheckCircle, XCircle, Loader2,
@@ -12,9 +12,10 @@ import {
 /**
  * Runs feed — each run is one schedule fire testing your covered pieces (see docs/SCHEDULED-RUNS-UX.md).
  *
- * Left: a rail of runs (one per schedule fire). Right: the selected run's summary + a
- * failures-first Piece → Target drill. step_results are NEVER in the list — a run's steps load
- * lazily (getPlanRun) only when you expand it. Scales with #failures, not #runs.
+ * Left: a rail of runs (one per schedule fire). Right: the selected run's summary split into
+ * Failing / In-progress / Passing lanes. Every piece expands to ALL its targets (action/trigger);
+ * step_results are NEVER in the list — a run's steps load lazily (getPlanRun) only when you expand
+ * a target. Run metadata scales with #runs; step_results parse cost scales with #failures.
  */
 
 const clean = (n: string) => n.replace('@activepieces/piece-', '');
@@ -194,7 +195,8 @@ function WaveDetailView({
   if (isLoading || !detail) return <p className="text-sm text-gray-400">Loading run…</p>;
 
   const failingPieces = detail.pieces.filter(p => p.failed > 0);
-  const passingPieces = detail.pieces.filter(p => p.failed === 0);
+  const runningPieces = detail.pieces.filter(p => p.failed === 0 && p.running > 0);
+  const passingPieces = detail.pieces.filter(p => p.failed === 0 && p.running === 0);
 
   return (
     <div className="space-y-3">
@@ -227,20 +229,37 @@ function WaveDetailView({
       </div>
 
       {/* Failures first */}
-      {failingPieces.length === 0 ? (
-        <div className="bg-gray-900 border border-gray-800 rounded-lg p-4 text-sm text-gray-400 flex items-center gap-2">
-          <CheckCircle size={15} className="text-green-400" /> Every check in this run passed. 🎉
-        </div>
-      ) : (
+      {failingPieces.length > 0 && (
         <div className="space-y-1.5">
           {failingPieces.map(p => (
-            <PieceGroup key={p.piece_name} piece={p} open={expandedPieces.has(p.piece_name)}
+            <PieceGroup key={p.piece_name} piece={p} lane="failing" open={expandedPieces.has(p.piece_name)}
               onToggle={() => onTogglePiece(p.piece_name)} expandedRun={expandedRun} onToggleRun={onToggleRun} />
           ))}
         </div>
       )}
 
-      {/* Passing pieces folded away */}
+      {/* In progress */}
+      {runningPieces.length > 0 && (
+        <div className="space-y-1.5">
+          <div className="flex items-center gap-2 px-1 pt-1 text-xs text-blue-300">
+            <Loader2 size={12} className="animate-spin" />
+            <span>In progress</span>
+          </div>
+          {runningPieces.map(p => (
+            <PieceGroup key={p.piece_name} piece={p} lane="running" open={expandedPieces.has(p.piece_name)}
+              onToggle={() => onTogglePiece(p.piece_name)} expandedRun={expandedRun} onToggleRun={onToggleRun} />
+          ))}
+        </div>
+      )}
+
+      {/* All-clear only when there are passing pieces and nothing failing or still running */}
+      {failingPieces.length === 0 && runningPieces.length === 0 && passingPieces.length > 0 && (
+        <div className="bg-gray-900 border border-gray-800 rounded-lg p-4 text-sm text-gray-400 flex items-center gap-2">
+          <CheckCircle size={15} className="text-green-400" /> Every check in this run passed. 🎉
+        </div>
+      )}
+
+      {/* Passing pieces folded away — now expandable to their targets → steps */}
       {passingPieces.length > 0 && (
         <div>
           <button onClick={() => setShowPassing(v => !v)}
@@ -251,11 +270,8 @@ function WaveDetailView({
           {showPassing && (
             <div className="space-y-1.5 pb-1">
               {passingPieces.map(p => (
-                <div key={p.piece_name} className="flex items-center gap-3 border border-gray-800 rounded-lg bg-gray-900 px-4 py-2.5">
-                  <span className="w-2 h-2 rounded-full bg-green-500 shrink-0" />
-                  <span className="text-sm text-gray-300">{clean(p.piece_name)}</span>
-                  <span className="text-xs text-green-400 ml-auto">{p.passed}/{p.total} ✓</span>
-                </div>
+                <PieceGroup key={p.piece_name} piece={p} lane="passing" open={expandedPieces.has(p.piece_name)}
+                  onToggle={() => onTogglePiece(p.piece_name)} expandedRun={expandedRun} onToggleRun={onToggleRun} />
               ))}
             </div>
           )}
@@ -265,29 +281,57 @@ function WaveDetailView({
   );
 }
 
-function PieceGroup({ piece, open, onToggle, expandedRun, onToggleRun }: {
+const LANE_STYLE = {
+  failing: { border: 'border-red-500/20', dot: 'bg-red-500' },
+  running: { border: 'border-blue-500/20', dot: 'bg-blue-500' },
+  passing: { border: 'border-gray-800', dot: 'bg-green-500' },
+} as const;
+
+// Segmented count for a piece header: only nonzero parts, "·"-separated with no leading dot.
+function PieceCounts({ piece }: { piece: WavePiece }) {
+  const { passed, running, failed } = piece;
+  const empty = passed === 0 && running === 0 && failed === 0;
+  return (
+    <span className="flex items-center gap-1.5 text-xs">
+      {(passed > 0 || empty) && <span className="text-gray-400">{passed} passed</span>}
+      {running > 0 && (
+        <span className="text-blue-400">{passed > 0 ? '· ' : ''}{running} running</span>
+      )}
+      {failed > 0 && (
+        <span className="text-red-400 font-medium">{passed > 0 || running > 0 ? '· ' : ''}{failed} failed</span>
+      )}
+    </span>
+  );
+}
+
+function PieceGroup({ piece, lane, open, onToggle, expandedRun, onToggleRun }: {
   piece: WavePiece;
+  lane: 'failing' | 'running' | 'passing';
   open: boolean;
   onToggle: () => void;
   expandedRun: number | null;
   onToggleRun: (id: number) => void;
 }) {
+  const s = LANE_STYLE[lane];
   return (
-    <div className="border border-red-500/20 rounded-lg bg-gray-900 overflow-hidden">
+    <div className={`border ${s.border} rounded-lg bg-gray-900 overflow-hidden`}>
       <button onClick={onToggle} className="w-full flex items-center gap-3 px-4 py-2.5 text-left hover:bg-gray-800/40 transition-colors">
         {open ? <ChevronDown size={14} className="text-gray-500 shrink-0" /> : <ChevronRight size={14} className="text-gray-500 shrink-0" />}
-        <span className="w-2 h-2 rounded-full bg-red-500 shrink-0" />
+        {lane === 'running'
+          ? <Loader2 size={13} className="text-blue-400 animate-spin shrink-0" />
+          : <span className={`w-2 h-2 rounded-full ${s.dot} shrink-0`} />}
         <span className="text-sm font-medium text-gray-200 truncate">{clean(piece.piece_name)}</span>
-        <span className="text-xs text-gray-400">{piece.passed}/{piece.total} ✓</span>
-        <span className="text-xs text-red-400 font-medium">{piece.failed} {piece.failed === 1 ? 'check' : 'checks'} failed</span>
-        <div className="ml-auto"><CategoryBadge category={piece.worst_category} /></div>
+        <div className="ml-auto flex items-center gap-2">
+          <PieceCounts piece={piece} />
+          {lane === 'failing' && <CategoryBadge category={piece.worst_category} />}
+        </div>
       </button>
 
       {open && (
         <div className="border-t border-gray-800/50 px-2 py-2 space-y-1.5 bg-gray-950/30">
-          {piece.failing.map(f => (
-            <FailingTargetRow key={f.run_id} f={f} expanded={expandedRun === f.run_id}
-              onToggle={() => onToggleRun(f.run_id)} />
+          {piece.runs.map(r => (
+            <TargetRow key={r.run_id} r={r} expanded={expandedRun === r.run_id}
+              onToggle={() => onToggleRun(r.run_id)} />
           ))}
         </div>
       )}
@@ -295,22 +339,28 @@ function PieceGroup({ piece, open, onToggle, expandedRun, onToggleRun }: {
   );
 }
 
-function FailingTargetRow({ f, expanded, onToggle }: { f: WaveFailingRun; expanded: boolean; onToggle: () => void }) {
-  const dur = fmtDur(f.duration_ms);
+function TargetRow({ r, expanded, onToggle }: { r: WaveRun; expanded: boolean; onToggle: () => void }) {
+  const dur = fmtDur(r.duration_ms);
+  const icon = r.status === 'completed' ? <CheckCircle size={13} className="text-green-400 shrink-0" />
+    : r.status === 'failed' ? <XCircle size={13} className="text-red-400 shrink-0" />
+    : r.status === 'running' ? <Loader2 size={13} className="text-blue-400 animate-spin shrink-0" />
+    : <Clock size={13} className="text-gray-500 shrink-0" />;
   return (
-    <div id={`wave-run-${f.run_id}`} className="border border-gray-800 rounded-lg bg-gray-900 overflow-hidden">
+    <div id={`wave-run-${r.run_id}`} className="border border-gray-800 rounded-lg bg-gray-900 overflow-hidden">
       <button onClick={onToggle} className="w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-gray-800/50 transition-colors">
         {expanded ? <ChevronDown size={13} className="text-gray-500 shrink-0" /> : <ChevronRight size={13} className="text-gray-500 shrink-0" />}
-        <XCircle size={13} className="text-red-400 shrink-0" />
-        <span className="text-sm text-gray-200">{f.target_action}</span>
-        {f.target_type === 'trigger' && (
+        {icon}
+        <span className="text-sm text-gray-200">{r.target_action}</span>
+        {r.target_type === 'trigger' && (
           <span className="flex items-center gap-0.5 text-[10px] text-purple-300"><Zap size={9} /> trigger</span>
         )}
-        <CategoryBadge category={f.category} />
-        {f.error && <span className="text-[11px] text-red-400/70 truncate min-w-0 flex-1">— {f.error}</span>}
-        <span className="text-[10px] text-gray-500 shrink-0 ml-auto">#{f.run_id}{dur ? ` · ${dur}` : ''}</span>
+        {r.status === 'failed' && <CategoryBadge category={r.category} />}
+        {r.status === 'failed' && r.error && (
+          <span className="text-[11px] text-red-400/70 truncate min-w-0 flex-1">— {r.error}</span>
+        )}
+        <span className="text-[10px] text-gray-500 shrink-0 ml-auto">#{r.run_id}{dur ? ` · ${dur}` : ''}</span>
       </button>
-      {expanded && <RunSteps runId={f.run_id} />}
+      {expanded && <RunSteps runId={r.run_id} />}
     </div>
   );
 }
