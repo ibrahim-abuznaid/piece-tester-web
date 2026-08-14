@@ -1,4 +1,4 @@
-import type { AppConnection } from './ap-client.js';
+import type { AppConnection, ActivepiecesClient } from './ap-client.js';
 
 export type RemoteStatus = 'live' | 'missing' | 'error';
 export interface HealthResult { status: RemoteStatus; detail: string; }
@@ -27,4 +27,23 @@ export function buildConnectionBacklinks(baseUrl: string, projectId: string, pie
     activepieces: `${dashboard}/projects/${projectId}/connections`,
     reimport: `/connections?piece=${encodeURIComponent(pieceName)}`,
   };
+}
+
+/**
+ * Health of an imported connection given its raw `connection_value` JSON.
+ * Returns null when the connection is NOT imported (manual creds live locally and cannot be
+ * deleted upstream) or the value is unparseable. Otherwise fetches the upstream list once and
+ * classifies. A thrown listConnections() (network / bad creds) PROPAGATES — callers decide;
+ * we never treat a fetch failure as 'missing'.
+ */
+export async function checkImportedConnectionHealth(
+  client: ActivepiecesClient,
+  connectionValueJson: string,
+): Promise<(HealthResult & { remoteId: string }) | null> {
+  let parsed: { _imported?: boolean; remote_id?: unknown } | null = null;
+  try { parsed = JSON.parse(connectionValueJson); } catch { return null; }
+  if (!parsed || !parsed._imported || !parsed.remote_id) return null;
+  const remoteId = String(parsed.remote_id);
+  const remoteList = await client.listConnections();
+  return { remoteId, ...classifyImported(remoteId, remoteList) };
 }

@@ -35,3 +35,30 @@ describe('buildConnectionBacklinks', () => {
     expect(b.activepieces).toBe('https://ap.example.com/projects/p1/connections');
   });
 });
+
+import { checkImportedConnectionHealth } from './connection-health.js';
+import type { ActivepiecesClient } from './ap-client.js';
+
+function fakeClient(list: AppConnection[]): ActivepiecesClient {
+  return { listConnections: async () => list } as unknown as ActivepiecesClient;
+}
+
+describe('checkImportedConnectionHealth', () => {
+  it('returns null for a manual (non-imported) connection', async () => {
+    const r = await checkImportedConnectionHealth(fakeClient([]), JSON.stringify({ secret_text: 'x' }));
+    expect(r).toBeNull();
+  });
+  it('returns null for unparseable connection_value', async () => {
+    expect(await checkImportedConnectionHealth(fakeClient([]), 'not json')).toBeNull();
+  });
+  it('returns missing (with remoteId) for a deleted imported connection', async () => {
+    const r = await checkImportedConnectionHealth(fakeClient([]), JSON.stringify({ _imported: true, remote_id: 'gone' }));
+    expect(r?.status).toBe('missing');
+    expect(r?.remoteId).toBe('gone');
+  });
+  it('returns live when the imported connection still exists', async () => {
+    const list = [conn({ id: 'id1', status: 'ACTIVE' })];
+    const r = await checkImportedConnectionHealth(fakeClient(list), JSON.stringify({ _imported: true, remote_id: 'id1' }));
+    expect(r?.status).toBe('live');
+  });
+});
