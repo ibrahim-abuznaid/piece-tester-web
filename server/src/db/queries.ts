@@ -925,6 +925,7 @@ export interface AttentionItem {
   last_run_id: number;
   muted: boolean;
   mute_id: number | null;
+  backlinks: ConnectionBacklinks | null;  // present for connection_broken items
 }
 
 function shortenError(raw: string | null | undefined): string | null {
@@ -951,17 +952,17 @@ function analyzeFailedRun(stepResultsJson: string): { category: string; error: s
 export function getAttentionItems(): AttentionItem[] {
   const db = getDb();
 
-  // Plans whose LATEST scheduled run failed = candidate attention items.
-  const latest = db.all<{ plan_id: number; piece_name: string; target_action: string; run_id: number; last_run_at: string | null; step_results: string }>(`
+  // Plans whose LATEST scheduled run failed or was blocked = candidate attention items.
+  const latest = db.all<{ plan_id: number; piece_name: string; target_action: string; run_id: number; last_run_at: string | null; step_results: string; last_status: string }>(`
     SELECT p.id AS plan_id, p.piece_name, p.target_action,
-           r.id AS run_id, r.started_at AS last_run_at, r.step_results
+           r.id AS run_id, r.started_at AS last_run_at, r.step_results, r.status AS last_status
     FROM test_plans p
     JOIN test_plan_runs r ON r.id = (
       SELECT r2.id FROM test_plan_runs r2
       WHERE r2.plan_id = p.id AND r2.trigger_type = 'scheduled'
       ORDER BY r2.id DESC LIMIT 1
     )
-    WHERE r.status = 'failed'
+    WHERE r.status IN ('failed', 'blocked')
   `);
   if (latest.length === 0) return [];
 
@@ -994,18 +995,26 @@ export function getAttentionItems(): AttentionItem[] {
     const failing_since = hist.slice(0, streak).at(-1)?.started_at ?? row.last_run_at;
     const flaky = hist.some(h => h.status === 'completed') && streak < 2;
 
-    const { category, error } = analyzeFailedRun(row.step_results);
+    const isBlocked = row.last_status === 'blocked';
+    const { category, error } = isBlocked
+      ? { category: 'connection_broken', error: firstStepMessage(row.step_results) }
+      : analyzeFailedRun(row.step_results);
 
     let bucket: AttentionItem['bucket'];
-    if (category === 'auth') bucket = 'reauth';
+    if (isBlocked || category === 'auth') bucket = 'reauth';
     else if (category === 'transient' || category === 'rate_limit') bucket = 'noise';
     else bucket = streak >= 2 ? 'likely_broken' : 'watching';
 
     let reason: string;
-    if (bucket === 'reauth') reason = 'connection auth failed — needs re-auth';
+    if (isBlocked) reason = error || 'connection deleted/errored in Activepieces — fix it';
+    else if (bucket === 'reauth') reason = 'connection auth failed — needs re-auth';
     else if (bucket === 'noise') reason = `${category} — likely environment/flake`;
     else if (bucket === 'likely_broken') reason = `failed ${streak}× in a row · ${category}`;
     else reason = flaky ? `flaky — recently passed and failed · ${category}` : `first failure · ${category}`;
+
+    const backlinks = isBlocked
+      ? buildConnectionBacklinks(getSettings().base_url, getSettings().project_id, row.piece_name)
+      : null;
 
     const mute = matchMute(row.piece_name, row.target_action);
 
@@ -1016,6 +1025,7 @@ export function getAttentionItems(): AttentionItem[] {
       bucket, category, fail_streak: streak, flaky,
       error, reason, failing_since, last_run_at: row.last_run_at, last_run_id: row.run_id,
       muted: mute !== null, mute_id: mute?.id ?? null,
+      backlinks,
     });
   }
 
