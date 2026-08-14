@@ -1051,6 +1051,7 @@ export interface WaveSummary {
   passed: number;
   failed: number;
   running: number;
+  blocked: number;
 }
 
 /** One row per schedule fire, newest first. Cheap: pure aggregate, no step_results. */
@@ -1064,7 +1065,8 @@ export function getScheduledWaves(limit = 30): WaveSummary[] {
            COUNT(*) AS total,
            SUM(CASE WHEN r.status = 'completed' THEN 1 ELSE 0 END) AS passed,
            SUM(CASE WHEN r.status = 'failed' THEN 1 ELSE 0 END) AS failed,
-           SUM(CASE WHEN r.status = 'running' THEN 1 ELSE 0 END) AS running
+           SUM(CASE WHEN r.status = 'running' THEN 1 ELSE 0 END) AS running,
+           SUM(CASE WHEN r.status = 'blocked' THEN 1 ELSE 0 END) AS blocked
     FROM test_plan_runs r
     LEFT JOIN schedules s ON s.id = r.schedule_id
     WHERE r.trigger_type = 'scheduled' AND r.wave_id IS NOT NULL

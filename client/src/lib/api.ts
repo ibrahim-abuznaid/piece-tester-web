@@ -440,6 +440,7 @@ export interface WaveSummary {
   passed: number;
   failed: number;
   running: number;
+  blocked: number;
 }
 
 /** One run (target) within a wave — enough to list/drill without loading step_results. */

@@ -151,6 +151,7 @@ export default function ScheduledRunsFeed({ focusRunId }: { focusRunId?: number 
 function WaveRailItem({ w, selected, onSelect }: { w: WaveSummary; selected: boolean; onSelect: () => void }) {
   const icon = w.running > 0 ? <Loader2 size={13} className="text-blue-400 animate-spin" />
     : w.failed > 0 ? <XCircle size={13} className="text-red-400" />
+    : w.blocked > 0 ? <span className="w-2.5 h-2.5 rounded-full bg-amber-500 inline-block" />
     : <CheckCircle size={13} className="text-green-400" />;
   return (
     <button
@@ -169,8 +170,9 @@ function WaveRailItem({ w, selected, onSelect }: { w: WaveSummary; selected: boo
         )}
       </div>
       <div className="flex items-center gap-2 mt-1 text-[11px]">
-        <span className={w.failed > 0 ? 'text-gray-400' : 'text-green-400'}>{w.passed}/{w.total} passed</span>
+        <span className={(w.failed > 0 || w.blocked > 0) ? 'text-gray-400' : 'text-green-400'}>{w.passed}/{w.total} passed</span>
         {w.failed > 0 && <span className="text-red-400 font-medium">{w.failed} failed</span>}
+        {w.blocked > 0 && <span className="text-amber-400">{w.blocked} blocked</span>}
         {w.running > 0 && <span className="text-blue-400">{w.running} running</span>}
       </div>
     </button>
@@ -268,7 +270,7 @@ function WaveDetailView({
       )}
 
       {/* All-clear only when there are passing pieces and nothing failing or still running */}
-      {failingPieces.length === 0 && runningPieces.length === 0 && passingPieces.length > 0 && (
+      {failingPieces.length === 0 && runningPieces.length === 0 && blockedPieces.length === 0 && passingPieces.length > 0 && (
         <div className="bg-gray-900 border border-gray-800 rounded-lg p-4 text-sm text-gray-400 flex items-center gap-2">
           <CheckCircle size={15} className="text-green-400" /> Every check in this run passed. 🎉
         </div>

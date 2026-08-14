@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { getDb } from "./schema.js";
-import { getWaveDetail } from "./queries.js";
+import { getWaveDetail, getScheduledWaves } from "./queries.js";
 
 // Insert a test_plan and return its id.
 function seedPlan(piece: string, action: string, type: "action" | "trigger" = "action"): number {
@@ -77,6 +77,16 @@ describe("getWaveDetail", () => {
 
   it("returns null for an unknown wave", () => {
     expect(getWaveDetail("does-not-exist")).toBeNull();
+  });
+
+  it('getScheduledWaves counts blocked separately from failed and passed', () => {
+    const plan = seedPlan('hubspot', 'create_contact');
+    seedRun(plan, 'wave-c', 'blocked');
+    const w = getScheduledWaves().find(x => x.wave_id === 'wave-c')!;
+    expect(w.blocked).toBe(1);
+    expect(w.failed).toBe(0);
+    expect(w.passed).toBe(0);
+    expect(w.total).toBe(1);
   });
 
   it('counts blocked runs separately from failed', () => {
