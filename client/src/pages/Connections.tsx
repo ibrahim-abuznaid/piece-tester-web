@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { Plus, Trash2, Download, X, Check, Search } from 'lucide-react';
@@ -7,19 +8,15 @@ const CONNECTION_TYPES = ['SECRET_TEXT', 'BASIC_AUTH', 'OAUTH2', 'CUSTOM_AUTH', 
 
 export default function Connections() {
   const qc = useQueryClient();
+  const navigate = useNavigate();
   const { data: connections, isLoading } = useQuery({ queryKey: ['connections'], queryFn: api.listConnections });
   const [showForm, setShowForm] = useState(false);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'inactive'>('all');
-  const [editId, setEditId] = useState<number | null>(null);
   const [form, setForm] = useState({ piece_name: '', display_name: '', connection_type: 'SECRET_TEXT' as string, connection_value: '{}', actions_config: '{}' });
 
   const createMut = useMutation({
     mutationFn: (data: any) => api.createConnection(data),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['connections'] }); resetForm(); },
-  });
-  const updateMut = useMutation({
-    mutationFn: ({ id, data }: { id: number; data: any }) => api.updateConnection(id, data),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['connections'] }); resetForm(); },
   });
   const deleteMut = useMutation({
@@ -33,24 +30,15 @@ export default function Connections() {
 
   function resetForm() {
     setShowForm(false);
-    setEditId(null);
     setForm({ piece_name: '', display_name: '', connection_type: 'SECRET_TEXT', connection_value: '{}', actions_config: '{}' });
   }
 
-  function startEdit(conn: any) {
-    setEditId(conn.id);
-    setForm({ piece_name: conn.piece_name, display_name: conn.display_name, connection_type: conn.connection_type, connection_value: '{}', actions_config: JSON.stringify(conn.actions_config ?? {}, null, 2) });
-    setShowForm(true);
-  }
-
   function handleSubmit() {
-    const payload = {
+    createMut.mutate({
       ...form,
       connection_value: safeJson(form.connection_value),
       actions_config: safeJson(form.actions_config),
-    };
-    if (editId) updateMut.mutate({ id: editId, data: payload });
-    else createMut.mutate(payload);
+    });
   }
 
   const list: any[] = connections ?? [];
@@ -78,13 +66,13 @@ export default function Connections() {
       {showForm && (
         <div className="bg-gray-900 border border-gray-800 rounded-lg p-6 mb-6 max-w-xl">
           <div className="flex items-center justify-between mb-4">
-            <h3 className="text-lg font-semibold">{editId ? 'Edit Connection' : 'Add Connection'}</h3>
+            <h3 className="text-lg font-semibold">Add Connection</h3>
             <button onClick={resetForm} className="text-gray-500 hover:text-gray-300"><X size={18} /></button>
           </div>
           <div className="space-y-3">
             <div>
               <label className="block text-sm text-gray-400 mb-1">Piece Name</label>
-              <input className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm" value={form.piece_name} onChange={(e) => setForm({ ...form, piece_name: e.target.value })} placeholder="@activepieces/piece-http" disabled={!!editId} />
+              <input className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm" value={form.piece_name} onChange={(e) => setForm({ ...form, piece_name: e.target.value })} placeholder="@activepieces/piece-http" />
             </div>
             <div>
               <label className="block text-sm text-gray-400 mb-1">Display Name</label>
@@ -106,12 +94,12 @@ export default function Connections() {
             </div>
             <div className="flex gap-3 pt-2">
               <button onClick={handleSubmit} className="px-4 py-2 bg-primary-600 hover:bg-primary-700 rounded text-sm font-medium">
-                {editId ? 'Update' : 'Create'}
+                Create
               </button>
               <button onClick={resetForm} className="px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded text-sm">Cancel</button>
             </div>
-            {(createMut.error || updateMut.error) && (
-              <p className="text-sm text-red-400">{((createMut.error || updateMut.error) as Error)?.message}</p>
+            {createMut.error && (
+              <p className="text-sm text-red-400">{(createMut.error as Error)?.message}</p>
             )}
           </div>
         </div>
@@ -176,7 +164,7 @@ export default function Connections() {
                     {!c.is_active && (
                       <button onClick={() => activateMut.mutate(c.id)} className="px-3 py-1.5 bg-primary-600/20 text-primary-400 hover:bg-primary-600/30 rounded text-xs">Activate</button>
                     )}
-                    <button onClick={() => startEdit(c)} className="px-3 py-1.5 bg-gray-800 hover:bg-gray-700 rounded text-xs">Edit</button>
+                    <button onClick={() => navigate(`/pieces/${encodeURIComponent(c.piece_name)}`)} className="px-3 py-1.5 bg-gray-800 hover:bg-gray-700 rounded text-xs">Edit</button>
                     <button onClick={() => { if (confirm('Delete this connection?')) deleteMut.mutate(c.id); }} className="p-1.5 text-red-400 hover:bg-red-500/10 rounded"><Trash2 size={14} /></button>
                   </div>
                 </div>
