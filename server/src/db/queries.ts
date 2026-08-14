@@ -1,4 +1,5 @@
 import { getDb } from './schema.js';
+import { buildConnectionBacklinks, type ConnectionBacklinks } from '../services/connection-health.js';
 
 // ── Settings ──
 
@@ -755,12 +756,15 @@ export function getPieceBreakdown(dateFrom?: string, dateTo?: string): PieceBrea
 
 export interface PieceHealthRow {
   piece_name: string;
-  status: 'failing' | 'healthy' | 'unknown';
+  status: 'failing' | 'blocked' | 'healthy' | 'unknown';
   actions_total: number;
   actions_passing: number;
   actions_failing: number;
+  actions_blocked: number;
   last_run_at: string | null;
   failing_actions: { action: string; error: string | null; category: string; plan_id: number; run_id: number }[];
+  blocked_reason: string | null;
+  backlinks: ConnectionBacklinks | null;
   recent: string[]; // last ~12 run statuses, oldest→newest, for a sparkline
 }
 
@@ -775,6 +779,14 @@ function extractFirstStepError(stepResultsJson: string): string | null {
     try { const o = JSON.parse(msg); if (o && typeof o.message === 'string') msg = o.message; } catch { /* not JSON */ }
     msg = msg.split('\n')[0].trim();
     return msg.length > 100 ? msg.slice(0, 100) + '…' : msg;
+  } catch { return null; }
+}
+
+/** First step's error message regardless of status — used for blocked runs (sole step is 'skipped'). */
+function firstStepMessage(stepResultsJson: string): string | null {
+  try {
+    const steps = JSON.parse(stepResultsJson);
+    return Array.isArray(steps) && steps[0]?.error ? String(steps[0].error) : null;
   } catch { return null; }
 }
 
@@ -816,8 +828,9 @@ export function getPieceHealth(): PieceHealthRow[] {
     if (!h) {
       h = {
         piece_name: row.piece_name, status: 'unknown',
-        actions_total: 0, actions_passing: 0, actions_failing: 0,
-        last_run_at: null, failing_actions: [], recent: recentByPiece.get(row.piece_name) ?? [],
+        actions_total: 0, actions_passing: 0, actions_failing: 0, actions_blocked: 0,
+        last_run_at: null, failing_actions: [], blocked_reason: null, backlinks: null,
+        recent: recentByPiece.get(row.piece_name) ?? [],
       };
       byPiece.set(row.piece_name, h);
     }
@@ -836,15 +849,29 @@ export function getPieceHealth(): PieceHealthRow[] {
         run_id: row.run_id,
       });
     }
+    else if (row.last_status === 'blocked') {
+      h.actions_blocked++;
+      if (!h.blocked_reason) h.blocked_reason = firstStepMessage(row.step_results);
+    }
     if (!h.last_run_at || (row.last_run_at && row.last_run_at > h.last_run_at)) h.last_run_at = row.last_run_at;
   }
 
   const result = [...byPiece.values()];
+  const settings = getSettings();
   for (const h of result) {
-    h.status = h.actions_failing > 0 ? 'failing' : h.actions_passing > 0 ? 'healthy' : 'unknown';
+    h.status = h.actions_failing > 0 ? 'failing'
+      : h.actions_blocked > 0 ? 'blocked'
+      : h.actions_passing > 0 ? 'healthy' : 'unknown';
+    if (h.status === 'blocked') {
+      h.backlinks = buildConnectionBacklinks(settings.base_url, settings.project_id, h.piece_name);
+    }
   }
-  // Failing first (most failing actions first), then alphabetical.
-  result.sort((a, b) => (b.actions_failing - a.actions_failing) || a.piece_name.localeCompare(b.piece_name));
+  // Order: failing first, then blocked, then everything else — most-failing first within a rank.
+  const rank = (h: PieceHealthRow) => (h.status === 'failing' ? 0 : h.status === 'blocked' ? 1 : 2);
+  result.sort((a, b) =>
+    (rank(a) - rank(b)) ||
+    (b.actions_failing - a.actions_failing) ||
+    a.piece_name.localeCompare(b.piece_name));
   return result;
 }
 
