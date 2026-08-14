@@ -44,6 +44,7 @@ const CATEGORY_STYLE: Record<string, string> = {
   not_found: 'bg-blue-500/15 text-blue-300 border-blue-500/25',
   bad_request: 'bg-blue-500/15 text-blue-300 border-blue-500/25',
   auth: 'bg-amber-500/15 text-amber-300 border-amber-500/25',
+  connection_broken: 'bg-amber-500/15 text-amber-300 border-amber-500/25',
   rate_limit: 'bg-gray-500/15 text-gray-300 border-gray-600/40',
   transient: 'bg-gray-500/15 text-gray-300 border-gray-600/40',
   unknown: 'bg-gray-500/15 text-gray-400 border-gray-600/40',
@@ -195,8 +196,9 @@ function WaveDetailView({
   if (isLoading || !detail) return <p className="text-sm text-gray-400">Loading run…</p>;
 
   const failingPieces = detail.pieces.filter(p => p.failed > 0);
-  const runningPieces = detail.pieces.filter(p => p.failed === 0 && p.running > 0);
-  const passingPieces = detail.pieces.filter(p => p.failed === 0 && p.running === 0);
+  const blockedPieces = detail.pieces.filter(p => p.failed === 0 && p.blocked > 0);
+  const runningPieces = detail.pieces.filter(p => p.failed === 0 && p.blocked === 0 && p.running > 0);
+  const passingPieces = detail.pieces.filter(p => p.failed === 0 && p.blocked === 0 && p.running === 0);
 
   return (
     <div className="space-y-3">
@@ -219,6 +221,7 @@ function WaveDetailView({
             {detail.failed} {detail.failed === 1 ? 'check' : 'checks'} failing
           </span>
           {detail.running > 0 && <span className="text-blue-400">{detail.running} running</span>}
+          {detail.blocked > 0 && <span className="text-amber-400">{detail.blocked} blocked</span>}
         </div>
         {detail.covered_untested > 0 && (
           <p className="text-xs text-amber-300/80 mt-1.5">
@@ -233,6 +236,18 @@ function WaveDetailView({
         <div className="space-y-1.5">
           {failingPieces.map(p => (
             <PieceGroup key={p.piece_name} piece={p} lane="failing" open={expandedPieces.has(p.piece_name)}
+              onToggle={() => onTogglePiece(p.piece_name)} expandedRun={expandedRun} onToggleRun={onToggleRun} />
+          ))}
+        </div>
+      )}
+
+      {blockedPieces.length > 0 && (
+        <div className="space-y-1.5">
+          <div className="flex items-center gap-2 px-1 pt-1 text-xs text-amber-300">
+            Connection needs fixing — not run
+          </div>
+          {blockedPieces.map(p => (
+            <PieceGroup key={p.piece_name} piece={p} lane="blocked" open={expandedPieces.has(p.piece_name)}
               onToggle={() => onTogglePiece(p.piece_name)} expandedRun={expandedRun} onToggleRun={onToggleRun} />
           ))}
         </div>
@@ -283,22 +298,26 @@ function WaveDetailView({
 
 const LANE_STYLE = {
   failing: { border: 'border-red-500/20', dot: 'bg-red-500' },
+  blocked: { border: 'border-amber-500/20', dot: 'bg-amber-500' },
   running: { border: 'border-blue-500/20', dot: 'bg-blue-500' },
   passing: { border: 'border-gray-800', dot: 'bg-green-500' },
 } as const;
 
 // Segmented count for a piece header: only nonzero parts, "·"-separated with no leading dot.
 function PieceCounts({ piece }: { piece: WavePiece }) {
-  const { passed, running, failed } = piece;
-  const empty = passed === 0 && running === 0 && failed === 0;
+  const { passed, running, failed, blocked } = piece;
+  const empty = passed === 0 && running === 0 && failed === 0 && blocked === 0;
   return (
     <span className="flex items-center gap-1.5 text-xs">
       {(passed > 0 || empty) && <span className="text-gray-400">{passed} passed</span>}
       {running > 0 && (
         <span className="text-blue-400">{passed > 0 ? '· ' : ''}{running} running</span>
       )}
+      {blocked > 0 && (
+        <span className="text-amber-400">{passed > 0 || running > 0 ? '· ' : ''}{blocked} blocked</span>
+      )}
       {failed > 0 && (
-        <span className="text-red-400 font-medium">{passed > 0 || running > 0 ? '· ' : ''}{failed} failed</span>
+        <span className="text-red-400 font-medium">{passed > 0 || running > 0 || blocked > 0 ? '· ' : ''}{failed} failed</span>
       )}
     </span>
   );
@@ -306,7 +325,7 @@ function PieceCounts({ piece }: { piece: WavePiece }) {
 
 function PieceGroup({ piece, lane, open, onToggle, expandedRun, onToggleRun }: {
   piece: WavePiece;
-  lane: 'failing' | 'running' | 'passing';
+  lane: 'failing' | 'blocked' | 'running' | 'passing';
   open: boolean;
   onToggle: () => void;
   expandedRun: number | null;
