@@ -156,9 +156,12 @@ function HealthRow({ row }: { row: PieceHealthRow }) {
   const canExpand = row.failing_actions.length > 0;
 
   const dot = row.status === 'failing' ? 'bg-red-500'
+    : row.status === 'blocked' ? 'bg-amber-500'
     : row.status === 'healthy' ? 'bg-green-500'
     : 'bg-gray-600';
-  const border = row.status === 'failing' ? 'border-red-500/20' : 'border-gray-800';
+  const border = row.status === 'failing' ? 'border-red-500/20'
+    : row.status === 'blocked' ? 'border-amber-500/20'
+    : 'border-gray-800';
 
   const firstFail = row.failing_actions[0];
   const extraFails = row.failing_actions.length - 1;
@@ -183,8 +186,24 @@ function HealthRow({ row }: { row: PieceHealthRow }) {
         </span>
 
         {/* Failing action hint (full text on hover), or a "recovered" chip */}
-        <span className="flex-1 min-w-0 text-xs truncate" title={failHint}>
-          {firstFail ? (
+        <span className="flex-1 min-w-0 text-xs truncate" title={row.blocked_reason ?? failHint}>
+          {row.status === 'blocked' ? (
+            <span className="inline-flex items-center gap-2">
+              <span className="text-[10px] text-amber-300 bg-amber-500/10 border border-amber-500/20 rounded px-1.5 py-0.5">
+                Connection needs fixing
+              </span>
+              {row.blocked_reason && <span className="text-amber-400/60">{row.blocked_reason}</span>}
+              {row.backlinks && (
+                <>
+                  <a href={row.backlinks.activepieces} target="_blank" rel="noreferrer"
+                    onClick={e => e.stopPropagation()}
+                    className="text-primary-400 hover:underline">Fix in Activepieces ↗</a>
+                  <Link to={row.backlinks.reimport} onClick={e => e.stopPropagation()}
+                    className="text-primary-400 hover:underline">Re-import here</Link>
+                </>
+              )}
+            </span>
+          ) : firstFail ? (
             <span className="text-red-400/90">✗ {firstFail.action}{extraFails > 0 ? ` +${extraFails}` : ''}
               {firstFail.error ? <span className="text-red-400/50"> — {firstFail.error}</span> : null}
             </span>
