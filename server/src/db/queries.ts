@@ -1091,6 +1091,7 @@ export interface WavePiece {
   passed: number;
   failed: number;
   running: number;
+  blocked: number;
   worst_category: string | null;
   runs: WaveRun[];   // ALL runs enumerated; ordered failed(by severity) -> running -> passed
 }
@@ -1104,6 +1105,7 @@ export interface WaveDetail {
   passed: number;
   failed: number;
   running: number;
+  blocked: number;
   pieces: WavePiece[];         // failing pieces first
   covered_total: number;       // pieces covered right now (enabled-schedule targets)
   covered_untested: number;    // covered pieces with no approved plans (a run can't test them)
@@ -1140,12 +1142,13 @@ function runDurationMs(started?: string | null, completed?: string | null): numb
 export function getWaveDetail(waveId: string): WaveDetail | null {
   const db = getDb();
 
-  const pieceCounts = db.all<{ piece_name: string; total: number; passed: number; failed: number; running: number }>(`
+  const pieceCounts = db.all<{ piece_name: string; total: number; passed: number; failed: number; running: number; blocked: number }>(`
     SELECT p.piece_name AS piece_name,
            COUNT(*) AS total,
            SUM(CASE WHEN r.status = 'completed' THEN 1 ELSE 0 END) AS passed,
            SUM(CASE WHEN r.status = 'failed' THEN 1 ELSE 0 END) AS failed,
-           SUM(CASE WHEN r.status = 'running' THEN 1 ELSE 0 END) AS running
+           SUM(CASE WHEN r.status = 'running' THEN 1 ELSE 0 END) AS running,
+           SUM(CASE WHEN r.status = 'blocked' THEN 1 ELSE 0 END) AS blocked
     FROM test_plan_runs r
     JOIN test_plans p ON p.id = r.plan_id
     WHERE r.wave_id = ?
@@ -1181,7 +1184,7 @@ export function getWaveDetail(waveId: string): WaveDetail | null {
   const byPiece = new Map<string, WavePiece>();
   for (const c of pieceCounts) {
     byPiece.set(c.piece_name, {
-      piece_name: c.piece_name, total: c.total, passed: c.passed, failed: c.failed, running: c.running,
+      piece_name: c.piece_name, total: c.total, passed: c.passed, failed: c.failed, running: c.running, blocked: c.blocked,
       worst_category: null, runs: [],
     });
   }
@@ -1199,6 +1202,7 @@ export function getWaveDetail(waveId: string): WaveDetail | null {
   // Within a piece: failed first (by category severity), then running, then everything else.
   const statusRank = (run: WaveRun): number =>
     run.status === 'failed' ? 100 + categorySeverity(run.category)
+    : run.status === 'blocked' ? 60
     : run.status === 'running' ? 50
     : 10;
 
@@ -1213,8 +1217,9 @@ export function getWaveDetail(waveId: string): WaveDetail | null {
   pieces.sort((a, b) => (b.failed - a.failed) || a.piece_name.localeCompare(b.piece_name));
 
   const agg = pieces.reduce((s, p) => ({
-    total: s.total + p.total, passed: s.passed + p.passed, failed: s.failed + p.failed, running: s.running + p.running,
-  }), { total: 0, passed: 0, failed: 0, running: 0 });
+    total: s.total + p.total, passed: s.passed + p.passed, failed: s.failed + p.failed,
+    running: s.running + p.running, blocked: s.blocked + p.blocked,
+  }), { total: 0, passed: 0, failed: 0, running: 0, blocked: 0 });
 
   return {
     wave_id: waveId,
@@ -1630,7 +1635,7 @@ export interface CoverageRow {
   plan_count: number;
   planned_targets: number; // # of the piece's actions/triggers that have a plan (any status)
   total_targets: number;   // # of actions + triggers the piece exposes (from the catalog)
-  health: 'failing' | 'healthy' | 'unknown' | null; // null = never run
+  health: 'failing' | 'blocked' | 'healthy' | 'unknown' | null; // null = never run
   actions_failing: number;
   last_run_at: string | null;
   last_run_id: number | null; // latest SCHEDULED run for the piece (for the Runs deep-link)

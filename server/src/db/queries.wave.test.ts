@@ -78,4 +78,17 @@ describe("getWaveDetail", () => {
   it("returns null for an unknown wave", () => {
     expect(getWaveDetail("does-not-exist")).toBeNull();
   });
+
+  it('counts blocked runs separately from failed', () => {
+    const plan = seedPlan('hubspot', 'create_contact');
+    seedRun(plan, 'wave-b', 'blocked', {
+      stepResults: JSON.stringify([{ stepId: 'connection', status: 'skipped', error: 'deleted' }]),
+    });
+    const detail = getWaveDetail('wave-b')!;
+    expect(detail.blocked).toBe(1);
+    expect(detail.failed).toBe(0);
+    const hub = detail.pieces.find(p => p.piece_name === 'hubspot')!;
+    expect(hub.blocked).toBe(1);
+    expect(hub.runs[0].status).toBe('blocked');
+  });
 });
