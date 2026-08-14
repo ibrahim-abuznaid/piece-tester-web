@@ -188,6 +188,20 @@ function AttentionRow({ item }: { item: AttentionItem }) {
         </span>
 
         <div className="flex items-center gap-1 shrink-0">
+          {item.backlinks && (
+            <>
+              <a href={item.backlinks.activepieces} target="_blank" rel="noreferrer"
+                title="Recreate/repair this connection in Activepieces"
+                className="px-2 py-1 rounded text-[11px] text-gray-500 hover:text-amber-400 hover:bg-amber-500/10">
+                Fix in AP ↗
+              </a>
+              <button onClick={() => navigate(item.backlinks!.reimport)}
+                title="Re-import this connection here"
+                className="px-2 py-1 rounded text-[11px] text-gray-500 hover:text-primary-400 hover:bg-primary-500/10">
+                Re-import
+              </button>
+            </>
+          )}
           {retestEl ?? (
             <button onClick={handleRetest} title="Re-run this plan now"
               className="flex items-center gap-1 px-2 py-1 rounded text-[11px] text-gray-500 hover:text-blue-400 hover:bg-blue-500/10">
