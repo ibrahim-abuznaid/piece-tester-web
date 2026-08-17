@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { getDb } from './schema.js';
-import { getTestPlan, markPlansStaleByPiece, createTestPlan, updateTestPlan } from './queries.js';
+import { getTestPlan, markPlansStaleByPiece, createTestPlan, updateTestPlan, getPieceHealth, getAttentionItems } from './queries.js';
 
 function seedPlan(piece: string, action: string, status = 'approved'): number {
   return getDb().run(
@@ -66,5 +66,42 @@ describe('needs_regen clears on rewrite/approve', () => {
     markPlansStaleByPiece('slack');
     updateTestPlan(id, { status: 'approved' });
     expect(getTestPlan(id)!.needs_regen).toBe(1);
+  });
+});
+
+function seedScheduledRun(planId: number, status: string, stepResults: string): number {
+  return getDb().run(
+    `INSERT INTO test_plan_runs (plan_id, status, trigger_type, step_results, started_at)
+     VALUES (?,?,?,?,?)`,
+    [planId, status, 'scheduled', stepResults, '2026-08-17 10:00:00'],
+  ).lastId;
+}
+
+describe('blocked backlinks guard (stale vs connection)', () => {
+  beforeEach(() => getDb().exec('DELETE FROM test_plan_runs; DELETE FROM test_plans;'));
+
+  it('a STALE block gets no connection backlinks', () => {
+    const plan = seedPlan('linear', 'update_issue', 'approved');
+    seedScheduledRun(plan, 'blocked', JSON.stringify([
+      { stepId: 'stale', status: 'skipped', error: 'Connection changed — regenerate the plan.' },
+    ]));
+
+    const row = getPieceHealth().find(r => r.piece_name === 'linear')!;
+    expect(row.status).toBe('blocked');
+    expect(row.backlinks).toBeNull();
+    expect(row.blocked_reason).toContain('regenerate');
+
+    const att = getAttentionItems().find(i => i.piece_name === 'linear')!;
+    expect(att.backlinks).toBeNull();
+  });
+
+  it('a CONNECTION block still gets backlinks (regression guard)', () => {
+    const plan = seedPlan('hubspot', 'create_contact', 'approved');
+    seedScheduledRun(plan, 'blocked', JSON.stringify([
+      { stepId: 'connection', status: 'skipped', error: 'Connection was deleted in Activepieces' },
+    ]));
+
+    const row = getPieceHealth().find(r => r.piece_name === 'hubspot')!;
+    expect(row.backlinks?.reimport).toBe('/connections?piece=hubspot');
   });
 });

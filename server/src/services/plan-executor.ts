@@ -307,22 +307,21 @@ export async function executePlan(
   const steps: TestPlanStep[] = JSON.parse(plan.steps);
   if (steps.length === 0) throw new Error('Plan has no steps');
 
-  // Get piece metadata
-  const client = createClient();
-  const pieceMeta: PieceMetadataFull = await client.getPieceMetadata(plan.piece_name);
-
   // Create run (stamped with the schedule fire's wave, if any)
   const run = createPlanRun(planId, triggerType, wave);
   const runId = run.id;
   const emitter = getResumeEmitter(runId);
 
-  // Pre-flight: if this piece's imported connection is deleted/errored upstream, do NOT run.
-  // Record the run as `blocked` (it never executed a step) so the Health board reads it as an
-  // environment problem, not a piece regression. A thrown listConnections() (network/creds)
-  // does NOT block — the .catch lets the plan proceed and any real auth error classifies as today.
+  // Gate 1 — broken connection: if this piece's imported connection is deleted/errored upstream,
+  // do NOT run. Record `blocked` so the Health board reads it as an environment problem, not a
+  // piece regression. A thrown listConnections() (network/creds) does NOT block — the .catch lets
+  // the plan proceed and any real auth error classifies as today.
   const activeConn = getConnectionByPiece(plan.piece_name);
   const health = activeConn
-    ? await checkImportedConnectionHealth(client, activeConn.connection_value).catch(() => null)
+    ? await (async () => {
+        const client = createClient();
+        return checkImportedConnectionHealth(client, activeConn.connection_value).catch(() => null);
+      })()
     : null;
   if (health && health.status !== 'live') {
     const blockedStep: StepResult = {
@@ -338,6 +337,32 @@ export async function executePlan(
     cleanupEmitter(runId);
     return getPlanRun(runId)!;
   }
+
+  // Gate 2 — stale plan: the active connection changed after this plan was approved, so its
+  // frozen account-scoped inputs (e.g. Linear teamId/issueId) may point at the wrong account.
+  // Block (never fail) until the user regenerates. The `stepId: 'stale'` marker distinguishes
+  // this from Gate 1 for the Health/Attention backlinks guard (see queries.ts).
+  if (plan.needs_regen === 1) {
+    const staleStep: StepResult = {
+      stepId: 'stale', label: 'Plan needs regenerating', status: 'skipped',
+      output: null,
+      error: 'Connection changed after this plan was approved — regenerate the plan.',
+      duration_ms: 0,
+    };
+    updatePlanRun(runId, {
+      status: 'blocked',
+      completed_at: new Date().toISOString(),
+      step_results: JSON.stringify([staleStep]),
+    });
+    onProgress({ type: 'plan_blocked', runId, message: staleStep.error!, stepResults: [staleStep] });
+    cleanupEmitter(runId);
+    return getPlanRun(runId)!;
+  }
+
+  // Piece metadata is only needed to actually run steps — fetch after the gates so a blocked
+  // run makes zero ActivePieces calls.
+  const client = createClient();
+  const pieceMeta: PieceMetadataFull = await client.getPieceMetadata(plan.piece_name);
 
   const stepResults = new Map<string, StepResult>();
   const resultsArray: StepResult[] = [];

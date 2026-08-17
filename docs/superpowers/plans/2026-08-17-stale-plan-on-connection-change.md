@@ -537,6 +537,10 @@ git commit -m "feat(connections): mark a piece's plans stale when its active con
 - Modify: `server/src/db/queries.ts` (add `firstStepId` near `firstStepMessage` :786; guard in `getPieceHealth` :826-868 and `getAttentionItems` :1015-1017)
 - Test: `server/src/db/queries.stale.test.ts`
 
+> **Post-review refinements (2026-08-17):**
+> - `getAttentionItems`: `isStaleBlock` is now computed immediately after `isBlocked` (before `reason`), and the `reason` assignment has an explicit stale branch (`'Connection changed — regenerate the plan'`) so a stale block never falls through to the connection-centric fallback text.
+> - `getPieceHealth`: a second `staleBlocked` set tracks stale-blocked pieces; backlinks are only attached when `connectionBlocked.has(piece) && !staleBlocked.has(piece)`, preventing backlinks on a piece with a mixed stale+connection block.
+
 - [ ] **Step 1: Write the failing test**
 
 Add to `server/src/db/queries.stale.test.ts`:
