@@ -116,9 +116,8 @@ if (plan.needs_regen === 1) {
   };
   updatePlanRun(runId, {
     status: 'blocked',
-    blocked_reason: 'stale_plan',            // see §5
     completed_at: new Date().toISOString(),
-    step_results: JSON.stringify([staleStep]),
+    step_results: JSON.stringify([staleStep]),   // stepId 'stale' is the §5 discriminator
   });
   onProgress({ type: 'plan_blocked', runId, message: staleStep.error!, stepResults: [staleStep] });
   cleanupEmitter(runId);
@@ -136,25 +135,29 @@ the wave rail, and PieceDetail already render (PR #14; PieceDetail specifically 
 end. If we later want manual runs to bypass the gate for debugging, that is a one-line
 `triggerType !== 'manual'` guard — deferred, not in v1.
 
-### 5. Distinguish the blocked reason (remediation refinement)
+### 5. Distinguish the blocked reason (remediation guard — no new column)
 
-PR #14 carries the block reason only as a free-text `error` string, and its surfaces hard-code the
-**Fix in AP / Re-import** remediation. Our block has a different fix (**Regenerate**), so we add a
-discriminator so the UI shows the right action:
+Both blocked-run readers currently attach connection backlinks to **any** blocked run —
+`getPieceHealth` (`queries.ts:865-867`) and `getAttentionItems` (`queries.ts:1015-1017`) — and both
+clients render the **Fix in AP / Re-import** buttons only when `backlinks` is truthy
+(`Dashboard.tsx:196`, `NeedsAttention.tsx:194`). So a stale block would wrongly show
+"Fix in AP" for a problem whose real fix is "Regenerate."
 
-- Add `blocked_reason TEXT` to `test_plan_runs` (idempotent `ALTER TABLE`; nullable, no migration
-  pain — statuses are plain TEXT). Values: `'broken_connection'` (PR #14) | `'stale_plan'` (this).
-- This work also adds `blocked_reason = 'broken_connection'` to PR #14's **existing** gate
-  (`plan-executor.ts:327-337`); the new stale gate sets `'stale_plan'`.
-- The blocked-run readers (`getPieceHealth`, `getAttentionItems`, `getWaveDetail`) surface
-  `blocked_reason` so the client can branch remediation:
-  - `broken_connection` → **Fix in AP** / **Re-import** (unchanged).
-  - `stale_plan` → **Regenerate plan**.
+The discriminator already exists in the run: the first (and only) step of a block carries a
+`stepId` — `'connection'` for PR #14's gate, `'stale'` for the new gate (§4). So instead of a new
+column we **guard the backlinks**:
 
-If threading `blocked_reason` through all three readers proves heavy, the fallback for v1 is to
-branch on the `stepId` already stored in `step_results[0]` (`'connection'` vs `'stale'`) — no new
-column. Prefer the explicit column; the fallback keeps the feature shippable if the column is
-contentious.
+- In `getPieceHealth` and `getAttentionItems`, when the latest run is `blocked`, inspect
+  `step_results[0].stepId`. Attach connection backlinks **only** when it is `'connection'`; for
+  `'stale'`, leave `backlinks = null`.
+- Effect with **zero client change**: a stale block shows the amber row + its message
+  ("Connection changed … regenerate the plan", already surfaced by `firstStepMessage`
+  `queries.ts:786`), and **no** Fix-in-AP/Re-import buttons. The actionable **Regenerate** control
+  lives on the piece page (§6), where the user goes to fix it.
+
+Deferred polish (not v1): a dedicated **Regenerate** button on the Health / Needs-Attention rows.
+The message already tells the user what to do; withholding the wrong buttons is the correctness
+fix and it is server-only.
 
 ### 6. UI — warn + regenerate (`PieceDetail.tsx`)
 
@@ -206,11 +209,12 @@ plans.
 - **`markPlansStaleByPiece`**: only `approved` plans of the named piece flip to `needs_regen = 1`;
   drafts and other pieces untouched.
 - **Flag clears** on `createTestPlan` update branch and on `updateTestPlan` approve.
-- **`executePlan` gate**: `needs_regen = 1` → run `blocked`, `blocked_reason = 'stale_plan'`, zero
-  steps executed, `plan_blocked` emitted; `needs_regen = 0` → runs normally. Covers manual and
-  scheduled `triggerType`.
+- **`executePlan` gate**: `needs_regen = 1` → run `blocked` with a sole `stepId: 'stale'` step,
+  zero real steps executed, `plan_blocked` emitted; `needs_regen = 0` → runs normally. Covers
+  manual and scheduled `triggerType`.
 - **Connection routes** each call `markPlansStaleByPiece` for the right `piece_name` (activate /
   create / import / active-value update / delete-with-promotion) and **not** for a no-op
   (inactive-connection delete, non-value PUT).
-- **Reader branch**: a `stale_plan` blocked run surfaces the Regenerate remediation, a
-  `broken_connection` one surfaces Fix-in-AP / Re-import.
+- **Backlinks guard**: `getPieceHealth` / `getAttentionItems` attach connection backlinks for a
+  `stepId: 'connection'` block but **not** for a `stepId: 'stale'` block (which stays
+  `backlinks = null`).
