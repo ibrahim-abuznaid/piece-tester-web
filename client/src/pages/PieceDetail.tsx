@@ -150,12 +150,15 @@ export default function PieceDetail() {
   // ── Stale-plan regeneration ──
   const [regenerating, setRegenerating] = useState(false);
 
-  const staleActions = useMemo(
-    () => Object.entries(actionPlans)
+  const stalePlans = useMemo(() => {
+    const a = Object.entries(actionPlans)
       .filter(([, p]) => p.needs_regen === 1)
-      .map(([action]) => action),
-    [actionPlans],
-  );
+      .map(([name]) => ({ name, isTrigger: false }));
+    const t = Object.entries(triggerPlans)
+      .filter(([, p]) => p.needs_regen === 1)
+      .map(([name]) => ({ name, isTrigger: true }));
+    return [...a, ...t];
+  }, [actionPlans, triggerPlans]);
 
   // Lightweight plan refresh after a regen — intentionally omits the enabledActions/Jobs
   // resets that the initial load effect does.
@@ -178,17 +181,24 @@ export default function PieceDetail() {
     if (!name || regenerating) return;
     setRegenerating(true);
     try {
-      for (const action of staleActions) {
+      for (const { name: planName, isTrigger } of stalePlans) {
         await new Promise<void>((resolve, reject) => {
-          const ctrl = api.streamAiPlanV2(name, action, {
-            onLog: () => {},
-            onResult: () => {},
-            onError: () => {},        // skip a failed regen; the plan stays stale and blocked
-            onDone: () => resolve(),
-          });
+          const ctrl = isTrigger
+            ? api.streamTriggerPlanV2(name, planName, {
+                onLog: () => {},
+                onResult: () => {},
+                onError: () => {},    // skip a failed regen; the plan stays stale and blocked
+                onDone: () => resolve(),
+              })
+            : api.streamAiPlanV2(name, planName, {
+                onLog: () => {},
+                onResult: () => {},
+                onError: () => {},    // skip a failed regen; the plan stays stale and blocked
+                onDone: () => resolve(),
+              });
           regenControllerRef.current = ctrl;
           ctrl.signal.addEventListener('abort', () => reject(new Error('aborted')));
-        }).catch(() => {});           // swallow abort/error — move to the next action
+        }).catch(() => {});           // swallow abort/error — move to the next plan
         await reloadPlans();
       }
     } finally {
@@ -1060,11 +1070,11 @@ export default function PieceDetail() {
           )}
 
           {/* Stale-plan banner */}
-          {staleActions.length > 0 && (
+          {stalePlans.length > 0 && (
             <div className="mb-4 flex items-center gap-3 rounded-lg border border-amber-500/30 bg-amber-500/10 p-4">
               <AlertTriangle size={16} className="flex-shrink-0 text-amber-400" />
               <div className="min-w-0">
-                <p className="text-sm font-medium text-amber-300">Connection changed — {staleActions.length} plan(s) need regenerating</p>
+                <p className="text-sm font-medium text-amber-300">Connection changed — {stalePlans.length} plan(s) need regenerating</p>
                 <p className="mt-0.5 text-xs text-amber-300/70">These plans were approved against the previous connection and will be blocked (not run) until regenerated.</p>
               </div>
               <button
@@ -1291,6 +1301,11 @@ export default function PieceDetail() {
                             {hasPlan && (
                               <span className={`text-[10px] px-1.5 py-0.5 rounded ${planStatus === 'approved' ? 'bg-green-500/10 text-green-400' : 'bg-gray-700 text-gray-400'}`}>
                                 {planStatus === 'approved' ? 'approved' : 'draft'}
+                              </span>
+                            )}
+                            {triggerPlans[triggerName]?.needs_regen === 1 && (
+                              <span className="flex items-center gap-1 rounded bg-amber-500/20 px-2 py-0.5 text-[10px] text-amber-400">
+                                <AlertTriangle size={10} /> Stale
                               </span>
                             )}
                           </div>
