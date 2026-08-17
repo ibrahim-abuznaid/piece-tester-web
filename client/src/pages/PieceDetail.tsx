@@ -79,7 +79,7 @@ export default function PieceDetail() {
     actionName: string;          // target name (action or trigger)
     targetKind: 'action' | 'trigger';
     planId: number;
-    status: 'pending' | 'running' | 'completed' | 'failed' | 'paused';
+    status: 'pending' | 'running' | 'completed' | 'failed' | 'paused' | 'blocked';
     stepResults: StepResult[];
     pausedInfo?: { stepId: string; prompt: string; type: 'human' | 'approval' };
     runId?: number;
@@ -712,7 +712,7 @@ export default function PieceDetail() {
                 if (!isMatch(r)) return r;
                 return {
                   ...r,
-                  status: data.status === 'completed' ? 'completed' : 'failed',
+                  status: data.status === 'completed' ? 'completed' : data.status === 'blocked' ? 'blocked' : 'failed',
                   stepResults: data.step_results || r.stepResults,
                   runId: data.runId,
                 };
@@ -1310,6 +1310,7 @@ export default function PieceDetail() {
               {(() => {
                 const completed = planRuns.filter(r => r.status === 'completed').length;
                 const failed = planRuns.filter(r => r.status === 'failed').length;
+                const blocked = planRuns.filter(r => r.status === 'blocked').length;
                 const paused = planRuns.filter(r => r.status === 'paused').length;
                 const pending = planRuns.filter(r => r.status === 'pending' || r.status === 'running').length;
                 const allDone = !running && pending === 0;
@@ -1325,6 +1326,7 @@ export default function PieceDetail() {
                       <span className="text-gray-400">Total: {planRuns.length}</span>
                       <span className="text-green-400">Passed: {completed}</span>
                       <span className="text-red-400">Failed: {failed}</span>
+                      {blocked > 0 && <span className="text-amber-400">Blocked: {blocked}</span>}
                       {paused > 0 && <span className="text-yellow-400">Waiting: {paused}</span>}
                       {pending > 0 && <span className="text-blue-400">Running: {pending}</span>}
                     </div>
@@ -1344,12 +1346,14 @@ export default function PieceDetail() {
 
                   const statusIcon = run.status === 'completed' ? <CheckCircle size={16} className="text-green-400" />
                     : run.status === 'failed' ? <XCircle size={16} className="text-red-400" />
+                    : run.status === 'blocked' ? <span className="w-4 h-4 rounded-full bg-amber-500 inline-flex items-center justify-center text-[8px] text-white font-bold">!</span>
                     : run.status === 'running' ? <Loader2 size={16} className="text-blue-400 animate-spin" />
                     : run.status === 'paused' ? <MessageSquare size={16} className="text-yellow-400" />
                     : <Clock size={16} className="text-gray-500" />;
 
                   const statusBorder = run.status === 'completed' ? 'border-green-500/30'
                     : run.status === 'failed' ? 'border-red-500/30'
+                    : run.status === 'blocked' ? 'border-amber-500/30'
                     : run.status === 'running' ? 'border-blue-500/30'
                     : run.status === 'paused' ? 'border-yellow-500/30'
                     : 'border-gray-800';

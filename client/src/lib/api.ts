@@ -365,6 +365,11 @@ export interface PlanExecutionCallbacks {
   onError: (message: string) => void;
 }
 
+export interface ConnectionBacklinks {
+  activepieces: string;  // external URL to the Activepieces connections page
+  reimport: string;      // in-app route, e.g. "/connections?piece=hubspot"
+}
+
 /** One item in the Needs-Attention inbox — a failing (piece, action), classified into a lane. */
 export interface AttentionItem {
   plan_id: number;
@@ -381,17 +386,21 @@ export interface AttentionItem {
   last_run_id: number;
   muted: boolean;
   mute_id: number | null;
+  backlinks: ConnectionBacklinks | null;
 }
 
 /** Current-state health of one piece (latest scheduled outcome per action). */
 export interface PieceHealthRow {
   piece_name: string;
-  status: 'failing' | 'healthy' | 'unknown';
+  status: 'failing' | 'blocked' | 'healthy' | 'unknown';
   actions_total: number;
   actions_passing: number;
   actions_failing: number;
+  actions_blocked: number;
   last_run_at: string | null;
   failing_actions: { action: string; error: string | null; category: string; plan_id: number; run_id: number }[];
+  blocked_reason: string | null;
+  backlinks: ConnectionBacklinks | null;
   recent: string[]; // last ~12 run statuses, oldest→newest
 }
 
@@ -431,6 +440,7 @@ export interface WaveSummary {
   passed: number;
   failed: number;
   running: number;
+  blocked: number;
 }
 
 /** One run (target) within a wave — enough to list/drill without loading step_results. */
@@ -452,6 +462,7 @@ export interface WavePiece {
   passed: number;
   failed: number;
   running: number;
+  blocked: number;
   worst_category: string | null;
   runs: WaveRun[];
 }
@@ -466,6 +477,7 @@ export interface WaveDetail {
   passed: number;
   failed: number;
   running: number;
+  blocked: number;
   pieces: WavePiece[];
   covered_total: number;
   covered_untested: number;

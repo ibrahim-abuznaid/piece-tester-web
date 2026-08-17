@@ -6,7 +6,7 @@
 import { EventEmitter } from 'events';
 import {
   createPlanRun, getPlanRun, updatePlanRun,
-  getTestPlan, type TestPlanRunRow, type WaveInfo,
+  getTestPlan, getConnectionByPiece, type TestPlanRunRow, type WaveInfo,
 } from '../db/queries.js';
 import { executeActionOnAP, type TestPlanStep, type PlanAssertion } from './ai-config-generator.js';
 import {
@@ -14,6 +14,7 @@ import {
   type TriggerSimContext,
 } from './trigger-engine.js';
 import { createClient } from './test-engine.js';
+import { checkImportedConnectionHealth } from './connection-health.js';
 import type { PieceMetadataFull } from './ap-client.js';
 
 // ── Types ──
@@ -119,7 +120,7 @@ function classifyError(message: string): ErrorCategory {
 }
 
 export interface PlanProgress {
-  type: 'step_start' | 'step_complete' | 'step_failed' | 'paused_for_human' | 'paused_for_approval' | 'plan_complete' | 'plan_failed' | 'error';
+  type: 'step_start' | 'step_complete' | 'step_failed' | 'paused_for_human' | 'paused_for_approval' | 'plan_complete' | 'plan_failed' | 'plan_blocked' | 'error';
   runId: number;
   stepId?: string;
   stepResult?: StepResult;
@@ -314,6 +315,29 @@ export async function executePlan(
   const run = createPlanRun(planId, triggerType, wave);
   const runId = run.id;
   const emitter = getResumeEmitter(runId);
+
+  // Pre-flight: if this piece's imported connection is deleted/errored upstream, do NOT run.
+  // Record the run as `blocked` (it never executed a step) so the Health board reads it as an
+  // environment problem, not a piece regression. A thrown listConnections() (network/creds)
+  // does NOT block — the .catch lets the plan proceed and any real auth error classifies as today.
+  const activeConn = getConnectionByPiece(plan.piece_name);
+  const health = activeConn
+    ? await checkImportedConnectionHealth(client, activeConn.connection_value).catch(() => null)
+    : null;
+  if (health && health.status !== 'live') {
+    const blockedStep: StepResult = {
+      stepId: 'connection', label: 'Connection check', status: 'skipped',
+      output: null, error: health.detail, duration_ms: 0,
+    };
+    updatePlanRun(runId, {
+      status: 'blocked',
+      completed_at: new Date().toISOString(),
+      step_results: JSON.stringify([blockedStep]),
+    });
+    onProgress({ type: 'plan_blocked', runId, message: health.detail, stepResults: [blockedStep] });
+    cleanupEmitter(runId);
+    return getPlanRun(runId)!;
+  }
 
   const stepResults = new Map<string, StepResult>();
   const resultsArray: StepResult[] = [];

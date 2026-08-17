@@ -1,4 +1,5 @@
 import { getDb } from './schema.js';
+import { buildConnectionBacklinks, type ConnectionBacklinks } from '../services/connection-health.js';
 
 // ── Settings ──
 
@@ -755,12 +756,15 @@ export function getPieceBreakdown(dateFrom?: string, dateTo?: string): PieceBrea
 
 export interface PieceHealthRow {
   piece_name: string;
-  status: 'failing' | 'healthy' | 'unknown';
+  status: 'failing' | 'blocked' | 'healthy' | 'unknown';
   actions_total: number;
   actions_passing: number;
   actions_failing: number;
+  actions_blocked: number;
   last_run_at: string | null;
   failing_actions: { action: string; error: string | null; category: string; plan_id: number; run_id: number }[];
+  blocked_reason: string | null;
+  backlinks: ConnectionBacklinks | null;
   recent: string[]; // last ~12 run statuses, oldest→newest, for a sparkline
 }
 
@@ -775,6 +779,14 @@ function extractFirstStepError(stepResultsJson: string): string | null {
     try { const o = JSON.parse(msg); if (o && typeof o.message === 'string') msg = o.message; } catch { /* not JSON */ }
     msg = msg.split('\n')[0].trim();
     return msg.length > 100 ? msg.slice(0, 100) + '…' : msg;
+  } catch { return null; }
+}
+
+/** First step's error message regardless of status — used for blocked runs (sole step is 'skipped'). */
+function firstStepMessage(stepResultsJson: string): string | null {
+  try {
+    const steps = JSON.parse(stepResultsJson);
+    return Array.isArray(steps) && steps[0]?.error ? String(steps[0].error) : null;
   } catch { return null; }
 }
 
@@ -816,8 +828,9 @@ export function getPieceHealth(): PieceHealthRow[] {
     if (!h) {
       h = {
         piece_name: row.piece_name, status: 'unknown',
-        actions_total: 0, actions_passing: 0, actions_failing: 0,
-        last_run_at: null, failing_actions: [], recent: recentByPiece.get(row.piece_name) ?? [],
+        actions_total: 0, actions_passing: 0, actions_failing: 0, actions_blocked: 0,
+        last_run_at: null, failing_actions: [], blocked_reason: null, backlinks: null,
+        recent: recentByPiece.get(row.piece_name) ?? [],
       };
       byPiece.set(row.piece_name, h);
     }
@@ -836,15 +849,29 @@ export function getPieceHealth(): PieceHealthRow[] {
         run_id: row.run_id,
       });
     }
+    else if (row.last_status === 'blocked') {
+      h.actions_blocked++;
+      if (!h.blocked_reason) h.blocked_reason = firstStepMessage(row.step_results);
+    }
     if (!h.last_run_at || (row.last_run_at && row.last_run_at > h.last_run_at)) h.last_run_at = row.last_run_at;
   }
 
   const result = [...byPiece.values()];
+  const settings = getSettings();
   for (const h of result) {
-    h.status = h.actions_failing > 0 ? 'failing' : h.actions_passing > 0 ? 'healthy' : 'unknown';
+    h.status = h.actions_failing > 0 ? 'failing'
+      : h.actions_blocked > 0 ? 'blocked'
+      : h.actions_passing > 0 ? 'healthy' : 'unknown';
+    if (h.status === 'blocked') {
+      h.backlinks = buildConnectionBacklinks(settings.base_url, settings.project_id, h.piece_name);
+    }
   }
-  // Failing first (most failing actions first), then alphabetical.
-  result.sort((a, b) => (b.actions_failing - a.actions_failing) || a.piece_name.localeCompare(b.piece_name));
+  // Order: failing first, then blocked, then everything else — most-failing first within a rank.
+  const rank = (h: PieceHealthRow) => (h.status === 'failing' ? 0 : h.status === 'blocked' ? 1 : 2);
+  result.sort((a, b) =>
+    (rank(a) - rank(b)) ||
+    (b.actions_failing - a.actions_failing) ||
+    a.piece_name.localeCompare(b.piece_name));
   return result;
 }
 
@@ -898,6 +925,7 @@ export interface AttentionItem {
   last_run_id: number;
   muted: boolean;
   mute_id: number | null;
+  backlinks: ConnectionBacklinks | null;  // present for connection_broken items
 }
 
 function shortenError(raw: string | null | undefined): string | null {
@@ -924,17 +952,17 @@ function analyzeFailedRun(stepResultsJson: string): { category: string; error: s
 export function getAttentionItems(): AttentionItem[] {
   const db = getDb();
 
-  // Plans whose LATEST scheduled run failed = candidate attention items.
-  const latest = db.all<{ plan_id: number; piece_name: string; target_action: string; run_id: number; last_run_at: string | null; step_results: string }>(`
+  // Plans whose LATEST scheduled run failed or was blocked = candidate attention items.
+  const latest = db.all<{ plan_id: number; piece_name: string; target_action: string; run_id: number; last_run_at: string | null; step_results: string; last_status: string }>(`
     SELECT p.id AS plan_id, p.piece_name, p.target_action,
-           r.id AS run_id, r.started_at AS last_run_at, r.step_results
+           r.id AS run_id, r.started_at AS last_run_at, r.step_results, r.status AS last_status
     FROM test_plans p
     JOIN test_plan_runs r ON r.id = (
       SELECT r2.id FROM test_plan_runs r2
       WHERE r2.plan_id = p.id AND r2.trigger_type = 'scheduled'
       ORDER BY r2.id DESC LIMIT 1
     )
-    WHERE r.status = 'failed'
+    WHERE r.status IN ('failed', 'blocked')
   `);
   if (latest.length === 0) return [];
 
@@ -967,18 +995,26 @@ export function getAttentionItems(): AttentionItem[] {
     const failing_since = hist.slice(0, streak).at(-1)?.started_at ?? row.last_run_at;
     const flaky = hist.some(h => h.status === 'completed') && streak < 2;
 
-    const { category, error } = analyzeFailedRun(row.step_results);
+    const isBlocked = row.last_status === 'blocked';
+    const { category, error } = isBlocked
+      ? { category: 'connection_broken', error: firstStepMessage(row.step_results) }
+      : analyzeFailedRun(row.step_results);
 
     let bucket: AttentionItem['bucket'];
-    if (category === 'auth') bucket = 'reauth';
+    if (isBlocked || category === 'auth') bucket = 'reauth';
     else if (category === 'transient' || category === 'rate_limit') bucket = 'noise';
     else bucket = streak >= 2 ? 'likely_broken' : 'watching';
 
     let reason: string;
-    if (bucket === 'reauth') reason = 'connection auth failed — needs re-auth';
+    if (isBlocked) reason = error || 'connection deleted/errored in Activepieces — fix it';
+    else if (bucket === 'reauth') reason = 'connection auth failed — needs re-auth';
     else if (bucket === 'noise') reason = `${category} — likely environment/flake`;
     else if (bucket === 'likely_broken') reason = `failed ${streak}× in a row · ${category}`;
     else reason = flaky ? `flaky — recently passed and failed · ${category}` : `first failure · ${category}`;
+
+    const backlinks = isBlocked
+      ? buildConnectionBacklinks(getSettings().base_url, getSettings().project_id, row.piece_name)
+      : null;
 
     const mute = matchMute(row.piece_name, row.target_action);
 
@@ -989,6 +1025,7 @@ export function getAttentionItems(): AttentionItem[] {
       bucket, category, fail_streak: streak, flaky,
       error, reason, failing_since, last_run_at: row.last_run_at, last_run_id: row.run_id,
       muted: mute !== null, mute_id: mute?.id ?? null,
+      backlinks,
     });
   }
 
@@ -1014,6 +1051,7 @@ export interface WaveSummary {
   passed: number;
   failed: number;
   running: number;
+  blocked: number;
 }
 
 /** One row per schedule fire, newest first. Cheap: pure aggregate, no step_results. */
@@ -1027,7 +1065,8 @@ export function getScheduledWaves(limit = 30): WaveSummary[] {
            COUNT(*) AS total,
            SUM(CASE WHEN r.status = 'completed' THEN 1 ELSE 0 END) AS passed,
            SUM(CASE WHEN r.status = 'failed' THEN 1 ELSE 0 END) AS failed,
-           SUM(CASE WHEN r.status = 'running' THEN 1 ELSE 0 END) AS running
+           SUM(CASE WHEN r.status = 'running' THEN 1 ELSE 0 END) AS running,
+           SUM(CASE WHEN r.status = 'blocked' THEN 1 ELSE 0 END) AS blocked
     FROM test_plan_runs r
     LEFT JOIN schedules s ON s.id = r.schedule_id
     WHERE r.trigger_type = 'scheduled' AND r.wave_id IS NOT NULL
@@ -1054,6 +1093,7 @@ export interface WavePiece {
   passed: number;
   failed: number;
   running: number;
+  blocked: number;
   worst_category: string | null;
   runs: WaveRun[];   // ALL runs enumerated; ordered failed(by severity) -> running -> passed
 }
@@ -1067,6 +1107,7 @@ export interface WaveDetail {
   passed: number;
   failed: number;
   running: number;
+  blocked: number;
   pieces: WavePiece[];         // failing pieces first
   covered_total: number;       // pieces covered right now (enabled-schedule targets)
   covered_untested: number;    // covered pieces with no approved plans (a run can't test them)
@@ -1103,12 +1144,13 @@ function runDurationMs(started?: string | null, completed?: string | null): numb
 export function getWaveDetail(waveId: string): WaveDetail | null {
   const db = getDb();
 
-  const pieceCounts = db.all<{ piece_name: string; total: number; passed: number; failed: number; running: number }>(`
+  const pieceCounts = db.all<{ piece_name: string; total: number; passed: number; failed: number; running: number; blocked: number }>(`
     SELECT p.piece_name AS piece_name,
            COUNT(*) AS total,
            SUM(CASE WHEN r.status = 'completed' THEN 1 ELSE 0 END) AS passed,
            SUM(CASE WHEN r.status = 'failed' THEN 1 ELSE 0 END) AS failed,
-           SUM(CASE WHEN r.status = 'running' THEN 1 ELSE 0 END) AS running
+           SUM(CASE WHEN r.status = 'running' THEN 1 ELSE 0 END) AS running,
+           SUM(CASE WHEN r.status = 'blocked' THEN 1 ELSE 0 END) AS blocked
     FROM test_plan_runs r
     JOIN test_plans p ON p.id = r.plan_id
     WHERE r.wave_id = ?
@@ -1144,7 +1186,7 @@ export function getWaveDetail(waveId: string): WaveDetail | null {
   const byPiece = new Map<string, WavePiece>();
   for (const c of pieceCounts) {
     byPiece.set(c.piece_name, {
-      piece_name: c.piece_name, total: c.total, passed: c.passed, failed: c.failed, running: c.running,
+      piece_name: c.piece_name, total: c.total, passed: c.passed, failed: c.failed, running: c.running, blocked: c.blocked,
       worst_category: null, runs: [],
     });
   }
@@ -1162,6 +1204,7 @@ export function getWaveDetail(waveId: string): WaveDetail | null {
   // Within a piece: failed first (by category severity), then running, then everything else.
   const statusRank = (run: WaveRun): number =>
     run.status === 'failed' ? 100 + categorySeverity(run.category)
+    : run.status === 'blocked' ? 60
     : run.status === 'running' ? 50
     : 10;
 
@@ -1176,8 +1219,9 @@ export function getWaveDetail(waveId: string): WaveDetail | null {
   pieces.sort((a, b) => (b.failed - a.failed) || a.piece_name.localeCompare(b.piece_name));
 
   const agg = pieces.reduce((s, p) => ({
-    total: s.total + p.total, passed: s.passed + p.passed, failed: s.failed + p.failed, running: s.running + p.running,
-  }), { total: 0, passed: 0, failed: 0, running: 0 });
+    total: s.total + p.total, passed: s.passed + p.passed, failed: s.failed + p.failed,
+    running: s.running + p.running, blocked: s.blocked + p.blocked,
+  }), { total: 0, passed: 0, failed: 0, running: 0, blocked: 0 });
 
   return {
     wave_id: waveId,
@@ -1593,7 +1637,7 @@ export interface CoverageRow {
   plan_count: number;
   planned_targets: number; // # of the piece's actions/triggers that have a plan (any status)
   total_targets: number;   // # of actions + triggers the piece exposes (from the catalog)
-  health: 'failing' | 'healthy' | 'unknown' | null; // null = never run
+  health: 'failing' | 'blocked' | 'healthy' | 'unknown' | null; // null = never run
   actions_failing: number;
   last_run_at: string | null;
   last_run_id: number | null; // latest SCHEDULED run for the piece (for the Runs deep-link)
