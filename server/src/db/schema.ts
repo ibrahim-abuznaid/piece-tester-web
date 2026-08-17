@@ -186,6 +186,7 @@ function initTables(db: DatabaseAdapter): void {
       steps TEXT NOT NULL DEFAULT '[]',
       status TEXT NOT NULL DEFAULT 'draft',
       agent_memory TEXT DEFAULT '',
+      needs_regen INTEGER NOT NULL DEFAULT 0,
       created_at TEXT DEFAULT (datetime('now')),
       updated_at TEXT DEFAULT (datetime('now')),
       UNIQUE(piece_name, target_action, target_type)
@@ -366,6 +367,14 @@ function initTables(db: DatabaseAdapter): void {
       ALTER TABLE test_plans_new RENAME TO test_plans;
     `);
     db.exec(`PRAGMA foreign_keys = ON;`);
+  }
+
+  // Migration: add needs_regen flag to test_plans if missing.
+  // 1 = the active connection changed after this plan was approved; regenerate before running.
+  // MUST run after the target_type rebuild above, which recreates the table.
+  const planCols2 = db.pragma(`table_info(test_plans)`) as { name: string }[];
+  if (planCols2.length > 0 && !planCols2.some(c => c.name === 'needs_regen')) {
+    db.exec(`ALTER TABLE test_plans ADD COLUMN needs_regen INTEGER NOT NULL DEFAULT 0`);
   }
 
   // Migration: add test_type column to test_results if missing

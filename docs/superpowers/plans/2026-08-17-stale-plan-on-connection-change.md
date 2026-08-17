@@ -205,11 +205,18 @@ describe('needs_regen clears on rewrite/approve', () => {
     expect(getTestPlan(id)!.needs_regen).toBe(0);
   });
 
-  it('updateTestPlan (approve) clears the flag', () => {
+  it('updateTestPlan clears the flag when steps are rewritten', () => {
+    const id = seedPlan('slack', 'send_message', 'approved');
+    markPlansStaleByPiece('slack');
+    updateTestPlan(id, { steps: '[]' });
+    expect(getTestPlan(id)!.needs_regen).toBe(0);
+  });
+
+  it('updateTestPlan does NOT clear the flag on a status-only update', () => {
     const id = seedPlan('slack', 'send_message', 'approved');
     markPlansStaleByPiece('slack');
     updateTestPlan(id, { status: 'approved' });
-    expect(getTestPlan(id)!.needs_regen).toBe(0);
+    expect(getTestPlan(id)!.needs_regen).toBe(1);
   });
 });
 ```
@@ -233,16 +240,25 @@ In `createTestPlan`'s update branch (`server/src/db/queries.ts:447-450`), change
 In `updateTestPlan` (`server/src/db/queries.ts:511-520`), change the UPDATE to:
 
 ```ts
+  const current = getTestPlan(id);
+  if (!current) return undefined;
+  const stepsJson = updates.steps ?? current.steps;
+  const automationStatus = computeAutomationStatus(stepsJson);
+  // Clear stale ONLY when the plan's steps are rewritten (a real regeneration). A status-only or
+  // memory-only update must not un-stale a plan whose content still targets the old account.
+  const needsRegen = updates.steps !== undefined ? 0 : current.needs_regen;
   getDb().run(`
-    UPDATE test_plans SET steps = ?, status = ?, agent_memory = ?, automation_status = ?, needs_regen = 0, updated_at = datetime('now')
+    UPDATE test_plans SET steps = ?, status = ?, agent_memory = ?, automation_status = ?, needs_regen = ?, updated_at = datetime('now')
     WHERE id = ?
   `, [
     stepsJson,
     updates.status ?? current.status,
     updates.agent_memory ?? current.agent_memory,
     automationStatus,
+    needsRegen,
     id,
   ]);
+  return getTestPlan(id);
 ```
 
 - [ ] **Step 4: Run test to verify it passes**

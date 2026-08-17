@@ -411,6 +411,7 @@ export interface TestPlanRow {
   status: string;      // 'draft' | 'approved'
   agent_memory: string;
   automation_status: string; // 'fully_automated' | 'requires_human' | 'unknown'
+  needs_regen: number; // 0 | 1 — 1 = connection changed since approval; regenerate before running
   created_at: string;
   updated_at: string;
 }
@@ -445,7 +446,7 @@ export function createTestPlan(p: {
     const existing = getTestPlanByTarget(p.piece_name, p.target_action, targetType);
     if (existing) {
       db.run(`
-        UPDATE test_plans SET steps = ?, status = ?, agent_memory = ?, automation_status = ?, updated_at = datetime('now')
+        UPDATE test_plans SET steps = ?, status = ?, agent_memory = ?, automation_status = ?, needs_regen = 0, updated_at = datetime('now')
         WHERE id = ?
       `, [p.steps, p.status || 'draft', p.agent_memory || '', automationStatus, existing.id]);
       return getTestPlan(existing.id)!;
@@ -508,14 +509,18 @@ export function updateTestPlan(id: number, updates: Partial<{
   if (!current) return undefined;
   const stepsJson = updates.steps ?? current.steps;
   const automationStatus = computeAutomationStatus(stepsJson);
+  // Clear stale ONLY when the plan's steps are rewritten (a real regeneration). A status-only or
+  // memory-only update must not un-stale a plan whose content still targets the old account.
+  const needsRegen = updates.steps !== undefined ? 0 : current.needs_regen;
   getDb().run(`
-    UPDATE test_plans SET steps = ?, status = ?, agent_memory = ?, automation_status = ?, updated_at = datetime('now')
+    UPDATE test_plans SET steps = ?, status = ?, agent_memory = ?, automation_status = ?, needs_regen = ?, updated_at = datetime('now')
     WHERE id = ?
   `, [
     stepsJson,
     updates.status ?? current.status,
     updates.agent_memory ?? current.agent_memory,
     automationStatus,
+    needsRegen,
     id,
   ]);
   return getTestPlan(id);
@@ -535,6 +540,18 @@ export function deleteTestPlansByPiece(pieceName: string, actionNames?: string[]
   }
   return getDb().run(
     'DELETE FROM test_plans WHERE piece_name = ?',
+    [pieceName],
+  ).changes;
+}
+
+/**
+ * Mark all APPROVED plans for a piece as stale (connection changed → resource IDs may be wrong).
+ * Draft plans are left alone. Returns the number of rows changed.
+ */
+export function markPlansStaleByPiece(pieceName: string): number {
+  return getDb().run(
+    `UPDATE test_plans SET needs_regen = 1, updated_at = datetime('now')
+       WHERE piece_name = ? AND status = 'approved'`,
     [pieceName],
   ).changes;
 }

@@ -94,13 +94,15 @@ Each handler already knows the affected `piece_name` (from the row or request):
 Marking only `status = 'approved'` plans is deliberate: `draft` plans aren't scheduled and are
 about to be edited anyway.
 
-### 3. Clear the flag — on regenerate / re-approve
+### 3. Clear the flag — when steps are regenerated
 
-Regeneration reuses the same plan row via `createTestPlan`'s update branch (`queries.ts:445-459`),
-and approval goes through `updateTestPlan` (`queries.ts:502-522`). Add `needs_regen = 0` to both
-UPDATE statements so writing fresh steps or re-approving a plan clears its own flag. No separate
-"clear" call is needed — the existing regenerate flow (`streamAiPlan` →
-`runPlanJobInBackground` → auto-approve on passing auto-test, `pieces.ts:187-232`) clears it.
+Clear the flag when a plan's **steps are rewritten** (a real regeneration), not merely when its
+status flips — re-approving a stale plan without new content must not un-stale it. So:
+`createTestPlan`'s update branch (`queries.ts:445-459`) always writes fresh steps, so it clears
+unconditionally; `updateTestPlan` (`queries.ts:502-522`) clears **only when `updates.steps` is
+provided** (preserving the current value on a status-only or memory-only update). No separate
+"clear" call is needed — the regenerate flow (`streamAiPlan` → `runPlanJobInBackground` → auto-test
+→ approve, `pieces.ts:187-232`) writes new steps via `createTestPlan`, which clears it.
 
 ### 4. Guard the run — block, don't fail (reuse PR #14's `blocked`)
 
