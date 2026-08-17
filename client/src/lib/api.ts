@@ -287,6 +287,8 @@ export interface TestPlan {
   status: 'draft' | 'approved';
   agent_memory: string;
   automation_status: 'fully_automated' | 'requires_human' | 'unknown';
+  /** 1 = the active connection changed after approval; regenerate before running. */
+  needs_regen?: number;
   created_at: string;
   updated_at: string;
 }
