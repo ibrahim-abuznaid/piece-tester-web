@@ -10,6 +10,8 @@ const AI_MODELS = [
 
 export default function Settings() {
   const [form, setForm] = useState({ base_url: '', api_key: '', project_id: '', test_timeout_ms: 180000 });
+  const [hasApiKey, setHasApiKey] = useState(false);
+  const [apiKeyMasked, setApiKeyMasked] = useState('');
   const [hasJwt, setHasJwt] = useState(false);
   const [hasAnthropicKey, setHasAnthropicKey] = useState(false);
   const [anthropicKeyMasked, setAnthropicKeyMasked] = useState('');
@@ -42,7 +44,9 @@ export default function Settings() {
 
   useEffect(() => {
     api.getSettings().then((s) => {
-      setForm({ base_url: s.base_url, api_key: s.api_key, project_id: s.project_id, test_timeout_ms: s.test_timeout_ms });
+      setForm({ base_url: s.base_url, api_key: '', project_id: s.project_id, test_timeout_ms: s.test_timeout_ms });
+      setHasApiKey(s.has_api_key || false);
+      setApiKeyMasked(s.api_key_masked || '');
       setHasJwt(s.has_jwt);
       setHasAnthropicKey(s.has_anthropic_key);
       setAnthropicKeyMasked(s.anthropic_key_masked || '');
@@ -76,7 +80,19 @@ export default function Settings() {
     setSaving(true);
     setSaveMsg('');
     try {
-      await api.updateSettings(form);
+      const payload: any = {
+        base_url: form.base_url,
+        project_id: form.project_id,
+        test_timeout_ms: form.test_timeout_ms,
+      };
+      const submittedKey = form.api_key.trim();
+      if (submittedKey) payload.api_key = submittedKey;
+      const res = await api.updateSettings(payload);
+      if (submittedKey) {
+        setHasApiKey(res.has_api_key ?? true);
+        setApiKeyMasked(res.api_key_masked || '');
+        setForm((f) => ({ ...f, api_key: '' }));
+      }
       setSaveMsg('Settings saved.');
     } catch (err: any) {
       setSaveMsg(`Error: ${err.message}`);
@@ -88,7 +104,9 @@ export default function Settings() {
     setTesting(true);
     setTestResult(null);
     try {
-      const res = await api.testConnection(form);
+      const testPayload: any = { base_url: form.base_url, project_id: form.project_id };
+      if (form.api_key.trim()) testPayload.api_key = form.api_key.trim();
+      const res = await api.testConnection(testPayload);
       setTestResult({ success: true, message: `Connected! Found ${res.pieceCount} pieces.` });
     } catch (err: any) {
       setTestResult({ success: false, message: err.message });
@@ -187,7 +205,7 @@ export default function Settings() {
             type="password"
             value={form.api_key}
             onChange={(e) => setForm({ ...form, api_key: e.target.value })}
-            placeholder="sk-..."
+            placeholder={hasApiKey ? `Saved: ${apiKeyMasked} — leave blank to keep` : 'sk-...'}
           />
         </div>
         <div>

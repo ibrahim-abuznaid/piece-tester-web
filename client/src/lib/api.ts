@@ -3,9 +3,15 @@ const BASE = '/api';
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
   const res = await fetch(`${BASE}${path}`, {
     method,
+    credentials: 'same-origin',
     headers: body ? { 'Content-Type': 'application/json' } : {},
     body: body ? JSON.stringify(body) : undefined,
   });
+  if (res.status === 401 && !path.startsWith('/auth/')) {
+    // /auth/* endpoints are the auth bootstrap and handle their own 401s.
+    window.dispatchEvent(new Event('auth:unauthorized'));
+    throw new Error('Unauthorized');
+  }
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: res.statusText }));
     throw new Error(err.error ?? `Request failed: ${res.status}`);
@@ -94,7 +100,7 @@ function streamAiConfig(
 
   (async () => {
     try {
-      const response = await fetch(url, { signal: controller.signal });
+      const response = await fetch(url, { credentials: 'same-origin', signal: controller.signal });
       if (!response.ok) {
         const errText = await response.text();
         callbacks.onError(`HTTP ${response.status}: ${errText}`);
@@ -193,6 +199,7 @@ function streamAiFix(
     try {
       const response = await fetch(url, {
         method: 'POST',
+        credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ previousConfig, testError, agentMemory }),
         signal: controller.signal,
@@ -519,7 +526,7 @@ function streamAiPlan(
 
   (async () => {
     try {
-      const response = await fetch(url, { signal: controller.signal });
+      const response = await fetch(url, { credentials: 'same-origin', signal: controller.signal });
       if (!response.ok) {
         const errText = await response.text();
         callbacks.onError(`HTTP ${response.status}: ${errText}`);
@@ -556,7 +563,7 @@ function subscribeAiPlanJob(
 
   (async () => {
     try {
-      const response = await fetch(url, { signal: controller.signal });
+      const response = await fetch(url, { credentials: 'same-origin', signal: controller.signal });
       if (!response.ok) {
         if (response.status === 404) {
           callbacks.onDone();
@@ -601,6 +608,7 @@ function streamAiPlanFix(
     try {
       const response = await fetch(url, {
         method: 'POST',
+        credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ previousSteps, stepResults, agentMemory }),
         signal: controller.signal,
@@ -641,7 +649,7 @@ function streamAiPlanV2(
 
   (async () => {
     try {
-      const response = await fetch(url, { signal: controller.signal });
+      const response = await fetch(url, { credentials: 'same-origin', signal: controller.signal });
       if (!response.ok) {
         const errText = await response.text();
         callbacks.onError(`HTTP ${response.status}: ${errText}`);
@@ -679,7 +687,7 @@ function streamTriggerPlanV2(
 
   (async () => {
     try {
-      const response = await fetch(url, { signal: controller.signal });
+      const response = await fetch(url, { credentials: 'same-origin', signal: controller.signal });
       if (!response.ok) {
         const errText = await response.text();
         callbacks.onError(`HTTP ${response.status}: ${errText}`);
@@ -720,6 +728,7 @@ function streamAiPlanFixV2(
     try {
       const response = await fetch(url, {
         method: 'POST',
+        credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ previousSteps, stepResults, agentMemory }),
         signal: controller.signal,
@@ -759,6 +768,7 @@ function streamPlanExecution(
     try {
       const response = await fetch(url, {
         method: 'POST',
+        credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
         body: '{}',
         signal: controller.signal,
@@ -848,7 +858,7 @@ function subscribeBatchSetup(callbacks: BatchStreamCallbacks): AbortController {
 
   (async () => {
     try {
-      const response = await fetch(url, { signal: controller.signal });
+      const response = await fetch(url, { credentials: 'same-origin', signal: controller.signal });
       if (!response.ok) {
         if (response.status === 404) {
           callbacks.onBatchDone({ status: 'no_queue' });
@@ -875,6 +885,11 @@ function subscribeBatchSetup(callbacks: BatchStreamCallbacks): AbortController {
 }
 
 export const api = {
+  // Auth
+  login: (password: string) => request<{ success: boolean }>('POST', '/auth/login', { password }),
+  logout: () => request<{ success: boolean }>('POST', '/auth/logout'),
+  authStatus: () => request<{ authenticated: boolean }>('GET', '/auth/status'),
+
   // Settings
   getSettings: () => request<any>('GET', '/settings'),
   updateSettings: (data: any) => request<any>('PUT', '/settings', data),

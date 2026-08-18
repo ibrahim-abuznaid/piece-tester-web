@@ -1,6 +1,9 @@
+import { useEffect, useState } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { api } from './lib/api';
 import Layout from './components/Layout';
+import Login from './pages/Login';
 import Dashboard from './pages/Dashboard';
 import PieceDetail from './pages/PieceDetail';
 import Connections from './pages/Connections';
@@ -16,6 +19,22 @@ const queryClient = new QueryClient({
 });
 
 export default function App() {
+  const [authed, setAuthed] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    api.authStatus().then((s) => setAuthed(s.authenticated)).catch(() => setAuthed(false));
+    const onUnauthorized = () => setAuthed(false);
+    window.addEventListener('auth:unauthorized', onUnauthorized);
+    return () => window.removeEventListener('auth:unauthorized', onUnauthorized);
+  }, []);
+
+  if (authed === null) {
+    return <div className="flex h-screen items-center justify-center bg-gray-950 text-gray-400">Loading…</div>;
+  }
+  if (!authed) {
+    return <Login onSuccess={() => setAuthed(true)} />;
+  }
+
   return (
     <QueryClientProvider client={queryClient}>
       <BrowserRouter>
