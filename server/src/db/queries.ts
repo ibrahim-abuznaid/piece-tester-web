@@ -411,6 +411,7 @@ export interface TestPlanRow {
   status: string;      // 'draft' | 'approved'
   agent_memory: string;
   automation_status: string; // 'fully_automated' | 'requires_human' | 'unknown'
+  needs_regen: number; // 0 | 1 — 1 = connection changed since approval; regenerate before running
   created_at: string;
   updated_at: string;
 }
@@ -445,7 +446,7 @@ export function createTestPlan(p: {
     const existing = getTestPlanByTarget(p.piece_name, p.target_action, targetType);
     if (existing) {
       db.run(`
-        UPDATE test_plans SET steps = ?, status = ?, agent_memory = ?, automation_status = ?, updated_at = datetime('now')
+        UPDATE test_plans SET steps = ?, status = ?, agent_memory = ?, automation_status = ?, needs_regen = 0, updated_at = datetime('now')
         WHERE id = ?
       `, [p.steps, p.status || 'draft', p.agent_memory || '', automationStatus, existing.id]);
       return getTestPlan(existing.id)!;
@@ -508,14 +509,18 @@ export function updateTestPlan(id: number, updates: Partial<{
   if (!current) return undefined;
   const stepsJson = updates.steps ?? current.steps;
   const automationStatus = computeAutomationStatus(stepsJson);
+  // Clear stale ONLY when the plan's steps are rewritten (a real regeneration). A status-only or
+  // memory-only update must not un-stale a plan whose content still targets the old account.
+  const needsRegen = updates.steps !== undefined ? 0 : current.needs_regen;
   getDb().run(`
-    UPDATE test_plans SET steps = ?, status = ?, agent_memory = ?, automation_status = ?, updated_at = datetime('now')
+    UPDATE test_plans SET steps = ?, status = ?, agent_memory = ?, automation_status = ?, needs_regen = ?, updated_at = datetime('now')
     WHERE id = ?
   `, [
     stepsJson,
     updates.status ?? current.status,
     updates.agent_memory ?? current.agent_memory,
     automationStatus,
+    needsRegen,
     id,
   ]);
   return getTestPlan(id);
@@ -535,6 +540,18 @@ export function deleteTestPlansByPiece(pieceName: string, actionNames?: string[]
   }
   return getDb().run(
     'DELETE FROM test_plans WHERE piece_name = ?',
+    [pieceName],
+  ).changes;
+}
+
+/**
+ * Mark all APPROVED plans for a piece as stale (connection changed → resource IDs may be wrong).
+ * Draft plans are left alone. Returns the number of rows changed.
+ */
+export function markPlansStaleByPiece(pieceName: string): number {
+  return getDb().run(
+    `UPDATE test_plans SET needs_regen = 1, updated_at = datetime('now')
+       WHERE piece_name = ? AND status = 'approved'`,
     [pieceName],
   ).changes;
 }
@@ -790,6 +807,14 @@ function firstStepMessage(stepResultsJson: string): string | null {
   } catch { return null; }
 }
 
+/** First step's stepId — distinguishes a 'connection' block (PR #14) from a 'stale' block. */
+function firstStepId(stepResultsJson: string): string | null {
+  try {
+    const steps = JSON.parse(stepResultsJson);
+    return Array.isArray(steps) && steps[0]?.stepId ? String(steps[0].stepId) : null;
+  } catch { return null; }
+}
+
 export function getPieceHealth(): PieceHealthRow[] {
   const db = getDb();
 
@@ -822,6 +847,8 @@ export function getPieceHealth(): PieceHealthRow[] {
     recentByPiece.get(row.piece_name)!.push(row.status);
   }
 
+  const connectionBlocked = new Set<string>(); // pieces whose block is a broken connection (not stale)
+  const staleBlocked = new Set<string>();       // pieces whose block is a stale plan (connection changed)
   const byPiece = new Map<string, PieceHealthRow>();
   for (const row of latest) {
     let h = byPiece.get(row.piece_name);
@@ -852,6 +879,8 @@ export function getPieceHealth(): PieceHealthRow[] {
     else if (row.last_status === 'blocked') {
       h.actions_blocked++;
       if (!h.blocked_reason) h.blocked_reason = firstStepMessage(row.step_results);
+      if (firstStepId(row.step_results) === 'connection') connectionBlocked.add(row.piece_name);
+      else if (firstStepId(row.step_results) === 'stale') staleBlocked.add(row.piece_name);
     }
     if (!h.last_run_at || (row.last_run_at && row.last_run_at > h.last_run_at)) h.last_run_at = row.last_run_at;
   }
@@ -862,7 +891,7 @@ export function getPieceHealth(): PieceHealthRow[] {
     h.status = h.actions_failing > 0 ? 'failing'
       : h.actions_blocked > 0 ? 'blocked'
       : h.actions_passing > 0 ? 'healthy' : 'unknown';
-    if (h.status === 'blocked') {
+    if (h.status === 'blocked' && connectionBlocked.has(h.piece_name) && !staleBlocked.has(h.piece_name)) {
       h.backlinks = buildConnectionBacklinks(settings.base_url, settings.project_id, h.piece_name);
     }
   }
@@ -996,6 +1025,7 @@ export function getAttentionItems(): AttentionItem[] {
     const flaky = hist.some(h => h.status === 'completed') && streak < 2;
 
     const isBlocked = row.last_status === 'blocked';
+    const isStaleBlock = isBlocked && firstStepId(row.step_results) === 'stale';
     const { category, error } = isBlocked
       ? { category: 'connection_broken', error: firstStepMessage(row.step_results) }
       : analyzeFailedRun(row.step_results);
@@ -1006,13 +1036,15 @@ export function getAttentionItems(): AttentionItem[] {
     else bucket = streak >= 2 ? 'likely_broken' : 'watching';
 
     let reason: string;
-    if (isBlocked) reason = error || 'connection deleted/errored in Activepieces — fix it';
+    if (isStaleBlock) reason = error || 'Connection changed — regenerate the plan';
+    else if (isBlocked) reason = error || 'connection deleted/errored in Activepieces — fix it';
     else if (bucket === 'reauth') reason = 'connection auth failed — needs re-auth';
     else if (bucket === 'noise') reason = `${category} — likely environment/flake`;
     else if (bucket === 'likely_broken') reason = `failed ${streak}× in a row · ${category}`;
     else reason = flaky ? `flaky — recently passed and failed · ${category}` : `first failure · ${category}`;
 
-    const backlinks = isBlocked
+    // A stale-plan block is not a connection problem — no Fix-in-AP / Re-import backlinks.
+    const backlinks = (isBlocked && !isStaleBlock)
       ? buildConnectionBacklinks(getSettings().base_url, getSettings().project_id, row.piece_name)
       : null;
 
@@ -1635,7 +1667,7 @@ export interface CoverageRow {
   cadence: CoverageCadence | null;
   has_plans: boolean;
   plan_count: number;
-  planned_targets: number; // # of the piece's actions/triggers that have a plan (any status)
+  planned_targets: number; // # of the piece's actions/triggers that have an APPROVED plan
   total_targets: number;   // # of actions + triggers the piece exposes (from the catalog)
   health: 'failing' | 'blocked' | 'healthy' | 'unknown' | null; // null = never run
   actions_failing: number;
@@ -1697,13 +1729,6 @@ export function getCoverage(
   );
   const planCount = new Map(planRows.map(r => [r.piece_name, r.c]));
 
-  // Any-status plan counts per piece — how many actions/triggers have a plan at all
-  // (a row per distinct piece+target+type), for the "N/M planned" indicator.
-  const plannedRows = db.all<{ piece_name: string; c: number }>(
-    `SELECT piece_name, COUNT(*) AS c FROM test_plans GROUP BY piece_name`,
-  );
-  const plannedMap = new Map(plannedRows.map(r => [r.piece_name, r.c]));
-
   // Current health per piece (reused verbatim from the Health board).
   const healthMap = new Map(getPieceHealth().map(h => [h.piece_name, h]));
 
@@ -1721,7 +1746,8 @@ export function getCoverage(
     const covered = !!cover || !!allPiecesSchedule;
     const h = healthMap.get(p.name);
     const total = (p.actions ?? 0) + (p.triggers ?? 0);
-    const rawPlanned = plannedMap.get(p.name) ?? 0;
+    // "N/M planned" counts only APPROVED plans — the ones that actually run on a schedule.
+    const rawPlanned = planCount.get(p.name) ?? 0;
     return {
       piece_name: p.name,
       display_name: p.displayName,

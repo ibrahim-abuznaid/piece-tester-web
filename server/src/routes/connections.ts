@@ -69,6 +69,7 @@ router.post('/import', async (req, res) => {
       connection_value: JSON.stringify({ _imported: true, remote_id: remoteConnectionId }),
       actions_config: '{}',
     });
+    db.markPlansStaleByPiece(conn.piece_name);
     res.status(201).json({ ...conn, connection_value: '***' });
   } catch (err: any) {
     res.status(400).json({ error: err.message });
@@ -80,6 +81,7 @@ router.post('/:id/activate', (req, res) => {
   const id = parseInt(req.params.id);
   const conn = db.activateConnection(id);
   if (!conn) return res.status(404).json({ error: 'Connection not found' });
+  db.markPlansStaleByPiece(conn.piece_name);
   res.json({ ...conn, connection_value: '***' });
 });
 
@@ -106,6 +108,7 @@ router.post('/', (req, res) => {
       connection_value: typeof connection_value === 'string' ? connection_value : JSON.stringify(connection_value ?? {}),
       actions_config: typeof actions_config === 'string' ? actions_config : JSON.stringify(actions_config ?? {}),
     });
+    db.markPlansStaleByPiece(conn.piece_name);
     res.status(201).json({ ...conn, connection_value: '***' });
   } catch (err: any) {
     res.status(400).json({ error: err.message });
@@ -127,6 +130,10 @@ router.put('/:id', (req, res) => {
 
   const conn = db.updateConnection(id, updates);
   if (!conn) return res.status(404).json({ error: 'Connection not found' });
+  // Only a credential change on the ACTIVE connection can invalidate approved plans.
+  if (updates.connection_value !== undefined && conn.is_active) {
+    db.markPlansStaleByPiece(conn.piece_name);
+  }
   res.json({ ...conn, connection_value: '***' });
 });
 
@@ -189,8 +196,13 @@ router.patch('/:id/actions-bulk', (req, res) => {
 
 // Delete
 router.delete('/:id', (req, res) => {
-  const ok = db.deleteConnection(parseInt(req.params.id));
+  const id = parseInt(req.params.id);
+  const conn = db.getConnection(id);              // capture piece + active state before delete
+  const ok = db.deleteConnection(id);
   if (!ok) return res.status(404).json({ error: 'Connection not found' });
+  // Deleting the ACTIVE connection promotes another (or leaves none) — either way the piece's
+  // active connection changed, so its approved plans are stale.
+  if (conn && conn.is_active) db.markPlansStaleByPiece(conn.piece_name);
   res.json({ success: true });
 });
 

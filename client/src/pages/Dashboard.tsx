@@ -190,7 +190,7 @@ function HealthRow({ row }: { row: PieceHealthRow }) {
           {row.status === 'blocked' ? (
             <span className="inline-flex items-center gap-2">
               <span className="text-[10px] text-amber-300 bg-amber-500/10 border border-amber-500/20 rounded px-1.5 py-0.5">
-                Connection needs fixing
+                {row.backlinks ? 'Connection needs fixing' : 'Plan needs regenerating'}
               </span>
               {row.blocked_reason && <span className="text-amber-400/60">{row.blocked_reason}</span>}
               {row.backlinks && (

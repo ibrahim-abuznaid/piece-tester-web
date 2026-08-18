@@ -246,7 +246,7 @@ function WaveDetailView({
       {blockedPieces.length > 0 && (
         <div className="space-y-1.5">
           <div className="flex items-center gap-2 px-1 pt-1 text-xs text-amber-300">
-            Connection needs fixing — not run
+            Blocked — not run (connection needs fixing or plan needs regenerating)
           </div>
           {blockedPieces.map(p => (
             <PieceGroup key={p.piece_name} piece={p} lane="blocked" open={expandedPieces.has(p.piece_name)}
