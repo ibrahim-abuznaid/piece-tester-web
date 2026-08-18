@@ -1,5 +1,5 @@
+import 'dotenv/config';
 import express from 'express';
-import cors from 'cors';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { getDb } from './db/schema.js';
@@ -16,19 +16,28 @@ import testPlansRoutes from './routes/test-plans.js';
 import reportsRoutes from './routes/reports.js';
 import batchSetupRoutes from './routes/batch-setup.js';
 import coverageRoutes from './routes/coverage.js';
+import authRoutes from './routes/auth.js';
+import { requireAuth, assertAuthConfig } from './middleware/auth.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = parseInt(process.env.PORT ?? '4000');
 const HOST = process.env.HOST ?? '0.0.0.0';
 
 const app = express();
-app.use(cors());
+// No reverse proxy in front of this app — treat the socket peer as the authoritative client IP.
+app.set('trust proxy', false);
 app.use(express.json({ limit: '10mb' }));
 
 // ── Health check (before all other routes) ──
 app.get('/api/health', (_req, res) => {
   res.json({ status: 'ok', uptime: process.uptime(), timestamp: new Date().toISOString() });
 });
+
+// ── Auth (public: login/logout/status) ──
+app.use('/api/auth', authRoutes);
+
+// ── Everything else under /api requires a valid session ──
+app.use('/api', requireAuth);
 
 // ── API Routes ──
 app.use('/api/settings', settingsRoutes);
@@ -51,6 +60,7 @@ app.get('*', (_req, res) => {
 
 // ── Start ──
 const db = getDb();
+assertAuthConfig();
 console.log('[server] Database initialized');
 
 let backgroundStarted = false;
