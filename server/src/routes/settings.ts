@@ -2,6 +2,7 @@ import crypto from 'crypto';
 import { Router } from 'express';
 import { getSettings, updateSettings, getAiUsageSummary, getAiUsageBySession, getAiUsageByPiece, getAiUsageRecent } from '../db/queries.js';
 import { ActivepiecesClient } from '../services/ap-client.js';
+import { maskedSettings } from './settings-view.js';
 
 // ── MCP OAuth constants ──
 const MCP_OAUTH_AUTHORIZE_URL = 'https://mcp.activepieces.com/authorize';
@@ -63,24 +64,20 @@ export async function refreshMcpTokenIfNeeded(): Promise<string> {
 const router = Router();
 
 router.get('/', (_req, res) => {
-  const s = getSettings();
-  res.json({
-    ...s,
-    api_key_masked: s.api_key ? s.api_key.slice(0, 6) + '...' + s.api_key.slice(-4) : '',
-    has_jwt: !!s.jwt_token,
-    has_anthropic_key: !!s.anthropic_api_key,
-    anthropic_key_masked: s.anthropic_api_key ? s.anthropic_api_key.slice(0, 10) + '...' + s.anthropic_api_key.slice(-4) : '',
-    // MCP: OAuth takes priority over legacy token
-    has_mcp_token: !!(s.mcp_access_token || s.mcp_token),
-    mcp_connected_via_oauth: !!s.mcp_access_token,
-    mcp_token_masked: s.mcp_token ? '...' + s.mcp_token.slice(-8) : '',
-  });
+  res.json(maskedSettings(getSettings()));
 });
 
 router.put('/', (req, res) => {
   try {
-    const updated = updateSettings(req.body);
-    res.json(updated);
+    const b = req.body ?? {};
+    const updates: Record<string, any> = {};
+    if (typeof b.base_url === 'string') updates.base_url = b.base_url;
+    if (typeof b.project_id === 'string') updates.project_id = b.project_id;
+    if (typeof b.test_timeout_ms === 'number' && Number.isFinite(b.test_timeout_ms)) updates.test_timeout_ms = b.test_timeout_ms;
+    // Only overwrite the API key when a non-empty value is supplied. An empty/absent
+    // field means "keep the stored key" — this prevents a normal Save from wiping it.
+    if (typeof b.api_key === 'string' && b.api_key.trim()) updates.api_key = b.api_key.trim();
+    res.json(maskedSettings(updateSettings(updates)));
   } catch (err: any) {
     res.status(400).json({ error: err.message });
   }

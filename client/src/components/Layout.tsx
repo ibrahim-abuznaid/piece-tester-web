@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { NavLink, Outlet } from 'react-router-dom';
-import { Activity, Puzzle, Link2, Play, ScrollText, BarChart3, Settings, ListChecks, Square } from 'lucide-react';
+import { Activity, Puzzle, Link2, Play, ScrollText, BarChart3, Settings, ListChecks, Square, LogOut } from 'lucide-react';
 import { api } from '../lib/api';
 
 const nav = [
@@ -27,6 +27,10 @@ export default function Layout() {
       setTimeout(() => setStopNote(''), 5000);
     }
   }
+
+  const handleLogout = async () => {
+    try { await api.logout(); } finally { window.location.reload(); }
+  };
 
   return (
     <div className="flex h-screen bg-gray-950 text-gray-100">
@@ -66,6 +70,13 @@ export default function Layout() {
             Stop all AI jobs
           </button>
           {stopNote && <p className="text-[10px] text-gray-500 text-center leading-tight">{stopNote}</p>}
+          <button
+            type="button"
+            onClick={handleLogout}
+            className="w-full flex items-center justify-center gap-2 px-2 py-2 text-xs text-gray-300 bg-gray-800 hover:bg-gray-700 border border-gray-700 rounded transition-colors"
+          >
+            <LogOut size={14} /> Log out
+          </button>
         </div>
       </aside>
 
