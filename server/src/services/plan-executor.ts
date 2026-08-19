@@ -74,7 +74,34 @@ function isEmptyValue(v: unknown): boolean {
   return false;
 }
 
-function evaluateAssertion(output: unknown, a: PlanAssertion): AssertionResult {
+/**
+ * The base value a step's assertions resolve against. A `trigger_test` step's raw output
+ * is the wrapper `{ sampleCount, samples }`, but its assertions describe the captured
+ * events — and the two trigger strategies differ:
+ *
+ *   POLLING (TEST_FUNCTION): `samples` is a BATCH of the most recent items (zero is
+ *     allowed). Assertions target the samples ARRAY — `0.<field>` = first item's field,
+ *     `""` + not_empty = "at least one item".
+ *   WEBHOOK (SIMULATION): capture throws on zero events, so when assertions run there is
+ *     always ≥1 captured event and it is the single event the generator just fired.
+ *     Assertions target that ONE event's payload — `<field>` resolves directly.
+ *
+ * Action steps assert on the whole output. `sr.output` keeps the full wrapper regardless
+ * (for display).
+ */
+export function assertionTarget(step: Pick<TestPlanStep, 'type' | 'triggerStrategy'>, output: unknown): unknown {
+  if (
+    step.type !== 'trigger_test' ||
+    output === null || typeof output !== 'object' || !Array.isArray((output as { samples?: unknown }).samples)
+  ) {
+    return output;
+  }
+  const samples = (output as { samples: unknown[] }).samples;
+  // SIMULATION → the single captured event; POLLING (default) → the batch array.
+  return step.triggerStrategy === 'SIMULATION' ? samples[0] : samples;
+}
+
+export function evaluateAssertion(output: unknown, a: PlanAssertion): AssertionResult {
   const actual = getByPath(output, a.path);
   let passed = false;
   switch (a.op) {
@@ -607,8 +634,9 @@ export async function executePlan(
 
         // Evaluate output assertions (the oracle). A step only TRULY passes if it ran
         // AND its assertions hold. No assertions = legacy "didn't throw" behavior.
+        const assertionBase = assertionTarget(step, output);
         const assertionResults = (step.assertions && step.assertions.length > 0)
-          ? step.assertions.map(a => evaluateAssertion(output, a))
+          ? step.assertions.map(a => evaluateAssertion(assertionBase, a))
           : undefined;
         if (assertionResults) sr.assertions = assertionResults;
 
