@@ -95,6 +95,24 @@ export const FIXER_TOOLS = [
   TOOL_NAMES.SET_TEST_PLAN,
 ] as const;
 
+/**
+ * Tools for the trigger fixer (Phase B).
+ * Mirrors FIXER_TOOLS plus the trigger-specific research/test tools.
+ * Uses local tools regardless of MCP mode, matching the trigger planner.
+ */
+export const TRIGGER_FIXER_TOOLS = [
+  TOOL_NAMES.FETCH_PIECE_SOURCE,
+  TOOL_NAMES.FETCH_TRIGGER_SOURCE,
+  TOOL_NAMES.FETCH_ACTION_SOURCE,
+  TOOL_NAMES.LIST_TRIGGERS,
+  TOOL_NAMES.LIST_ACTIONS,
+  TOOL_NAMES.EXECUTE_ACTION,
+  TOOL_NAMES.TEST_TRIGGER,
+  TOOL_NAMES.TEST_TRIGGER_SIMULATION,
+  TOOL_NAMES.INSPECT_OUTPUT,
+  TOOL_NAMES.SET_TEST_PLAN,
+] as const;
+
 /** Fixer tools when MCP mode is active. */
 export const FIXER_TOOLS_MCP = [
   TOOL_NAMES.FETCH_PIECE_SOURCE,

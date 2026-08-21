@@ -269,6 +269,8 @@ export default function TestPlanView({
   const [saveHumanInput, setSaveHumanInput] = useState(true);
   const [executionDone, setExecutionDone] = useState(false);
   const [fixing, setFixing] = useState(false);
+  // Optional free-text hint the user gives the AI fixer ("the id is under data[0].id", etc.)
+  const [fixInstruction, setFixInstruction] = useState('');
 
   // Auto-test state (during plan creation)
   const [autoTestResults, setAutoTestResults] = useState<StepResult[]>([]);
@@ -614,13 +616,13 @@ export default function TestPlanView({
 
   // ── Fix plan with AI after failure ──
   const fixPlan = useCallback(() => {
-    if (isTrigger) return; // No AI fixer for trigger plans yet (Phase A).
     if (!plan || stepResults.length === 0) return;
     controllerRef.current?.abort();
     setFixing(true);
     setAgentLogs([]);
     setShowLogs(true);
     setCostSummary(null);
+    const instruction = fixInstruction.trim() || undefined;
 
     const callbacks: PlanStreamCallbacks = {
       onLog: (log) => setAgentLogs(prev => [...prev, log]),
@@ -643,10 +645,12 @@ export default function TestPlanView({
       onDone: () => { setFixing(false); refreshLessons(); },
     };
 
-    controllerRef.current = useV2
-      ? api.streamAiPlanFixV2(pieceName, actionName, plan.steps, stepResults, plan.agent_memory || undefined, callbacks)
+    controllerRef.current = isTrigger
+      ? api.streamTriggerPlanFixV2(pieceName, actionName, plan.steps, stepResults, plan.agent_memory || undefined, callbacks, instruction)
+      : useV2
+      ? api.streamAiPlanFixV2(pieceName, actionName, plan.steps, stepResults, plan.agent_memory || undefined, callbacks, instruction)
       : api.streamAiPlanFix(pieceName, actionName, plan.steps, stepResults, plan.agent_memory || undefined, callbacks);
-  }, [pieceName, actionName, plan, stepResults, useV2]);
+  }, [pieceName, actionName, plan, stepResults, useV2, isTrigger, fixInstruction]);
 
   /** Stop client stream and cancel server-side background plan job (if any). */
   const stopPlanAi = useCallback(() => {
@@ -1387,8 +1391,8 @@ export default function TestPlanView({
                     : <><XCircle size={16} /> Plan execution failed</>}
               </div>
 
-              {/* Fix with AI button (not available for trigger plans yet) */}
-              {hasFailed && hasAnthropicKey && !fixing && !isTrigger && (
+              {/* Fix with AI button (actions + triggers) */}
+              {hasFailed && hasAnthropicKey && !fixing && (
                 <button onClick={fixPlan}
                   className="px-3 py-1.5 bg-purple-600 hover:bg-purple-500 text-white text-xs rounded flex items-center gap-1.5 font-medium">
                   <Wrench size={12} /> Fix with AI
@@ -1400,6 +1404,19 @@ export default function TestPlanView({
                 </span>
               )}
             </div>
+
+            {/* Optional hint to steer the AI fixer */}
+            {hasFailed && hasAnthropicKey && !fixing && (
+              <div className="mt-2">
+                <textarea
+                  value={fixInstruction}
+                  onChange={e => setFixInstruction(e.target.value)}
+                  rows={2}
+                  placeholder="Suggestions for the AI fix (optional) — e.g. 'the id is at data[0].id', 'use the Create Contact action as the generator', 'assert email exists'"
+                  className="w-full bg-gray-900/60 border border-gray-700 rounded px-2 py-1.5 text-xs text-gray-200 placeholder-gray-600 resize-y focus:outline-none focus:border-purple-500/60"
+                />
+              </div>
+            )}
             <div className="flex flex-wrap gap-4 mt-1 text-xs">
               <span>Total: {stepResults.length}</span>
               <span className="text-green-400">Passed: {stepResults.filter(r => r.status === 'completed').length}</span>

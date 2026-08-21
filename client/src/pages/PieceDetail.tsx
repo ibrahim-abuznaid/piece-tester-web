@@ -1587,7 +1587,7 @@ export default function PieceDetail() {
                             );
                           })}
 
-                          {/* Failed plan: actions get an AI fixer; triggers just open the plan (no fixer yet) */}
+                          {/* Failed plan: open the plan view (actions + triggers), where "Fix with AI" lives after a re-run */}
                           {run.status === 'failed' && hasAnthropicKey && (
                             <div className="flex items-center gap-2 pt-2 mt-1 border-t border-gray-800/50">
                               <button
@@ -1598,7 +1598,7 @@ export default function PieceDetail() {
                                 }}
                                 className="text-xs bg-purple-500/20 text-purple-400 hover:bg-purple-500/30 px-3 py-1.5 rounded flex items-center gap-1.5"
                               >
-                                <Brain size={11} /> {isTriggerRun ? 'View Plan' : 'Fix with AI'}
+                                <Brain size={11} /> Fix with AI
                               </button>
                             </div>
                           )}

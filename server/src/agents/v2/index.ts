@@ -1,4 +1,4 @@
-export { createTestPlanV2, fixTestPlanV2, createTriggerTestPlanV2 } from './coordinator.js';
+export { createTestPlanV2, fixTestPlanV2, createTriggerTestPlanV2, fixTriggerTestPlanV2 } from './coordinator.js';
 export type {
   AgentLogEntry,
   OnLogCallback,
