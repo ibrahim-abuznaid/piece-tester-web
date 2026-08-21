@@ -720,6 +720,7 @@ function streamAiPlanFixV2(
   stepResults: StepResult[],
   agentMemory: string | undefined,
   callbacks: PlanStreamCallbacks,
+  userInstruction?: string,
 ): AbortController {
   const controller = new AbortController();
   const url = `${BASE}/pieces/${encodeURIComponent(pieceName)}/actions/${encodeURIComponent(actionName)}/ai-plan-fix-v2`;
@@ -730,7 +731,52 @@ function streamAiPlanFixV2(
         method: 'POST',
         credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ previousSteps, stepResults, agentMemory }),
+        body: JSON.stringify({ previousSteps, stepResults, agentMemory, userInstruction }),
+        signal: controller.signal,
+      });
+      if (!response.ok) {
+        const errText = await response.text();
+        callbacks.onError(`HTTP ${response.status}: ${errText}`);
+        callbacks.onDone();
+        return;
+      }
+      await readSSE(response, {
+        log: (d: any) => callbacks.onLog(d),
+        result: (d: any) => callbacks.onResult(d),
+        error: (d: any) => callbacks.onError(d.message || 'Unknown error'),
+        done: () => callbacks.onDone(),
+      });
+      callbacks.onDone();
+    } catch (err: any) {
+      if (err.name !== 'AbortError') { callbacks.onError(err.message); callbacks.onDone(); }
+    }
+  })();
+
+  return controller;
+}
+
+/**
+ * Stream AI TRIGGER plan fix via SSE (v2, single pass).
+ */
+function streamTriggerPlanFixV2(
+  pieceName: string,
+  triggerName: string,
+  previousSteps: TestPlanStep[],
+  stepResults: StepResult[],
+  agentMemory: string | undefined,
+  callbacks: PlanStreamCallbacks,
+  userInstruction?: string,
+): AbortController {
+  const controller = new AbortController();
+  const url = `${BASE}/pieces/${encodeURIComponent(pieceName)}/triggers/${encodeURIComponent(triggerName)}/ai-plan-fix-v2`;
+
+  (async () => {
+    try {
+      const response = await fetch(url, {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ previousSteps, stepResults, agentMemory, userInstruction }),
         signal: controller.signal,
       });
       if (!response.ok) {
@@ -970,6 +1016,7 @@ export const api = {
   streamAiPlanFixV2,
   // Trigger plans (v2 trigger planner)
   streamTriggerPlanV2,
+  streamTriggerPlanFixV2,
   /** Cancel a running background trigger plan-creation job. */
   cancelTriggerPlanV2Job: (pieceName: string, triggerName: string) =>
     request<{ cancelled: boolean }>(

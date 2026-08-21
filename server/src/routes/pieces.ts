@@ -10,7 +10,7 @@ import {
   getJob, createJob, emitJobEvent, completeJob, getActiveJobsForPiece, subscribeToJobWithCleanup,
   cancelPlanJob, cancelAllPlanJobs, type PlanJob,
 } from '../services/plan-jobs.js';
-import { createTestPlanV2, fixTestPlanV2, createTriggerTestPlanV2 } from '../agents/v2/index.js';
+import { createTestPlanV2, fixTestPlanV2, createTriggerTestPlanV2, fixTriggerTestPlanV2 } from '../agents/v2/index.js';
 import type { AgentLogEntry as V2LogEntry } from '../agents/v2/types.js';
 import { detectBrokenInputMappings } from '../agents/v2/tools/inspect-output.js';
 
@@ -767,7 +767,7 @@ router.post('/:name/actions/:action/ai-plan-fix-v2', async (req, res) => {
       return;
     }
 
-    const { previousSteps, stepResults, agentMemory } = req.body;
+    const { previousSteps, stepResults, agentMemory, userInstruction } = req.body;
     if (!previousSteps || !stepResults) {
       sendEvent('error', { message: 'previousSteps and stepResults are required' });
       res.end();
@@ -783,6 +783,7 @@ router.post('/:name/actions/:action/ai-plan-fix-v2', async (req, res) => {
       stepResults,
       brokenMappings,
       agentMemory,
+      userInstruction,
       onLog,
       abortSignal: ac.signal,
     });
@@ -824,6 +825,92 @@ router.post('/:name/actions/:action/ai-plan-fix-v2', async (req, res) => {
   } catch (err: any) {
     if (!ac.signal.aborted) {
       console.error('[ai-plan-fix-v2] SSE error:', err.message);
+      sendEvent('error', { message: err.message || 'Unknown error' });
+    }
+  }
+
+  res.end();
+});
+
+// ── Fix a failed TRIGGER plan (v2, single pass) ──
+router.post('/:name/triggers/:trigger/ai-plan-fix-v2', async (req, res) => {
+  req.setTimeout(300_000);
+  const sendEvent = setupSSE(res);
+
+  const ac = new AbortController();
+  res.on('close', () => { ac.abort(); });
+
+  try {
+    const client = createClient();
+    const piece = await client.getPieceMetadata(req.params.name);
+    const triggerName = req.params.trigger;
+
+    if (!piece.triggers[triggerName]) {
+      sendEvent('error', { message: `Trigger "${triggerName}" not found` });
+      res.end();
+      return;
+    }
+
+    const { previousSteps, stepResults, agentMemory, userInstruction } = req.body;
+    if (!previousSteps || !stepResults) {
+      sendEvent('error', { message: 'previousSteps and stepResults are required' });
+      res.end();
+      return;
+    }
+
+    const brokenMappings = detectBrokenInputMappings(previousSteps, stepResults);
+    const onLog = (log: V2LogEntry) => { if (!ac.signal.aborted) sendEvent('log', log); };
+    const planResult = await fixTriggerTestPlanV2({
+      pieceMeta: piece,
+      triggerName,
+      previousSteps,
+      stepResults,
+      brokenMappings,
+      agentMemory,
+      userInstruction,
+      onLog,
+      abortSignal: ac.signal,
+    });
+
+    if (ac.signal.aborted) { res.end(); return; }
+
+    const existing = getTestPlanByTrigger(req.params.name, triggerName);
+    let saved;
+    if (existing) {
+      saved = updateTestPlan(existing.id, {
+        steps: JSON.stringify(planResult.steps),
+        agent_memory: planResult.agentMemory || existing.agent_memory,
+      });
+    } else {
+      saved = createTestPlan({
+        piece_name: req.params.name,
+        target_action: triggerName,
+        target_type: 'trigger',
+        steps: JSON.stringify(planResult.steps),
+        status: 'draft',
+        agent_memory: planResult.agentMemory || '',
+      });
+    }
+
+    extractAndStoreLessons(
+      req.params.name, piece.displayName,
+      previousSteps, stepResults, planResult.steps,
+    ).catch(() => {});
+
+    sendEvent('result', {
+      planId: saved!.id,
+      steps: planResult.steps,
+      note: planResult.note,
+      agentMemory: planResult.agentMemory,
+      status: saved!.status,
+      version: 'v2',
+      targetType: 'trigger',
+      costSummary: (planResult as any).costSummary,
+    });
+    sendEvent('done', {});
+  } catch (err: any) {
+    if (!ac.signal.aborted) {
+      console.error('[ai-plan-fix-v2-trigger] SSE error:', err.message);
       sendEvent('error', { message: err.message || 'Unknown error' });
     }
   }

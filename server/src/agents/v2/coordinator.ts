@@ -19,7 +19,7 @@ import { runResearchWorker } from './workers/research.js';
 import { runPlannerWorker } from './workers/planner.js';
 import { runTriggerPlannerWorker } from './workers/trigger-planner.js';
 import { runVerifierWorker } from './workers/verifier.js';
-import { runFixerWorker } from './workers/fixer.js';
+import { runFixerWorker, runTriggerFixerWorker } from './workers/fixer.js';
 import { synthesizePlannerSpec, parseResearchFindings } from './prompts/coordinator.js';
 import { CostTracker } from './cost-tracker.js';
 
@@ -350,6 +350,7 @@ export async function fixTestPlanV2(params: {
   stepResults: { stepId: string; status: string; output: unknown; error: string | null; duration_ms: number }[];
   brokenMappings?: BrokenMapping[];
   agentMemory?: string;
+  userInstruction?: string;
   onLog: OnLogCallback;
   abortSignal?: AbortSignal;
 }): Promise<TestPlanResult & { costSummary?: ReturnType<CostTracker['getTotals']> }> {
@@ -380,6 +381,7 @@ export async function fixTestPlanV2(params: {
       stepResults: params.stepResults,
       brokenMappings: params.brokenMappings,
       agentMemory: params.agentMemory,
+      userInstruction: params.userInstruction,
       onLog,
       abortSignal,
       costTracker,
@@ -564,4 +566,78 @@ export async function createTriggerTestPlanV2(params: {
 
   onLog({ timestamp: Date.now(), type: 'worker_complete', role: 'coordinator', message: `Trigger planner created a ${plan.steps.length}-step plan.` });
   return withCost(plan);
+}
+
+/**
+ * Fix a failed TRIGGER test plan (Phase B, lean single pass).
+ *
+ * Spawns one trigger fixer worker with the execution results, then runs the
+ * cheap deterministic shape validation and logs any issues. There is no LLM
+ * re-verify loop — mirroring the deliberately single-agent trigger create path.
+ */
+export async function fixTriggerTestPlanV2(params: {
+  pieceMeta: PieceMetadataFull;
+  triggerName: string;
+  previousSteps: TestPlanStep[];
+  stepResults: { stepId: string; status: string; output: unknown; error: string | null; duration_ms: number }[];
+  brokenMappings?: BrokenMapping[];
+  agentMemory?: string;
+  userInstruction?: string;
+  onLog: OnLogCallback;
+  abortSignal?: AbortSignal;
+}): Promise<TestPlanResult & { costSummary?: ReturnType<CostTracker['getTotals']> }> {
+  const { pieceMeta, triggerName, onLog, abortSignal } = params;
+
+  const costTracker = new CostTracker({
+    pieceName: pieceMeta.name,
+    actionName: triggerName,
+    operation: 'fix',
+    version: 'v2',
+  });
+
+  function withCost<T extends TestPlanResult>(plan: T): T & { costSummary: ReturnType<CostTracker['getTotals']> } {
+    const totals = costTracker.getTotals();
+    onLog({ timestamp: Date.now(), type: 'done', role: 'coordinator', message: `Fix cost: $${totals.cost_usd.toFixed(4)} (${totals.requests} API calls, ${totals.input_tokens + totals.output_tokens} tokens)` });
+    return { ...plan, costSummary: totals };
+  }
+
+  const strategy = pieceMeta.triggers[triggerName]?.type;
+  onLog({ timestamp: Date.now(), type: 'phase', role: 'coordinator', message: 'Fixing failed trigger plan (post-execution)...' });
+  onLog({ timestamp: Date.now(), type: 'worker_spawn', role: 'coordinator', message: 'Spawning trigger fixer worker with execution results...' });
+
+  let fixedPlan: TestPlanResult;
+  try {
+    fixedPlan = await runTriggerFixerWorker({
+      pieceMeta,
+      triggerName,
+      previousSteps: params.previousSteps,
+      stepResults: params.stepResults,
+      brokenMappings: params.brokenMappings,
+      agentMemory: params.agentMemory,
+      userInstruction: params.userInstruction,
+      onLog,
+      abortSignal,
+      costTracker,
+    });
+  } catch (err: any) {
+    if (err.message?.includes('aborted')) throw err;
+    onLog({ timestamp: Date.now(), type: 'error', role: 'coordinator', message: `Trigger fixer failed: ${err.message}` });
+    return withCost({ steps: params.previousSteps, note: 'Fix attempt failed.', agentMemory: params.agentMemory });
+  }
+
+  onLog({ timestamp: Date.now(), type: 'worker_complete', role: 'coordinator', message: `Trigger fixer produced a ${fixedPlan.steps.length}-step plan.` });
+
+  // Cheap deterministic shape check — log issues so the user can review before re-running.
+  if (fixedPlan.steps.length > 0) {
+    const validation = validateTriggerPlanDeterministically(triggerName, fixedPlan.steps, strategy);
+    if (!validation.ok) {
+      onLog({ timestamp: Date.now(), type: 'error', role: 'coordinator', message: 'Fixed plan still has shape issues — review before running:' });
+      for (const issue of validation.issues) {
+        onLog({ timestamp: Date.now(), type: 'error', role: 'coordinator', message: `- ${issue}` });
+      }
+    }
+  }
+
+  onLog({ timestamp: Date.now(), type: 'done', role: 'coordinator', message: 'Fix complete.' });
+  return withCost(fixedPlan);
 }
