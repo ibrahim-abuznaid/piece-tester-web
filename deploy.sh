@@ -1,6 +1,16 @@
 #!/usr/bin/env bash
 # Reliable deploy script for piece-tester-web on DigitalOcean
-# Usage: ssh root@your-server "cd /opt/piece-tester && bash deploy.sh"
+#
+# Do NOT run this file in place. The `git reset --hard` below rewrites this very
+# file, and bash reads a script incrementally — it resumes at a stale byte offset
+# in the new content and executes a spliced mix of the old and new versions.
+# Pull first, then run an immutable copy:
+#
+#   ssh root@your-server 'cd /opt/piece-tester \
+#     && git fetch origin && git reset --hard origin/main \
+#     && install -m 755 deploy.sh /tmp/ptw-deploy.sh && bash /tmp/ptw-deploy.sh'
+#
+# CI (.github/workflows/deploy.yml) already does exactly this.
 
 set -euo pipefail
 cd /opt/piece-tester

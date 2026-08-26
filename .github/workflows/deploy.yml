@@ -48,12 +48,23 @@ jobs:
           SSHPASS: ${{ secrets.SSH_PASSWORD }}
           SSH_HOST: ${{ secrets.SSH_HOST }}
           SSH_USER: ${{ secrets.SSH_USER }}
+        # Update the checkout FIRST, then run an immutable copy of the script.
+        # Running deploy.sh in place is unsafe: its own `git reset --hard` rewrites
+        # the file bash is still reading, so bash resumes at a stale byte offset in
+        # the new content and executes a spliced mix of both versions. Snapshotting
+        # to /tmp also means a deploy.sh change takes effect on the run that ships
+        # it, not the one after.
         run: |
           sshpass -e ssh \
             -o StrictHostKeyChecking=accept-new \
             -o ConnectTimeout=20 \
             "${SSH_USER}@${SSH_HOST}" \
-            'cd /opt/piece-tester && bash deploy.sh'
+            'set -euo pipefail
+             cd /opt/piece-tester
+             git fetch origin
+             git reset --hard origin/main
+             install -m 755 deploy.sh /tmp/ptw-deploy.sh
+             bash /tmp/ptw-deploy.sh'
 
       - name: Verify the public health endpoint
         env:
