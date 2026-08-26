@@ -1,0 +1,70 @@
+name: CI & Deploy
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# One deploy at a time — never let two runs restart the droplet concurrently.
+concurrency:
+  group: deploy-droplet
+  cancel-in-progress: false
+
+jobs:
+  test:
+    name: Typecheck & tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          # Matches the droplet (Node 20), not whatever is newest.
+          node-version: '20'
+          cache: npm
+
+      - run: npm ci
+
+      - name: Typecheck
+        run: ./node_modules/.bin/tsc --noEmit -p tsconfig.json
+
+      - name: Tests
+        run: npm test
+
+  deploy:
+    name: Deploy to droplet
+    needs: test
+    # Fork PRs get no secrets, and only main ships. workflow_dispatch on another
+    # branch must not reach production either.
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install sshpass
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq sshpass
+
+      - name: Run deploy.sh on the droplet
+        env:
+          SSHPASS: ${{ secrets.SSH_PASSWORD }}
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+        run: |
+          sshpass -e ssh \
+            -o StrictHostKeyChecking=accept-new \
+            -o ConnectTimeout=20 \
+            "${SSH_USER}@${SSH_HOST}" \
+            'cd /opt/piece-tester && bash deploy.sh'
+
+      - name: Verify the public health endpoint
+        env:
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+        run: |
+          for _ in $(seq 1 10); do
+            if curl -fsS -m 10 "http://${SSH_HOST}/api/health" | grep -q '"status":"ok"'; then
+              echo "Public health OK"
+              exit 0
+            fi
+            sleep 6
+          done
+          echo "Public health check failed" >&2
+          exit 1
