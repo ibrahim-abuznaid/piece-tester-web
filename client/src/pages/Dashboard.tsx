@@ -48,9 +48,9 @@ export default function Dashboard() {
     const failing = rows.filter(r => r.status === 'failing').length;
     const healthy = rows.filter(r => r.status === 'healthy').length;
     const unknown = rows.filter(r => r.status === 'unknown').length;
-    const lastSweep = rows.reduce<string | null>((max, r) =>
+    const lastWave = rows.reduce<string | null>((max, r) =>
       r.last_run_at && (!max || r.last_run_at > max) ? r.last_run_at : max, null);
-    return { tracked: rows.length, failing, healthy, unknown, lastSweep };
+    return { tracked: rows.length, failing, healthy, unknown, lastWave };
   }, [rows]);
 
   const q = search.trim().toLowerCase();
@@ -86,7 +86,7 @@ export default function Dashboard() {
         <StatCard label="Pieces tracked" value={stats.tracked} tone="neutral" />
         <StatCard label="Failing now" value={stats.failing} tone={stats.failing > 0 ? 'bad' : 'good'} />
         <StatCard label="Healthy" value={stats.healthy} tone="good" />
-        <StatCard label="Last sweep" value={formatRelative(stats.lastSweep)} tone="neutral" small />
+        <StatCard label="Last wave" value={formatRelative(stats.lastWave)} tone="neutral" small />
       </div>
 
       {/* Needs Attention inbox — the actionable triage lane, above the full grid */}

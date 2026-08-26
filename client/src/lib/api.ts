@@ -393,8 +393,8 @@ export interface AttentionItem {
   failing_since: string | null;
   last_run_at: string | null;
   last_run_id: number;
-  muted: boolean;
-  mute_id: number | null;
+  quarantined: boolean;
+  quarantine_id: number | null;
   backlinks: ConnectionBacklinks | null;
 }
 
@@ -438,7 +438,7 @@ export interface CoverageRow {
   last_run_id: number | null;
 }
 
-/** One schedule fire ("wave/sweep") — a summary row in the Scheduled Runs feed. */
+/** One schedule fire (a "wave") — a summary row in the Scheduled Runs feed. */
 export interface WaveSummary {
   wave_id: string;
   schedule_id: number | null;

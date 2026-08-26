@@ -904,7 +904,7 @@ export function getPieceHealth(): PieceHealthRow[] {
   return result;
 }
 
-// ── Quarantine (muted pieces/actions) ──
+// ── Quarantine (pieces/actions excluded from the Needs-Attention inbox) ──
 
 export interface QuarantineRow {
   id: number;
@@ -915,7 +915,7 @@ export interface QuarantineRow {
   expires_at: string | null;
 }
 
-/** Active mutes only (expired ones are ignored). */
+/** Active quarantines only (expired ones are ignored). */
 export function listQuarantine(): QuarantineRow[] {
   return getDb().all<QuarantineRow>(
     `SELECT * FROM quarantined_items WHERE expires_at IS NULL OR expires_at > datetime('now') ORDER BY id DESC`,
@@ -952,8 +952,8 @@ export interface AttentionItem {
   failing_since: string | null;
   last_run_at: string | null;
   last_run_id: number;
-  muted: boolean;
-  mute_id: number | null;
+  quarantined: boolean;
+  quarantine_id: number | null;
   backlinks: ConnectionBacklinks | null;  // present for connection_broken items
 }
 
@@ -1012,7 +1012,7 @@ export function getAttentionItems(): AttentionItem[] {
   }
 
   const quarantine = listQuarantine();
-  const matchMute = (piece: string, action: string) =>
+  const matchQuarantine = (piece: string, action: string) =>
     quarantine.find(q => q.piece_name === piece && (q.action_name === null || q.action_name === action)) ?? null;
 
   const items: AttentionItem[] = [];
@@ -1048,7 +1048,7 @@ export function getAttentionItems(): AttentionItem[] {
       ? buildConnectionBacklinks(getSettings().base_url, getSettings().project_id, row.piece_name)
       : null;
 
-    const mute = matchMute(row.piece_name, row.target_action);
+    const qItem = matchQuarantine(row.piece_name, row.target_action);
 
     items.push({
       plan_id: row.plan_id,
@@ -1056,7 +1056,7 @@ export function getAttentionItems(): AttentionItem[] {
       action_name: row.target_action,
       bucket, category, fail_streak: streak, flaky,
       error, reason, failing_since, last_run_at: row.last_run_at, last_run_id: row.run_id,
-      muted: mute !== null, mute_id: mute?.id ?? null,
+      quarantined: qItem !== null, quarantine_id: qItem?.id ?? null,
       backlinks,
     });
   }
@@ -1068,7 +1068,7 @@ export function getAttentionItems(): AttentionItem[] {
 }
 
 // ── Scheduled Runs: wave-centric aggregation (redesigned feed) ──
-// A "wave" = one schedule fire (shared wave_id). These power the sweep-first Scheduled
+// A "wave" = one schedule fire (shared wave_id). These power the wave-first Scheduled
 // Runs view: a summary per fire + a failures-first Piece → Target drill — WITHOUT ever
 // shipping step_results to the client (loaded lazily per run via getPlanRun on expand).
 // The list scales with the number of FAILING targets, not the total run count.

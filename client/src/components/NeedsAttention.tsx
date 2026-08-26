@@ -35,12 +35,12 @@ export default function NeedsAttention() {
 
   const [showWatching, setShowWatching] = useState(false);
   const [showNoise, setShowNoise] = useState(false);
-  const [showMuted, setShowMuted] = useState(false);
+  const [showQuarantined, setShowQuarantined] = useState(false);
 
   if (isLoading) return null;
 
-  const active = items.filter(i => !i.muted);
-  const muted = items.filter(i => i.muted);
+  const active = items.filter(i => !i.quarantined);
+  const quarantined = items.filter(i => i.quarantined);
   // Strict default: only these two lanes are shown expanded.
   const primary = active.filter(i => i.bucket === 'likely_broken' || i.bucket === 'reauth');
   const watching = active.filter(i => i.bucket === 'watching');
@@ -67,7 +67,7 @@ export default function NeedsAttention() {
       ) : primary.length === 0 ? (
         <div className="bg-gray-900 border border-gray-800 rounded-lg p-4 text-sm text-gray-400 flex items-center gap-2">
           <CheckCircle size={15} className="text-green-400" /> No high-confidence breakages right now.
-          {(watching.length + noise.length + muted.length) > 0 && <span className="text-gray-600">See the lanes below.</span>}
+          {(watching.length + noise.length + quarantined.length) > 0 && <span className="text-gray-600">See the lanes below.</span>}
         </div>
       ) : (
         <div className="space-y-1.5">
@@ -88,10 +88,10 @@ export default function NeedsAttention() {
             {noise.map(it => <AttentionRow key={it.plan_id} item={it} />)}
           </CollapsibleLane>
         )}
-        {muted.length > 0 && (
-          <CollapsibleLane open={showMuted} onToggle={() => setShowMuted(v => !v)}
-            label={`Muted (${muted.length})`} hint="quarantined — excluded from the inbox">
-            {muted.map(it => <AttentionRow key={it.plan_id} item={it} />)}
+        {quarantined.length > 0 && (
+          <CollapsibleLane open={showQuarantined} onToggle={() => setShowQuarantined(v => !v)}
+            label={`Quarantined (${quarantined.length})`} hint="excluded from the inbox">
+            {quarantined.map(it => <AttentionRow key={it.plan_id} item={it} />)}
           </CollapsibleLane>
         )}
       </div>
@@ -136,10 +136,10 @@ function AttentionRow({ item }: { item: AttentionItem }) {
     refetchInterval: 3000,
   });
 
-  const muteMutation = useMutation({
-    mutationFn: () => (item.muted && item.mute_id)
-      ? api.unquarantineItem(item.mute_id)
-      : api.quarantineItem({ piece_name: item.piece_name, action_name: item.action_name, reason: 'Muted from inbox' }),
+  const quarantineMutation = useMutation({
+    mutationFn: () => (item.quarantined && item.quarantine_id)
+      ? api.unquarantineItem(item.quarantine_id)
+      : api.quarantineItem({ piece_name: item.piece_name, action_name: item.action_name, reason: 'Quarantined from inbox' }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['attention'] }),
   });
 
@@ -215,12 +215,12 @@ function AttentionRow({ item }: { item: AttentionItem }) {
             className="px-2 py-1 rounded text-[11px] text-gray-500 hover:text-gray-200 hover:bg-gray-800">
             Runs
           </button>
-          <button onClick={() => muteMutation.mutate()} disabled={muteMutation.isPending}
-            title={item.muted ? 'Unmute' : 'Mute (quarantine)'}
+          <button onClick={() => quarantineMutation.mutate()} disabled={quarantineMutation.isPending}
+            title={item.quarantined ? 'Unquarantine' : 'Quarantine — hide from the inbox'}
             className={`flex items-center gap-1 px-2 py-1 rounded text-[11px] ${
-              item.muted ? 'text-gray-400 hover:text-green-400 hover:bg-green-500/10' : 'text-gray-500 hover:text-amber-400 hover:bg-amber-500/10'
+              item.quarantined ? 'text-gray-400 hover:text-green-400 hover:bg-green-500/10' : 'text-gray-500 hover:text-amber-400 hover:bg-amber-500/10'
             }`}>
-            {item.muted ? <><Undo2 size={11} /> Unmute</> : <><VolumeX size={11} /> Mute</>}
+            {item.quarantined ? <><Undo2 size={11} /> Unquarantine</> : <><VolumeX size={11} /> Quarantine</>}
           </button>
         </div>
       </div>
@@ -234,8 +234,8 @@ function AttentionRow({ item }: { item: AttentionItem }) {
           lastRunId={item.last_run_id}
           failStreak={item.fail_streak}
           flaky={item.flaky}
-          muted={item.muted}
-          muteId={item.mute_id}
+          quarantined={item.quarantined}
+          quarantineId={item.quarantine_id}
           showRunActions={false}
         />
       )}
