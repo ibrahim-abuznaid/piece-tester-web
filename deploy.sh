@@ -2,8 +2,22 @@
 # Reliable deploy script for piece-tester-web on DigitalOcean
 # Usage: ssh root@your-server "cd /opt/piece-tester && bash deploy.sh"
 
-set -e
+set -euo pipefail
 cd /opt/piece-tester
+
+# The PM2 registration must live under exactly ONE user. Two PM2 daemons cannot
+# share port 4000 — the loser retries, exits, and PM2 restarts it forever. APP_USER
+# owns data/ and has the enabled pm2-<user>.service unit that restores it on boot,
+# so root must never end up holding a second registration.
+APP_USER="${APP_USER:-deploy}"
+
+run_as_app() {
+  if [ "$(id -un)" = "$APP_USER" ]; then
+    bash -lc "$1"
+  else
+    su - "$APP_USER" -c "$1"
+  fi
+}
 
 echo "==> Pulling latest code (main)..."
 git fetch origin
@@ -16,18 +30,29 @@ npm ci
 echo "==> Building client..."
 npm run build
 
-echo "==> Stopping PM2 process (if running)..."
-pm2 stop piece-tester 2>/dev/null || true
-pm2 delete piece-tester 2>/dev/null || true
+echo "==> Handing writable paths to $APP_USER..."
+chown -R "$APP_USER:$APP_USER" data logs dist node_modules 2>/dev/null || true
 
-echo "==> Killing anything on port 4000..."
-fuser -k 4000/tcp 2>/dev/null || true
-sleep 1
+if [ "$(id -un)" != "$APP_USER" ]; then
+  echo "==> Dropping any duplicate registration owned by $(id -un)..."
+  pm2 delete piece-tester >/dev/null 2>&1 || true
+  pm2 save --force >/dev/null 2>&1 || true
+fi
 
-echo "==> Starting with ecosystem config..."
-pm2 start ecosystem.config.cjs
-pm2 save
+echo "==> Restarting the app as $APP_USER..."
+run_as_app "cd /opt/piece-tester && (pm2 restart piece-tester --update-env || pm2 start ecosystem.config.cjs)"
+run_as_app "pm2 save"
 
-echo "==> Deploy complete."
-curl -s localhost:4000/api/health && echo "  <- health OK"
-pm2 list
+echo "==> Waiting for health..."
+for _ in $(seq 1 15); do
+  if curl -fsS -m 5 localhost:4000/api/health >/dev/null 2>&1; then
+    echo "==> Deploy complete — health OK"
+    run_as_app "pm2 list --no-color" | grep -i piece-tester || true
+    exit 0
+  fi
+  sleep 2
+done
+
+echo "!! Health check failed after ~30s — dumping recent logs" >&2
+run_as_app "pm2 logs piece-tester --lines 30 --nostream --no-color" >&2 || true
+exit 1
