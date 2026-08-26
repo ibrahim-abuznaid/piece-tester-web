@@ -79,10 +79,10 @@ export default function ScheduledRunsFeed({ focusRunId }: { focusRunId?: number 
       if (run?.wave_id) setSelectedWaveId(run.wave_id);
       if (run?.piece_name) setExpandedPieces(new Set([run.piece_name]));
       setExpandedRun(focusRunId);
-    }).catch(() => { /* run gone — fall back to the latest sweep */ });
+    }).catch(() => { /* run gone — fall back to the latest wave */ });
   }, [focusRunId]);
 
-  // Default: select the most recent sweep once loaded (focus, if any, wins via the effect above).
+  // Default: select the most recent wave once loaded (focus, if any, wins via the effect above).
   useEffect(() => {
     if (selectedWaveId == null && waves.length > 0) setSelectedWaveId(waves[0].wave_id);
   }, [waves, selectedWaveId]);
@@ -123,7 +123,7 @@ export default function ScheduledRunsFeed({ focusRunId }: { focusRunId?: number 
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-[320px_1fr] gap-4 items-start">
-        {/* Sweep rail */}
+        {/* Wave rail */}
         <div className="space-y-1.5">
           {waves.map(w => (
             <WaveRailItem key={w.wave_id} w={w} selected={w.wave_id === selectedWaveId}
@@ -131,7 +131,7 @@ export default function ScheduledRunsFeed({ focusRunId }: { focusRunId?: number 
           ))}
         </div>
 
-        {/* Selected sweep detail */}
+        {/* Selected wave detail */}
         <div>
           {selectedWaveId
             ? <WaveDetailView

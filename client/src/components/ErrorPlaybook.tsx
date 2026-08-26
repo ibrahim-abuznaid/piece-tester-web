@@ -32,11 +32,11 @@ export interface ErrorPlaybookProps {
   failStreak?: number;
   /** Recently mixed pass/fail — drives the confidence note. */
   flaky?: boolean;
-  /** Whether this item is currently muted (quarantined). */
-  muted?: boolean;
-  muteId?: number | null;
+  /** Whether this item is currently quarantined. */
+  quarantined?: boolean;
+  quarantineId?: number | null;
   /**
-   * Whether to render the Retest / Mute run-actions inside the panel.
+   * Whether to render the Retest / Quarantine run-actions inside the panel.
    * Off in Needs Attention (the row header already carries them); on elsewhere.
    */
   showRunActions?: boolean;
@@ -156,7 +156,7 @@ function confidenceNote(p: ErrorPlaybookProps): string | null {
 }
 
 export default function ErrorPlaybook(props: ErrorPlaybookProps) {
-  const { pieceName, actionName, category, planId, lastRunId, muted, muteId, showRunActions = true } = props;
+  const { pieceName, actionName, category, planId, lastRunId, quarantined, quarantineId, showRunActions = true } = props;
   const navigate = useNavigate();
   const qc = useQueryClient();
 
@@ -202,11 +202,11 @@ export default function ErrorPlaybook(props: ErrorPlaybookProps) {
     } catch { setRetest('failed'); }
   }
 
-  // ── Self-contained Mute / Unmute (quarantine) ──
-  const muteMutation = useMutation({
-    mutationFn: () => (muted && muteId)
-      ? api.unquarantineItem(muteId)
-      : api.quarantineItem({ piece_name: pieceName, action_name: actionName, reason: 'Muted from playbook' }),
+  // ── Self-contained Quarantine / Unquarantine ──
+  const quarantineMutation = useMutation({
+    mutationFn: () => (quarantined && quarantineId)
+      ? api.unquarantineItem(quarantineId)
+      : api.quarantineItem({ piece_name: pieceName, action_name: actionName, reason: 'Quarantined from playbook' }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['attention'] });
       qc.invalidateQueries({ queryKey: ['piece-health'] });
@@ -266,12 +266,12 @@ export default function ErrorPlaybook(props: ErrorPlaybookProps) {
         )}
 
         {showRunActions && (
-          <button onClick={() => muteMutation.mutate()} disabled={muteMutation.isPending}
-            title={muted ? 'Unmute (remove from quarantine)' : 'Mute — not a bug, hide from the inbox'}
-            className={`${btnBase} ${muted
+          <button onClick={() => quarantineMutation.mutate()} disabled={quarantineMutation.isPending}
+            title={quarantined ? 'Unquarantine (return to the inbox)' : 'Quarantine — not a bug, hide from the inbox'}
+            className={`${btnBase} ${quarantined
               ? 'border-gray-700 text-gray-400 hover:text-green-300 hover:bg-green-500/10'
               : 'border-gray-700 text-gray-400 hover:text-amber-300 hover:bg-amber-500/10'}`}>
-            {muted ? <><Undo2 size={12} /> Unmute</> : <><VolumeX size={12} /> Mute</>}
+            {quarantined ? <><Undo2 size={12} /> Unquarantine</> : <><VolumeX size={12} /> Quarantine</>}
           </button>
         )}
       </div>

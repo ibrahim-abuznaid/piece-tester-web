@@ -254,8 +254,8 @@ function initTables(db: DatabaseAdapter): void {
   `);
 
   db.exec(`
-    -- Muted (quarantined) pieces/actions: excluded from the Needs-Attention inbox.
-    -- action_name NULL = the whole piece is muted. expires_at NULL = indefinite.
+    -- Quarantined pieces/actions: excluded from the Needs-Attention inbox.
+    -- action_name NULL = the whole piece is quarantined. expires_at NULL = indefinite.
     CREATE TABLE IF NOT EXISTS quarantined_items (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       piece_name TEXT NOT NULL,

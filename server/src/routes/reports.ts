@@ -66,8 +66,7 @@ router.get('/attention', (_req, res) => {
   }
 });
 
-// Quarantine (mute) management.
-// Scheduled Runs feed — sweep summaries + per-wave failures-first rollup (no step_results).
+// Scheduled Runs feed — wave summaries + per-wave failures-first rollup (no step_results).
 router.get('/waves', (req, res) => {
   try {
     const limit = req.query.limit ? parseInt(req.query.limit as string, 10) : 30;
@@ -87,6 +86,7 @@ router.get('/waves/:waveId', (req, res) => {
   }
 });
 
+// Quarantine management.
 router.get('/quarantine', (_req, res) => {
   try {
     res.json(listQuarantine());
