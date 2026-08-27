@@ -3,6 +3,7 @@ import * as db from '../db/queries.js';
 import { createClient } from '../services/test-engine.js';
 import { ActivepiecesClient } from '../services/ap-client.js';
 import { reloadScheduler } from '../services/scheduler.js';
+import { getActiveJobCountsByPiece } from '../services/plan-jobs.js';
 
 const router = Router();
 
@@ -57,6 +58,11 @@ router.post('/cadence', (req, res) => {
   db.setPiecesCadence(piece_names, cadence);
   reloadScheduler();
   res.json({ success: true });
+});
+
+// Live per-piece active AI-plan-job counts, for the Coverage "generating" badge.
+router.get('/active-jobs', (_req, res) => {
+  res.json(getActiveJobCountsByPiece());
 });
 
 export default router;
