@@ -3,7 +3,7 @@ import { defineConfig } from 'vitest/config';
 export default defineConfig({
   test: {
     environment: 'node',
-    include: ['server/src/**/*.test.ts'],
+    include: ['server/src/**/*.test.ts', 'client/src/**/*.test.ts'],
     passWithNoTests: true,
     // better-sqlite3 is a native addon — run tests in forked processes, not worker
     // threads, to avoid native-module-in-worker issues.

@@ -35,7 +35,7 @@ export interface BatchTarget {
 // Matches the server's 600s request timeout so a slow-but-healthy v2 run isn't flagged as an error.
 const TARGET_TIMEOUT_MS = 600_000;
 
-const EMPTY: BatchState = {
+export const EMPTY_BATCH: BatchState = {
   pieceName: null,
   running: false,
   mode: null,
@@ -48,48 +48,56 @@ const EMPTY: BatchState = {
   showPanel: false,
 };
 
-let state: BatchState = EMPTY;
+// Batches are keyed by piece so each piece keeps its own panel/progress independently.
+let states: Record<string, BatchState> = {};
+const controllers: Record<string, AbortController | null> = {};
 const listeners = new Set<() => void>();
-
-// Module scope so the run survives navigation and a fresh mount can still cancel it.
-let batchController: AbortController | null = null;
 
 function emit() {
   for (const l of listeners) l();
 }
 
-function setState(patch: Partial<BatchState>) {
-  state = { ...state, ...patch };
+function setState(pieceName: string, patch: Partial<BatchState>) {
+  const prev = states[pieceName] ?? EMPTY_BATCH;
+  states = { ...states, [pieceName]: { ...prev, ...patch } };
   emit();
 }
 
-// ── useSyncExternalStore contract ──
+// ── useSyncExternalStore contract (whole map; consumers select their piece) ──
 export function subscribe(cb: () => void): () => void {
   listeners.add(cb);
   return () => { listeners.delete(cb); };
 }
 
-export function getSnapshot(): BatchState {
-  return state;
+export function getSnapshot(): Record<string, BatchState> {
+  return states;
+}
+
+export function getFor(pieceName: string): BatchState {
+  return states[pieceName] ?? EMPTY_BATCH;
 }
 
 // ── Mutators ──
-function updateItem(key: string, status: BatchActionStatus) {
-  setState({ items: state.items.map(it => (it.key === key ? { ...it, status } : it)) });
+function updateItem(pieceName: string, key: string, status: BatchActionStatus) {
+  const cur = states[pieceName] ?? EMPTY_BATCH;
+  setState(pieceName, { items: cur.items.map(it => (it.key === key ? { ...it, status } : it)) });
 }
 
-function appendLog(key: string, log: AgentLogEntry) {
-  setState({ logs: { ...state.logs, [key]: [...(state.logs[key] || []), log] } });
+function appendLog(pieceName: string, key: string, log: AgentLogEntry) {
+  const cur = states[pieceName] ?? EMPTY_BATCH;
+  setState(pieceName, { logs: { ...cur.logs, [key]: [...(cur.logs[key] || []), log] } });
 }
 
-function setError(key: string, msg: string) {
-  setState({ errors: { ...state.errors, [key]: msg } });
+function setError(pieceName: string, key: string, msg: string) {
+  const cur = states[pieceName] ?? EMPTY_BATCH;
+  setState(pieceName, { errors: { ...cur.errors, [key]: msg } });
 }
 
-function addResult(key: string, plan: TestPlan) {
-  setState({
-    results: { ...state.results, [key]: plan },
-    resultsVersion: state.resultsVersion + 1,
+function addResult(pieceName: string, key: string, plan: TestPlan) {
+  const cur = states[pieceName] ?? EMPTY_BATCH;
+  setState(pieceName, {
+    results: { ...cur.results, [key]: plan },
+    resultsVersion: cur.resultsVersion + 1,
   });
 }
 
@@ -171,10 +179,10 @@ async function runLoop(opts: {
 }) {
   const { pieceName, mode, targets, skipExisting } = opts;
 
-  // Abort any batch already in flight (possibly for another piece).
-  batchController?.abort();
+  // Abort a prior batch for THIS piece only; other pieces keep running.
+  controllers[pieceName]?.abort();
   const controller = new AbortController();
-  batchController = controller;
+  controllers[pieceName] = controller;
 
   const items: BatchItem[] = targets.map(t => ({
     key: `${t.kind}:${t.name}`,
@@ -184,7 +192,8 @@ async function runLoop(opts: {
     status: skipExisting && t.existingPlan ? 'skipped' : 'pending',
   }));
 
-  setState({
+  const prevVersion = (states[pieceName] ?? EMPTY_BATCH).resultsVersion;
+  setState(pieceName, {
     pieceName,
     running: true,
     mode,
@@ -192,7 +201,7 @@ async function runLoop(opts: {
     logs: {},
     errors: {},
     results: {},
-    resultsVersion: state.resultsVersion + 1,
+    resultsVersion: prevVersion + 1,
     progress: { current: 0, total: targets.length, currentName: '' },
     showPanel: true,
   });
@@ -202,34 +211,34 @@ async function runLoop(opts: {
 
     const t = targets[i];
     const key = `${t.kind}:${t.name}`;
-    setState({ progress: { current: i + 1, total: targets.length, currentName: t.displayName } });
+    setState(pieceName, { progress: { current: i + 1, total: targets.length, currentName: t.displayName } });
 
     if (skipExisting && t.existingPlan) {
-      updateItem(key, 'skipped');
+      updateItem(pieceName, key, 'skipped');
       continue;
     }
 
-    updateItem(key, 'running');
+    updateItem(pieceName, key, 'running');
 
     try {
       const plan = await streamOne(pieceName, t, controller.signal, {
-        onLog: (log) => appendLog(key, log),
-        onResult: (p) => addResult(key, p),
+        onLog: (log) => appendLog(pieceName, key, log),
+        onResult: (p) => addResult(pieceName, key, p),
       });
       const hasUnfilledHuman = plan.steps.some(
         s => s.type === 'human_input' && !s.savedHumanResponse,
       );
-      updateItem(key, hasUnfilledHuman ? 'waiting_human' : 'done');
+      updateItem(pieceName, key, hasUnfilledHuman ? 'waiting_human' : 'done');
     } catch (err) {
       if (controller.signal.aborted) break;
       const msg = err instanceof Error ? err.message : String(err);
-      setError(key, msg);
-      updateItem(key, 'error');
+      setError(pieceName, key, msg);
+      updateItem(pieceName, key, 'error');
     }
   }
 
-  if (batchController === controller) batchController = null;
-  setState({ running: false, mode: null, progress: null });
+  if (controllers[pieceName] === controller) controllers[pieceName] = null;
+  setState(pieceName, { running: false, mode: null, progress: null });
 }
 
 // ── Public API ──
@@ -262,19 +271,20 @@ export function startRebuild(params: { pieceName: string; targets: BatchTarget[]
   void runLoop({ pieceName: params.pieceName, mode: 'replace_existing', targets: params.targets, skipExisting: false });
 }
 
-export function cancel() {
-  batchController?.abort();
-  batchController = null;
-  setState({ running: false, mode: null, progress: null });
+export function cancel(pieceName: string) {
+  controllers[pieceName]?.abort();
+  controllers[pieceName] = null;
+  setState(pieceName, { running: false, mode: null, progress: null });
 }
 
-export function setShowPanel(v: boolean) {
-  setState({ showPanel: v });
+export function setShowPanel(pieceName: string, v: boolean) {
+  setState(pieceName, { showPanel: v });
 }
 
 export const batchSetupRunner = {
   subscribe,
   getSnapshot,
+  getFor,
   startCreateMissing,
   startRebuild,
   cancel,
