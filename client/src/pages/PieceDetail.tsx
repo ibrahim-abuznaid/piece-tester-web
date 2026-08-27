@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback, useMemo, useSyncExternalStore
 import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api, type TestPlan, type AgentLogEntry, type StepResult, type PlanProgress } from '../lib/api';
-import { batchSetupRunner, type BatchItem, type BatchActionStatus } from '../lib/batchSetupRunner';
+import { batchSetupRunner, EMPTY_BATCH, type BatchItem, type BatchActionStatus } from '../lib/batchSetupRunner';
 import TestResultBadge from '../components/TestResultBadge';
 import TestPlanView from '../components/TestPlanView';
 import {
@@ -60,15 +60,15 @@ export default function PieceDetail() {
   const [triggerPlans, setTriggerPlans] = useState<Record<string, TestPlan>>({});
   const [enabledTriggers, setEnabledTriggers] = useState<Set<string>>(new Set());
 
-  // ── Batch "Set up all with AI" — state lives in a module-level store so the
-  // run (and its logs/progress) survives navigating away and back. ──
-  const batch = useSyncExternalStore(batchSetupRunner.subscribe, batchSetupRunner.getSnapshot);
-  const isBatchForThisPiece = batch.pieceName === name;
-  const setupAllRunning = isBatchForThisPiece && batch.running;
-  const setupMode = isBatchForThisPiece ? batch.mode : null;
-  const setupAllProgress = isBatchForThisPiece ? batch.progress : null;
-  const batchItems = isBatchForThisPiece ? batch.items : [];
-  const showBatchPanel = isBatchForThisPiece && batch.showPanel;
+  // ── Batch "Set up all with AI" — state lives in a module-level store, keyed
+  // per piece, so each piece keeps its own run/logs/progress across navigation. ──
+  const allBatches = useSyncExternalStore(batchSetupRunner.subscribe, batchSetupRunner.getSnapshot);
+  const batch = (name && allBatches[name]) || EMPTY_BATCH;
+  const setupAllRunning = batch.running;
+  const setupMode = batch.mode;
+  const setupAllProgress = batch.progress;
+  const batchItems = batch.items;
+  const showBatchPanel = batch.showPanel;
   // Which item's logs are expanded in the panel (view-only, fine to reset on nav).
   const [batchExpandedLog, setBatchExpandedLog] = useState<string | null>(null);
 
@@ -242,6 +242,24 @@ export default function PieceDetail() {
     })();
   }, [name]);
 
+  // After a page reload the in-memory batch is gone, but the server jobs keep
+  // running — rebuild the panel by reconnecting to whatever is still active.
+  useEffect(() => {
+    if (!name || !piece) return;
+    const jobs: { kind: 'action' | 'trigger'; name: string; displayName: string }[] = [];
+    for (const [key, job] of Object.entries(activeAiJobs)) {
+      if (job.status !== 'running' && job.status !== 'pending') continue;
+      if (key.startsWith('v2:trigger:')) {
+        const n = key.slice('v2:trigger:'.length);
+        jobs.push({ kind: 'trigger', name: n, displayName: piece.triggers?.[n]?.displayName || n });
+      } else if (key.startsWith('v2:')) {
+        const n = key.slice('v2:'.length);
+        jobs.push({ kind: 'action', name: n, displayName: piece.actions?.[n]?.displayName || n });
+      }
+    }
+    if (jobs.length > 0) batchSetupRunner.resumeFromJobs({ pieceName: name, jobs });
+  }, [name, piece, activeAiJobs]);
+
   // Cleanup save timers and plan execution on unmount.
   // NOTE: the batch "Set up all with AI" run is intentionally NOT aborted here —
   // it lives in a module-level store and keeps going while you're on another
@@ -254,7 +272,7 @@ export default function PieceDetail() {
 
   // Merge plans created by the batch runner into local state as they arrive.
   useEffect(() => {
-    if (batch.pieceName !== name) return;
+    if (!name) return;
     const results = batch.results;
     if (Object.keys(results).length === 0) return;
     setActionPlans(prev => {
@@ -286,7 +304,7 @@ export default function PieceDetail() {
       for (const plan of Object.values(results)) if (plan.target_type === 'trigger') next.add(plan.target_action);
       return next;
     });
-  }, [batch.resultsVersion, batch.pieceName, name]);
+  }, [batch.resultsVersion, name]);
 
   // ── Mutations ──
   function invalidateConns() {
@@ -441,8 +459,8 @@ export default function PieceDetail() {
   }, [name, piece, actionPlans, planAction]);
 
   const cancelSetupAll = useCallback(() => {
-    batchSetupRunner.cancel();
-  }, []);
+    if (name) batchSetupRunner.cancel(name);
+  }, [name]);
 
   // Callback for TestPlanView to notify parent when a plan is created/updated
   const onPlanChange = useCallback((actionName: string, plan: TestPlan | null) => {
@@ -841,7 +859,7 @@ export default function PieceDetail() {
                 )}
                 {!setupAllRunning && batchItems.length > 0 && !showBatchPanel && (
                   <button
-                    onClick={() => batchSetupRunner.setShowPanel(true)}
+                    onClick={() => name && batchSetupRunner.setShowPanel(name, true)}
                     className="text-xs text-gray-400 hover:text-gray-200 px-2 py-1 rounded bg-gray-800 hover:bg-gray-700 flex items-center gap-1"
                   >
                     <Terminal size={10} /> View Setup Logs
@@ -896,11 +914,11 @@ export default function PieceDetail() {
               mode={setupMode}
               progress={setupAllProgress}
               onCancel={cancelSetupAll}
-              onClose={() => { if (!setupAllRunning) batchSetupRunner.setShowPanel(false); }}
+              onClose={() => { if (!setupAllRunning && name) batchSetupRunner.setShowPanel(name, false); }}
               onOpenTarget={(item) => {
                 if (item.kind === 'trigger') setPlanTrigger(item.name);
                 else setPlanAction(item.name);
-                batchSetupRunner.setShowPanel(false);
+                if (name) batchSetupRunner.setShowPanel(name, false);
               }}
             />
           )}
