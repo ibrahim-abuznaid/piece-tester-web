@@ -271,6 +271,66 @@ export function startRebuild(params: { pieceName: string; targets: BatchTarget[]
   void runLoop({ pieceName: params.pieceName, mode: 'replace_existing', targets: params.targets, skipExisting: false });
 }
 
+/**
+ * Rebuild the panel after a page reload by reconnecting to jobs the server still
+ * has running (their SSE events are buffered and replayed). Only runs when this
+ * piece has no in-memory batch, so a live run is never disturbed.
+ */
+export function resumeFromJobs(params: {
+  pieceName: string;
+  jobs: { kind: 'action' | 'trigger'; name: string; displayName: string }[];
+}) {
+  const { pieceName, jobs } = params;
+  const existing = states[pieceName];
+  if (existing && existing.items.length > 0) return;
+  if (jobs.length === 0) return;
+
+  controllers[pieceName]?.abort();
+  const controller = new AbortController();
+  controllers[pieceName] = controller;
+
+  const items: BatchItem[] = jobs.map(j => ({
+    key: `${j.kind}:${j.name}`, kind: j.kind, name: j.name, displayName: j.displayName, status: 'running',
+  }));
+  setState(pieceName, {
+    pieceName,
+    running: true,
+    mode: 'create_missing',
+    items,
+    logs: {},
+    errors: {},
+    results: {},
+    resultsVersion: (existing?.resultsVersion ?? 0) + 1,
+    progress: { current: 0, total: items.length, currentName: '' },
+    showPanel: true,
+  });
+
+  let completed = 0;
+  void (async () => {
+    await Promise.all(jobs.map(async (j) => {
+      const key = `${j.kind}:${j.name}`;
+      try {
+        const plan = await streamOne(pieceName, j, controller.signal, {
+          onLog: (log) => appendLog(pieceName, key, log),
+          onResult: (p) => addResult(pieceName, key, p),
+        });
+        const human = plan.steps.some(s => s.type === 'human_input' && !s.savedHumanResponse);
+        updateItem(pieceName, key, human ? 'waiting_human' : 'done');
+      } catch (err) {
+        if (!controller.signal.aborted) {
+          setError(pieceName, key, err instanceof Error ? err.message : String(err));
+          updateItem(pieceName, key, 'error');
+        }
+      } finally {
+        completed += 1;
+        setState(pieceName, { progress: { current: completed, total: items.length, currentName: '' } });
+      }
+    }));
+    if (controllers[pieceName] === controller) controllers[pieceName] = null;
+    setState(pieceName, { running: false, mode: null, progress: null });
+  })();
+}
+
 export function cancel(pieceName: string) {
   controllers[pieceName]?.abort();
   controllers[pieceName] = null;
@@ -287,6 +347,7 @@ export const batchSetupRunner = {
   getFor,
   startCreateMissing,
   startRebuild,
+  resumeFromJobs,
   cancel,
   setShowPanel,
 };

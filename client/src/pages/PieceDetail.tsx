@@ -242,6 +242,24 @@ export default function PieceDetail() {
     })();
   }, [name]);
 
+  // After a page reload the in-memory batch is gone, but the server jobs keep
+  // running — rebuild the panel by reconnecting to whatever is still active.
+  useEffect(() => {
+    if (!name || !piece) return;
+    const jobs: { kind: 'action' | 'trigger'; name: string; displayName: string }[] = [];
+    for (const [key, job] of Object.entries(activeAiJobs)) {
+      if (job.status !== 'running' && job.status !== 'pending') continue;
+      if (key.startsWith('v2:trigger:')) {
+        const n = key.slice('v2:trigger:'.length);
+        jobs.push({ kind: 'trigger', name: n, displayName: piece.triggers?.[n]?.displayName || n });
+      } else if (key.startsWith('v2:')) {
+        const n = key.slice('v2:'.length);
+        jobs.push({ kind: 'action', name: n, displayName: piece.actions?.[n]?.displayName || n });
+      }
+    }
+    if (jobs.length > 0) batchSetupRunner.resumeFromJobs({ pieceName: name, jobs });
+  }, [name, piece, activeAiJobs]);
+
   // Cleanup save timers and plan execution on unmount.
   // NOTE: the batch "Set up all with AI" run is intentionally NOT aborted here —
   // it lives in a module-level store and keeps going while you're on another

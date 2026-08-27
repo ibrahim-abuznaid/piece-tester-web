@@ -53,4 +53,33 @@ describe('batchSetupRunner per-piece isolation', () => {
     const c = batchSetupRunner.getFor('piece-c');
     expect(c.items.map(i => i.key)).toEqual(['action:c1', 'trigger:t1']);
   });
+
+  it('resumeFromJobs rebuilds the panel from active server jobs (post-reload)', () => {
+    batchSetupRunner.resumeFromJobs({
+      pieceName: 'piece-d',
+      jobs: [
+        { kind: 'action', name: 'd1', displayName: 'D1' },
+        { kind: 'trigger', name: 't1', displayName: 'T1' },
+      ],
+    });
+    const d = batchSetupRunner.getFor('piece-d');
+    expect(d.showPanel).toBe(true);
+    expect(d.running).toBe(true);
+    expect(d.items.map(i => i.key)).toEqual(['action:d1', 'trigger:t1']);
+  });
+
+  it('resumeFromJobs does not clobber a live in-memory batch', () => {
+    batchSetupRunner.startCreateMissing({
+      pieceName: 'piece-e',
+      actions: [{ name: 'e1', displayName: 'E1' }],
+      triggers: [],
+      existingActionPlans: {},
+      existingTriggerPlans: {},
+    });
+    batchSetupRunner.resumeFromJobs({
+      pieceName: 'piece-e',
+      jobs: [{ kind: 'action', name: 'zzz', displayName: 'ZZZ' }],
+    });
+    expect(batchSetupRunner.getFor('piece-e').items.map(i => i.name)).toEqual(['e1']);
+  });
 });
