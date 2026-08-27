@@ -74,6 +74,24 @@ export function getActiveJobsForPiece(pieceName: string): Record<string, { statu
   return result;
 }
 
+/** In-progress plan jobs per piece (running individual jobs + running/pending batch items), for the Coverage "generating" badge. */
+export function getActiveJobCountsByPiece(): Record<string, number> {
+  const counts: Record<string, number> = {};
+  for (const [, job] of activeJobs) {
+    if (job.status === 'running') {
+      counts[job.pieceName] = (counts[job.pieceName] ?? 0) + 1;
+    }
+  }
+  if (activeBatchQueue && activeBatchQueue.status === 'running') {
+    for (const item of activeBatchQueue.items) {
+      if (item.status === 'running' || item.status === 'pending') {
+        counts[item.pieceName] = (counts[item.pieceName] ?? 0) + 1;
+      }
+    }
+  }
+  return counts;
+}
+
 export function createJob(pieceName: string, actionName: string): PlanJob {
   const key = jobKey(pieceName, actionName);
 

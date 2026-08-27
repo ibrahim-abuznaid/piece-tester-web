@@ -30,6 +30,12 @@ export default function CoverageCockpit() {
     queryFn: api.getCoverage,
   });
 
+  const { data: activeJobs = {} } = useQuery({
+    queryKey: ['coverageActiveJobs'],
+    queryFn: api.getActiveJobCounts,
+    refetchInterval: 3000,
+  });
+
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState<Filter>('all');
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -265,6 +271,7 @@ export default function CoverageCockpit() {
                     initialTimezone: r.cadence?.timezone,
                   })}
                   busy={busy}
+                  generating={activeJobs[r.piece_name] ?? 0}
                 />
               ))}
             </div>
@@ -299,7 +306,7 @@ function validConfig(c: any): ScheduleConfig | undefined {
 // ── Row ──────────────────────────────────────────────────────────────────────
 
 function Row({
-  r, checked, onToggle, onConnect, onEnroll, onGenPlans, onOpenPlans, onOpenRuns, onEdit, busy,
+  r, checked, onToggle, onConnect, onEnroll, onGenPlans, onOpenPlans, onOpenRuns, onEdit, busy, generating,
 }: {
   r: CoverageRow;
   checked: boolean;
@@ -311,6 +318,7 @@ function Row({
   onOpenRuns: () => void;
   onEdit: () => void;
   busy: boolean;
+  generating: number;
 }) {
   return (
     <div className="grid grid-cols-[28px_1.25fr_0.85fr_0.95fr_0.7fr_0.8fr_92px] gap-2 px-3 py-2 border-b border-gray-800/60 last:border-b-0 items-center hover:bg-gray-800/30 text-sm">
@@ -335,6 +343,11 @@ function Row({
           )}
         </div>
         <div className="text-[11px] text-gray-600 truncate">{shortName(r.piece_name)}</div>
+        {generating > 0 && (
+          <Pill className="mt-0.5 bg-purple-500/20 text-purple-300">
+            <Loader2 size={9} className="animate-spin" /> {generating} generating
+          </Pill>
+        )}
       </div>
 
       {/* Coverage */}

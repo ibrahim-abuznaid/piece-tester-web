@@ -999,6 +999,8 @@ export const api = {
 
   // Coverage cockpit
   getCoverage: () => request<CoverageRow[]>('GET', '/coverage'),
+  getActiveJobCounts: () =>
+    request<Record<string, number>>('GET', '/coverage/active-jobs'),
   enrollPieces: (piece_names: string[], cadence: CadencePayload) =>
     request<{ success: boolean }>('POST', '/coverage/enroll', { piece_names, cadence }),
   unenrollPieces: (piece_names: string[]) =>
