@@ -1,7 +1,8 @@
-import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo, useSyncExternalStore } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api, type TestPlan, type AgentLogEntry, type StepResult, type PlanProgress } from '../lib/api';
+import { batchSetupRunner, type BatchItem, type BatchActionStatus } from '../lib/batchSetupRunner';
 import TestResultBadge from '../components/TestResultBadge';
 import TestPlanView from '../components/TestPlanView';
 import {
@@ -58,16 +59,18 @@ export default function PieceDetail() {
   const [planTrigger, setPlanTrigger] = useState<string | null>(null);
   const [triggerPlans, setTriggerPlans] = useState<Record<string, TestPlan>>({});
   const [enabledTriggers, setEnabledTriggers] = useState<Set<string>>(new Set());
-  const [setupAllRunning, setSetupAllRunning] = useState(false);
-  const [setupMode, setSetupMode] = useState<'create_missing' | 'replace_existing' | null>(null);
-  const [setupAllProgress, setSetupAllProgress] = useState<{ current: number; total: number; currentAction: string } | null>(null);
 
-  // ── Batch setup detailed tracking ──
-  const [batchStatuses, setBatchStatuses] = useState<Record<string, BatchActionStatus>>({});
-  const [batchLogs, setBatchLogs] = useState<Record<string, AgentLogEntry[]>>({});
-  const [batchErrors, setBatchErrors] = useState<Record<string, string>>({});
+  // ── Batch "Set up all with AI" — state lives in a module-level store so the
+  // run (and its logs/progress) survives navigating away and back. ──
+  const batch = useSyncExternalStore(batchSetupRunner.subscribe, batchSetupRunner.getSnapshot);
+  const isBatchForThisPiece = batch.pieceName === name;
+  const setupAllRunning = isBatchForThisPiece && batch.running;
+  const setupMode = isBatchForThisPiece ? batch.mode : null;
+  const setupAllProgress = isBatchForThisPiece ? batch.progress : null;
+  const batchItems = isBatchForThisPiece ? batch.items : [];
+  const showBatchPanel = isBatchForThisPiece && batch.showPanel;
+  // Which item's logs are expanded in the panel (view-only, fine to reset on nav).
   const [batchExpandedLog, setBatchExpandedLog] = useState<string | null>(null);
-  const [showBatchPanel, setShowBatchPanel] = useState(false);
 
   // ── Tab / UI state ──
   const [step, setStep] = useState<'connect' | 'configure' | 'test'>('connect');
@@ -239,13 +242,51 @@ export default function PieceDetail() {
     })();
   }, [name]);
 
-  // Cleanup save timers, running batch AI setup, and plan execution
+  // Cleanup save timers and plan execution on unmount.
+  // NOTE: the batch "Set up all with AI" run is intentionally NOT aborted here —
+  // it lives in a module-level store and keeps going while you're on another
+  // page, so it's still running (with progress + logs) when you come back.
   useEffect(() => () => {
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
-    setupAllControllerRef.current?.abort();
     runControllerRef.current?.abort();
     regenControllerRef.current?.abort();
   }, []);
+
+  // Merge plans created by the batch runner into local state as they arrive.
+  useEffect(() => {
+    if (batch.pieceName !== name) return;
+    const results = batch.results;
+    if (Object.keys(results).length === 0) return;
+    setActionPlans(prev => {
+      let changed = false;
+      const next = { ...prev };
+      for (const plan of Object.values(results)) {
+        if (plan.target_type === 'trigger') continue;
+        if (next[plan.target_action] !== plan) { next[plan.target_action] = plan; changed = true; }
+      }
+      return changed ? next : prev;
+    });
+    setTriggerPlans(prev => {
+      let changed = false;
+      const next = { ...prev };
+      for (const plan of Object.values(results)) {
+        if (plan.target_type !== 'trigger') continue;
+        if (next[plan.target_action] !== plan) { next[plan.target_action] = plan; changed = true; }
+      }
+      return changed ? next : prev;
+    });
+    // Keep newly-planned targets selected for the bulk "Run all" flow.
+    setEnabledActions(prev => {
+      const next = new Set(prev);
+      for (const plan of Object.values(results)) if (plan.target_type !== 'trigger') next.add(plan.target_action);
+      return next;
+    });
+    setEnabledTriggers(prev => {
+      const next = new Set(prev);
+      for (const plan of Object.values(results)) if (plan.target_type === 'trigger') next.add(plan.target_action);
+      return next;
+    });
+  }, [batch.resultsVersion, batch.pieceName, name]);
 
   // ── Mutations ──
   function invalidateConns() {
@@ -327,9 +368,7 @@ export default function PieceDetail() {
     }, 800);
   }
 
-  // ── Setup all actions with AI (batch plan creation) ──
-  const setupAllControllerRef = useRef<AbortController | null>(null);
-
+  // ── Setup all actions/triggers with AI (batch plan creation, via the store) ──
   function downloadPlanBackup(bundle: Awaited<ReturnType<typeof api.exportTestPlans>>, label: string) {
     const blob = new Blob([JSON.stringify(bundle, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
@@ -343,131 +382,24 @@ export default function PieceDetail() {
     URL.revokeObjectURL(url);
   }
 
-  const setupAllWithAi = useCallback(async () => {
+  const setupAllWithAi = useCallback(() => {
     if (!name || !piece) return;
-    const actions = Object.keys(piece.actions || {});
-    if (actions.length === 0) return;
-
-    // Abort any previous batch
-    setupAllControllerRef.current?.abort();
-    const batchController = new AbortController();
-    setupAllControllerRef.current = batchController;
-
-    // Initialize tracking
-    const initialStatuses: Record<string, BatchActionStatus> = {};
-    for (const a of actions) {
-      initialStatuses[a] = actionPlans[a] ? 'skipped' : 'pending';
-    }
-    setBatchStatuses(initialStatuses);
-    setBatchLogs({});
-    setBatchErrors({});
-    setShowBatchPanel(true);
-    setSetupAllRunning(true);
-    setSetupMode('create_missing');
-    setSetupAllProgress({ current: 0, total: actions.length, currentAction: '' });
-
-    // Actions that need human input in their plans (created but have human_input steps without saved responses)
-    const needsHumanInput: string[] = [];
-
-    for (let i = 0; i < actions.length; i++) {
-      if (batchController.signal.aborted) break;
-
-      const actionName = actions[i];
-      setSetupAllProgress({ current: i + 1, total: actions.length, currentAction: actionName });
-
-      // Skip if plan already exists
-      if (actionPlans[actionName]) {
-        setBatchStatuses(prev => ({ ...prev, [actionName]: 'skipped' }));
-        // Check if existing plan has unfilled human_input steps
-        const existingPlan = actionPlans[actionName];
-        const hasUnfilledHuman = existingPlan.steps.some(
-          s => s.type === 'human_input' && !s.savedHumanResponse
-        );
-        if (hasUnfilledHuman) needsHumanInput.push(actionName);
-        continue;
-      }
-
-      setBatchStatuses(prev => ({ ...prev, [actionName]: 'running' }));
-      setBatchExpandedLog(actionName);
-
-      try {
-        const resultPlan = await new Promise<TestPlan>((resolve, reject) => {
-          if (batchController.signal.aborted) { reject(new Error('Cancelled')); return; }
-
-          const callbacks = {
-            onLog: (log: AgentLogEntry) => {
-              setBatchLogs(prev => ({
-                ...prev,
-                [actionName]: [...(prev[actionName] || []), log],
-              }));
-            },
-            onResult: (result: any) => {
-              const hasUnfilledHuman = result.steps?.some(
-                (s: any) => s.type === 'human_input' && !s.savedHumanResponse
-              );
-              const newPlan: TestPlan = {
-                id: result.planId,
-                piece_name: name,
-                target_action: actionName,
-                steps: result.steps,
-                status: result.status as 'draft' | 'approved',
-                agent_memory: result.agentMemory || '',
-                automation_status: hasUnfilledHuman ? 'requires_human' : 'fully_automated',
-                created_at: new Date().toISOString(),
-                updated_at: new Date().toISOString(),
-              };
-              setActionPlans(prev => ({ ...prev, [actionName]: newPlan }));
-              resolve(newPlan);
-            },
-            onError: (msg: string) => reject(new Error(msg)),
-            onDone: () => {}, // resolve already called from onResult
-          };
-          const memory = actionPlans[actionName]?.agent_memory || undefined;
-          const ctrl = api.streamAiPlanV2(name, actionName, callbacks, memory);
-          batchController.signal.addEventListener('abort', () => ctrl.abort());
-
-          // Timeout safety: if onResult never fires but onDone does, reject after a delay
-          setTimeout(() => reject(new Error('Timeout: no result received')), 300000);
-        });
-
-        setBatchStatuses(prev => ({ ...prev, [actionName]: 'done' }));
-
-        // Check if the newly created plan has human_input steps
-        const hasHumanSteps = resultPlan.steps.some(
-          s => s.type === 'human_input' && !s.savedHumanResponse
-        );
-        if (hasHumanSteps) {
-          setBatchStatuses(prev => ({ ...prev, [actionName]: 'waiting_human' }));
-          needsHumanInput.push(actionName);
-        }
-      } catch (err: any) {
-        if (batchController.signal.aborted) break;
-        console.warn(`[setup-all] Failed to create plan for ${actionName}:`, err.message);
-        setBatchStatuses(prev => ({ ...prev, [actionName]: 'error' }));
-        setBatchErrors(prev => ({ ...prev, [actionName]: err.message }));
-      }
-    }
-
-    setSetupAllRunning(false);
-    setSetupMode(null);
-    setSetupAllProgress(null);
-    setupAllControllerRef.current = null;
-
-    // If any actions need human input, highlight them
-    if (needsHumanInput.length > 0) {
-      setBatchLogs(prev => ({
-        ...prev,
-        _summary: [
-          ...(prev._summary || []),
-          {
-            timestamp: Date.now(),
-            type: 'decision' as const,
-            message: `${needsHumanInput.length} action(s) have steps requiring human input. Open them individually to provide the input.`,
-          },
-        ],
-      }));
-    }
-  }, [name, piece, actionPlans]);
+    const actions = Object.keys(piece.actions || {}).map(n => ({
+      name: n, displayName: piece.actions?.[n]?.displayName || n,
+    }));
+    const triggers = Object.keys(piece.triggers || {}).map(n => ({
+      name: n, displayName: piece.triggers?.[n]?.displayName || n,
+    }));
+    if (actions.length === 0 && triggers.length === 0) return;
+    setBatchExpandedLog(null);
+    batchSetupRunner.startCreateMissing({
+      pieceName: name,
+      actions,
+      triggers,
+      existingActionPlans: actionPlans,
+      existingTriggerPlans: triggerPlans,
+    });
+  }, [name, piece, actionPlans, triggerPlans]);
 
   const rebuildExistingPlansWithV2 = useCallback(async () => {
     if (!name || !piece) return;
@@ -480,135 +412,36 @@ export default function PieceDetail() {
     );
     if (!confirmed) return;
 
-    setupAllControllerRef.current?.abort();
-    const batchController = new AbortController();
-    setupAllControllerRef.current = batchController;
-
-    setBatchStatuses(Object.fromEntries(actionNames.map(actionName => [actionName, 'pending' as BatchActionStatus])));
-    setBatchLogs({});
-    setBatchErrors({});
-    setShowBatchPanel(true);
-    setSetupAllRunning(true);
-    setSetupMode('replace_existing');
-    setSetupAllProgress({ current: 0, total: actionNames.length, currentAction: '' });
-
-    const previousMemoryByAction = Object.fromEntries(
-      existingPlans.map(plan => [plan.target_action, plan.agent_memory || undefined]),
-    ) as Record<string, string | undefined>;
-
     try {
       const backup = await api.exportTestPlans(name, actionNames);
       downloadPlanBackup(backup, 'plan-backup');
       await api.deletePlansByPiece(name, actionNames);
-
-      setActionPlans(prev => {
-        const next = { ...prev };
-        for (const actionName of actionNames) {
-          delete next[actionName];
-        }
-        return next;
-      });
-      if (planAction && actionNames.includes(planAction)) {
-        setPlanAction(null);
-      }
-
-      const needsHumanInput: string[] = [];
-
-      for (let i = 0; i < actionNames.length; i++) {
-        if (batchController.signal.aborted) break;
-
-        const actionName = actionNames[i];
-        setSetupAllProgress({ current: i + 1, total: actionNames.length, currentAction: actionName });
-        setBatchStatuses(prev => ({ ...prev, [actionName]: 'running' }));
-        setBatchExpandedLog(actionName);
-
-        try {
-          const resultPlan = await new Promise<TestPlan>((resolve, reject) => {
-            if (batchController.signal.aborted) {
-              reject(new Error('Cancelled'));
-              return;
-            }
-
-            const callbacks = {
-              onLog: (log: AgentLogEntry) => {
-                setBatchLogs(prev => ({
-                  ...prev,
-                  [actionName]: [...(prev[actionName] || []), log],
-                }));
-              },
-              onResult: (result: any) => {
-                const hasUnfilledHuman = result.steps?.some(
-                  (s: any) => s.type === 'human_input' && !s.savedHumanResponse,
-                );
-                const newPlan: TestPlan = {
-                  id: result.planId,
-                  piece_name: name,
-                  target_action: actionName,
-                  steps: result.steps,
-                  status: result.status as 'draft' | 'approved',
-                  agent_memory: result.agentMemory || '',
-                  automation_status: hasUnfilledHuman ? 'requires_human' : 'fully_automated',
-                  created_at: new Date().toISOString(),
-                  updated_at: new Date().toISOString(),
-                };
-                setActionPlans(prev => ({ ...prev, [actionName]: newPlan }));
-                resolve(newPlan);
-              },
-              onError: (msg: string) => reject(new Error(msg)),
-              onDone: () => {},
-            };
-            const ctrl = api.streamAiPlanV2(name, actionName, callbacks, previousMemoryByAction[actionName]);
-            batchController.signal.addEventListener('abort', () => ctrl.abort(), { once: true });
-
-            setTimeout(() => reject(new Error('Timeout: no result received')), 300000);
-          });
-
-          const hasHumanSteps = resultPlan.steps.some(
-            s => s.type === 'human_input' && !s.savedHumanResponse,
-          );
-          if (hasHumanSteps) {
-            setBatchStatuses(prev => ({ ...prev, [actionName]: 'waiting_human' }));
-            needsHumanInput.push(actionName);
-          } else {
-            setBatchStatuses(prev => ({ ...prev, [actionName]: 'done' }));
-          }
-        } catch (err: any) {
-          if (batchController.signal.aborted) break;
-          setBatchStatuses(prev => ({ ...prev, [actionName]: 'error' }));
-          setBatchErrors(prev => ({ ...prev, [actionName]: err.message }));
-        }
-      }
-
-      if (needsHumanInput.length > 0) {
-        setBatchLogs(prev => ({
-          ...prev,
-          _summary: [
-            ...(prev._summary || []),
-            {
-              timestamp: Date.now(),
-              type: 'decision' as const,
-              message: `${needsHumanInput.length} rebuilt action(s) still need human input. Open them individually to finish setup.`,
-            },
-          ],
-        }));
-      }
-    } catch (err: any) {
-      if (!batchController.signal.aborted) {
-        alert(`Failed to rebuild existing plans: ${err.message}`);
-      }
-    } finally {
-      setSetupAllRunning(false);
-      setSetupMode(null);
-      setSetupAllProgress(null);
-      setupAllControllerRef.current = null;
+    } catch (err) {
+      alert(`Failed to rebuild existing plans: ${err instanceof Error ? err.message : String(err)}`);
+      return;
     }
+
+    setActionPlans(prev => {
+      const next = { ...prev };
+      for (const actionName of actionNames) delete next[actionName];
+      return next;
+    });
+    if (planAction && actionNames.includes(planAction)) setPlanAction(null);
+
+    setBatchExpandedLog(null);
+    batchSetupRunner.startRebuild({
+      pieceName: name,
+      targets: existingPlans.map(plan => ({
+        kind: 'action' as const,
+        name: plan.target_action,
+        displayName: piece.actions?.[plan.target_action]?.displayName || plan.target_action,
+        existingPlan: plan,
+      })),
+    });
   }, [name, piece, actionPlans, planAction]);
 
   const cancelSetupAll = useCallback(() => {
-    setupAllControllerRef.current?.abort();
-    setSetupAllRunning(false);
-    setSetupMode(null);
-    setSetupAllProgress(null);
+    batchSetupRunner.cancel();
   }, []);
 
   // Callback for TestPlanView to notify parent when a plan is created/updated
@@ -1006,9 +839,9 @@ export default function PieceDetail() {
                       : 'Back Up & Rebuild Existing Plans (v2)'}
                   </button>
                 )}
-                {!setupAllRunning && Object.keys(batchStatuses).length > 0 && !showBatchPanel && (
+                {!setupAllRunning && batchItems.length > 0 && !showBatchPanel && (
                   <button
-                    onClick={() => setShowBatchPanel(true)}
+                    onClick={() => batchSetupRunner.setShowPanel(true)}
                     className="text-xs text-gray-400 hover:text-gray-200 px-2 py-1 rounded bg-gray-800 hover:bg-gray-700 flex items-center gap-1"
                   >
                     <Terminal size={10} /> View Setup Logs
@@ -1052,20 +885,23 @@ export default function PieceDetail() {
           </div>
 
           {/* Batch setup panel */}
-          {showBatchPanel && Object.keys(batchStatuses).length > 0 && (
+          {showBatchPanel && batchItems.length > 0 && (
             <BatchSetupPanel
-              statuses={batchStatuses}
-              logs={batchLogs}
-              errors={batchErrors}
-              expandedLog={batchExpandedLog}
+              items={batchItems}
+              logs={batch.logs}
+              errors={batch.errors}
+              expandedLog={batchExpandedLog ?? batchItems.find(i => i.status === 'running')?.key ?? null}
               onExpandLog={setBatchExpandedLog}
               running={setupAllRunning}
               mode={setupMode}
               progress={setupAllProgress}
               onCancel={cancelSetupAll}
-              onClose={() => { if (!setupAllRunning) setShowBatchPanel(false); }}
-              onOpenAction={(actionName) => { setPlanAction(actionName); setShowBatchPanel(false); }}
-              actionMetas={piece?.actions || {}}
+              onClose={() => { if (!setupAllRunning) batchSetupRunner.setShowPanel(false); }}
+              onOpenTarget={(item) => {
+                if (item.kind === 'trigger') setPlanTrigger(item.name);
+                else setPlanAction(item.name);
+                batchSetupRunner.setShowPanel(false);
+              }}
             />
           )}
 
@@ -1644,8 +1480,6 @@ export default function PieceDetail() {
 // Batch Setup Panel
 // ══════════════════════════════════════════════════════════════
 
-type BatchActionStatus = 'pending' | 'running' | 'done' | 'error' | 'skipped' | 'waiting_human';
-
 const BATCH_STATUS_CONFIG: Record<BatchActionStatus, { icon: JSX.Element; label: string; color: string }> = {
   pending:        { icon: <Clock size={12} className="text-gray-500" />,              label: 'Pending',        color: 'text-gray-500' },
   running:        { icon: <Loader2 size={12} className="text-purple-400 animate-spin" />, label: 'Setting up...', color: 'text-purple-400' },
@@ -1656,30 +1490,30 @@ const BATCH_STATUS_CONFIG: Record<BatchActionStatus, { icon: JSX.Element; label:
 };
 
 function BatchSetupPanel({
-  statuses, logs, errors, expandedLog, onExpandLog,
-  running, mode, progress, onCancel, onClose, onOpenAction, actionMetas,
+  items, logs, errors, expandedLog, onExpandLog,
+  running, mode, progress, onCancel, onClose, onOpenTarget,
 }: {
-  statuses: Record<string, BatchActionStatus>;
+  items: BatchItem[];
   logs: Record<string, AgentLogEntry[]>;
   errors: Record<string, string>;
   expandedLog: string | null;
   onExpandLog: (a: string | null) => void;
   running: boolean;
   mode: 'create_missing' | 'replace_existing' | null;
-  progress: { current: number; total: number; currentAction: string } | null;
+  progress: { current: number; total: number; currentName: string } | null;
   onCancel: () => void;
   onClose: () => void;
-  onOpenAction: (actionName: string) => void;
-  actionMetas: Record<string, any>;
+  onOpenTarget: (item: BatchItem) => void;
 }) {
   const logEndRef = useRef<HTMLDivElement>(null);
   const currentLogs = expandedLog ? (logs[expandedLog] || []) : [];
+  const expandedItem = expandedLog ? items.find(i => i.key === expandedLog) : undefined;
 
   useEffect(() => {
     logEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [currentLogs.length]);
 
-  const counts = Object.values(statuses);
+  const counts = items.map(i => i.status);
   const doneCount = counts.filter(s => s === 'done' || s === 'skipped').length;
   const errorCount = counts.filter(s => s === 'error').length;
   const humanCount = counts.filter(s => s === 'waiting_human').length;
@@ -1694,7 +1528,7 @@ function BatchSetupPanel({
             {running
               ? mode === 'replace_existing'
                 ? 'Rebuilding existing plans with v2...'
-                : 'Setting up all actions...'
+                : 'Setting up all actions & triggers...'
               : mode === 'replace_existing'
                 ? 'Plan Rebuild Complete'
                 : 'Batch Setup Complete'}
@@ -1735,26 +1569,26 @@ function BatchSetupPanel({
       )}
 
       <div className="flex" style={{ maxHeight: '400px' }}>
-        {/* Left: action list */}
+        {/* Left: target list */}
         <div className="w-[280px] border-r border-gray-800 overflow-y-auto">
-          {Object.entries(statuses).map(([actionName, status]) => {
-            const cfg = BATCH_STATUS_CONFIG[status];
-            const isActive = expandedLog === actionName;
-            const meta = actionMetas[actionName];
-            const logCount = (logs[actionName] || []).length;
+          {items.map((item) => {
+            const cfg = BATCH_STATUS_CONFIG[item.status];
+            const isActive = expandedLog === item.key;
+            const logCount = (logs[item.key] || []).length;
 
             return (
               <button
-                key={actionName}
-                onClick={() => onExpandLog(isActive ? null : actionName)}
+                key={item.key}
+                onClick={() => onExpandLog(isActive ? null : item.key)}
                 className={`w-full text-left px-3 py-2 flex items-center gap-2 text-xs border-b border-gray-800/50 transition-colors ${
                   isActive ? 'bg-gray-800/80' : 'hover:bg-gray-900/50'
                 }`}
               >
                 {cfg.icon}
                 <div className="flex-1 min-w-0">
-                  <div className="truncate font-medium text-gray-300">
-                    {meta?.displayName || actionName}
+                  <div className="truncate font-medium text-gray-300 flex items-center gap-1">
+                    {item.kind === 'trigger' && <Zap size={9} className="text-amber-400 flex-shrink-0" />}
+                    <span className="truncate">{item.displayName}</span>
                   </div>
                   <div className={`text-[10px] ${cfg.color}`}>{cfg.label}</div>
                 </div>
@@ -1763,9 +1597,9 @@ function BatchSetupPanel({
                     {logCount}
                   </span>
                 )}
-                {status === 'waiting_human' && (
+                {item.status === 'waiting_human' && (
                   <button
-                    onClick={(e) => { e.stopPropagation(); onOpenAction(actionName); }}
+                    onClick={(e) => { e.stopPropagation(); onOpenTarget(item); }}
                     className="text-[9px] bg-yellow-500/20 text-yellow-400 hover:bg-yellow-500/30 px-1.5 py-0.5 rounded"
                   >
                     Open
@@ -1783,9 +1617,9 @@ function BatchSetupPanel({
               <div className="flex items-center justify-between mb-2">
                 <span className="text-xs font-medium text-gray-400 flex items-center gap-1.5">
                   <Terminal size={11} />
-                  {actionMetas[expandedLog]?.displayName || expandedLog}
+                  {expandedItem?.displayName || expandedLog}
                 </span>
-                {statuses[expandedLog] === 'error' && errors[expandedLog] && (
+                {expandedItem?.status === 'error' && errors[expandedLog] && (
                   <span className="text-[10px] text-red-400 bg-red-500/10 px-2 py-0.5 rounded">
                     {errors[expandedLog]}
                   </span>
@@ -1808,16 +1642,16 @@ function BatchSetupPanel({
                     )}
                   </div>
                 ))}
-                {statuses[expandedLog] === 'running' && (
+                {expandedItem?.status === 'running' && (
                   <div className="flex items-center gap-1.5 text-[10px] text-gray-500 pt-1">
                     <Loader2 size={10} className="animate-spin" /> Working...
                   </div>
                 )}
                 <div ref={logEndRef} />
               </div>
-              {currentLogs.length === 0 && statuses[expandedLog] !== 'running' && (
+              {currentLogs.length === 0 && expandedItem?.status !== 'running' && (
                 <p className="text-xs text-gray-600 italic">
-                  {statuses[expandedLog] === 'skipped' ? 'Plan already exists, skipped.' : 'No logs yet.'}
+                  {expandedItem?.status === 'skipped' ? 'Plan already exists, skipped.' : 'No logs yet.'}
                 </p>
               )}
             </>
