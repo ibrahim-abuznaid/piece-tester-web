@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useSearchParams, Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { api, type PlanRunRecord, type StepResult } from '../lib/api';
 import { runDurationSeconds, formatDbTime, parseDbTime } from '../lib/time';
@@ -23,7 +23,10 @@ export default function History() {
       <div className="flex items-center justify-between mb-6">
         <div>
           <h2 className="text-2xl font-bold">Test Logs</h2>
-          <p className="text-sm text-gray-500 mt-1">Every plan run — manual and scheduled.</p>
+          <p className="text-sm text-gray-500 mt-1">
+            Every run, newest first — manual and scheduled.{' '}
+            <Link to="/schedules?tab=logs" className="text-primary-400 hover:underline">Scheduled sweeps grouped by fire →</Link>
+          </p>
         </div>
         <div className="flex items-center gap-2">
           <Filter size={12} className="text-gray-500" />
@@ -61,6 +64,7 @@ function PlanRunHistory({ pieceFilter }: { pieceFilter: string }) {
   for (const s of schedules as any[]) scheduleLabels[s.id] = s.label || `Schedule #${s.id}`;
 
   const [expandedRun, setExpandedRun] = useState<number | null>(null);
+  const [triggerFilter, setTriggerFilter] = useState<'all' | 'manual' | 'scheduled'>('all');
   const [showClearMenu, setShowClearMenu] = useState(false);
   const [deletingId, setDeletingId] = useState<number | null>(null);
   const clearMenuRef = useRef<HTMLDivElement>(null);
@@ -98,10 +102,18 @@ function PlanRunHistory({ pieceFilter }: { pieceFilter: string }) {
 
   if (isLoading) return <div className="text-gray-400">Loading plan runs...</div>;
 
-  const filteredRuns = (runs || []).filter(r =>
-    !pieceFilter || r.piece_name.toLowerCase().includes(pieceFilter.toLowerCase()) ||
-    r.target_action.toLowerCase().includes(pieceFilter.toLowerCase())
-  );
+  const filteredRuns = (runs || []).filter(r => {
+    const matchesPiece = !pieceFilter ||
+      r.piece_name.toLowerCase().includes(pieceFilter.toLowerCase()) ||
+      r.target_action.toLowerCase().includes(pieceFilter.toLowerCase());
+    // "Scheduled" = fired by a cron sweep; "Manual" = every other ad-hoc run
+    // (launcher, retest, auto-test).
+    const matchesTrigger = triggerFilter === 'all' ||
+      (triggerFilter === 'scheduled'
+        ? r.trigger_type === 'scheduled'
+        : r.trigger_type !== 'scheduled');
+    return matchesPiece && matchesTrigger;
+  });
 
   const grouped = groupByDate(filteredRuns);
 
@@ -122,6 +134,27 @@ function PlanRunHistory({ pieceFilter }: { pieceFilter: string }) {
             <button onClick={() => refetch()} className="text-gray-500 hover:text-gray-300 ml-2">
               <RefreshCw size={12} />
             </button>
+
+            {/* Trigger-type filter */}
+            <div className="flex items-center rounded border border-gray-700 overflow-hidden ml-2">
+              {([
+                { id: 'all' as const, label: 'All' },
+                { id: 'manual' as const, label: 'Manual' },
+                { id: 'scheduled' as const, label: 'Scheduled' },
+              ]).map(opt => (
+                <button
+                  key={opt.id}
+                  onClick={() => setTriggerFilter(opt.id)}
+                  className={`px-2.5 py-1 text-xs transition-colors ${
+                    triggerFilter === opt.id
+                      ? 'bg-primary-600/20 text-primary-300'
+                      : 'text-gray-500 hover:text-gray-300 hover:bg-gray-800'
+                  }`}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
 
             {/* Clear logs dropdown */}
             <div className="relative ml-auto" ref={clearMenuRef}>
@@ -166,7 +199,11 @@ function PlanRunHistory({ pieceFilter }: { pieceFilter: string }) {
       })()}
 
       {filteredRuns.length === 0 && (
-        <p className="text-gray-500">No plan runs yet. Run test plans from a piece's detail page.</p>
+        <p className="text-gray-500">
+          {triggerFilter === 'scheduled' ? 'No scheduled runs match.'
+            : triggerFilter === 'manual' ? 'No manual runs match.'
+            : 'No plan runs yet. Run plans from the Test Runner or a piece\'s detail page.'}
+        </p>
       )}
 
       {grouped.map(([dateLabel, dateRuns]) => (
