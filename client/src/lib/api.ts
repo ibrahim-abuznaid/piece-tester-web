@@ -425,6 +425,7 @@ export interface CoverageRow {
   display_name: string;
   logo_url: string | null;
   connected: boolean;
+  requires_auth: boolean;
   covered: boolean;
   schedule_id: number | null;
   cadence: { label: string; cron: string; config: any; timezone: string } | null;
@@ -983,14 +984,6 @@ export const api = {
   updateConnection: (id: number, data: any) => request<any>('PUT', `/connections/${id}`, data),
   deleteConnection: (id: number) => request<any>('DELETE', `/connections/${id}`),
 
-  // Tests
-  runTests: (pieceNames?: string[]) => request<{ runId: number }>('POST', '/tests/run', { pieceNames }),
-  getTestStatus: (runId: number) => request<any>('GET', `/tests/status/${runId}`),
-
-  // History
-  listHistory: (limit = 20, offset = 0) => request<any[]>('GET', `/history?limit=${limit}&offset=${offset}`),
-  getHistoryRun: (runId: number) => request<any>('GET', `/history/${runId}`),
-
   // Schedules
   listSchedules: () => request<any[]>('GET', '/schedules'),
   createSchedule: (data: any) => request<any>('POST', '/schedules', data),
@@ -1120,18 +1113,17 @@ export const api = {
     request<{ run_id: number; plan_id: number; piece_name: string; target_action: string; status: string }>('GET', `/reports/run-info/${runId}`),
   runPlanBackground: (planId: number) =>
     request<{ run_id: number; plan_id: number }>('POST', `/test-plans/${planId}/run-background`, { trigger_type: 'retest' }),
+  runBatch: (planIds: number[], triggerType: string = 'manual') =>
+    request<{ plan_id: number; run_id: number }[]>('POST', '/test-plans/run-batch', {
+      plan_ids: planIds,
+      trigger_type: triggerType,
+    }),
 
   // Delete plan runs
   deletePlanRun: (runId: number) =>
     request<{ success: boolean }>('DELETE', `/test-plans/runs/${runId}`),
   deleteAllPlanRuns: (before?: string) =>
     request<{ success: boolean; deleted: number }>('DELETE', `/test-plans/runs${before ? `?before=${encodeURIComponent(before)}` : ''}`),
-
-  // Delete legacy history runs
-  deleteHistoryRun: (runId: number) =>
-    request<{ success: boolean }>('DELETE', `/history/${runId}`),
-  deleteAllHistoryRuns: (before?: string) =>
-    request<{ success: boolean; deleted: number }>('DELETE', `/history${before ? `?before=${encodeURIComponent(before)}` : ''}`),
 
   // Batch Setup
   startBatchSetup: (pieceNames: string[]) =>
