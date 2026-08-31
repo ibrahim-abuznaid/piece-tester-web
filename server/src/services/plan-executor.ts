@@ -327,6 +327,7 @@ export async function executePlan(
   triggerType: string = 'manual',
   signal?: AbortSignal,
   wave?: WaveInfo,
+  existingRunId?: number,
 ): Promise<TestPlanRunRow> {
   const plan = getTestPlan(planId);
   if (!plan) throw new Error(`Plan ${planId} not found`);
@@ -334,8 +335,10 @@ export async function executePlan(
   const steps: TestPlanStep[] = JSON.parse(plan.steps);
   if (steps.length === 0) throw new Error('Plan has no steps');
 
-  // Create run (stamped with the schedule fire's wave, if any)
-  const run = createPlanRun(planId, triggerType, wave);
+  // Reuse a caller-created run (batch launcher) when provided, else create one here.
+  const run = existingRunId != null
+    ? (getPlanRun(existingRunId) ?? createPlanRun(planId, triggerType, wave))
+    : createPlanRun(planId, triggerType, wave);
   const runId = run.id;
   const emitter = getResumeEmitter(runId);
 

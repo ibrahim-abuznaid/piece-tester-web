@@ -42,11 +42,13 @@ A reusable fact learned about a piece (usually from a fix) that feeds future pla
 ### Execution
 
 **Plan run**:
-One execution of a test plan, manual or scheduled.
-_Avoid_: test run (that's the plan-less batch path), execution
+One execution of a test plan, manual or scheduled. The Test Runner page fires manual plan runs on demand; schedules fire them automatically.
+_Avoid_: test run (retired plan-less path), execution
 
 **Test run**:
-A batch of auto-generated action tests across pieces — the original, plan-less testing path.
+_Retired._ Formerly a batch of auto-generated, plan-less action tests. The
+plan-less engine has been removed; all testing now runs through test plans.
+Old `test_runs` rows are retained for history only.
 
 **Temporary flow**:
 The throwaway flow created on the Activepieces instance to execute a step, deleted when the run finishes.

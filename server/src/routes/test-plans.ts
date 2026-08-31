@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import * as db from '../db/queries.js';
 import { executePlan, resumePlanRun, type PlanProgress } from '../services/plan-executor.js';
+import { runPlanBatch } from '../services/plan-batch.js';
 
 const router = Router();
 
@@ -164,6 +165,16 @@ router.post('/:id/run', async (req, res) => {
   }
 
   res.end();
+});
+
+// ── Run many approved plans now (manual launcher) ──
+router.post('/run-batch', (req, res) => {
+  const planIds: number[] = Array.isArray(req.body?.plan_ids)
+    ? [...new Set(req.body.plan_ids.filter((n: unknown) => Number.isInteger(n)) as number[])]
+    : [];
+  const triggerType = (req.body?.trigger_type as string) || 'manual';
+  const { pairs } = runPlanBatch(planIds, triggerType);
+  res.json(pairs);
 });
 
 // ── Execute plan in background (non-SSE, returns immediately) ──

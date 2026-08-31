@@ -223,90 +223,6 @@ export interface WaveInfo {
   schedule_id?: number;
 }
 
-export interface TestRunRow {
-  id: number;
-  trigger_type: string;
-  status: string;
-  started_at: string;
-  finished_at: string | null;
-  total_tests: number;
-  passed: number;
-  failed: number;
-  errors: number;
-  wave_id: string | null;
-  schedule_id: number | null;
-}
-
-export function createTestRun(triggerType: string, wave?: WaveInfo): TestRunRow {
-  const result = getDb().run(`
-    INSERT INTO test_runs (trigger_type, status, started_at, wave_id, schedule_id)
-    VALUES (?, 'running', datetime('now'), ?, ?)
-  `, [triggerType, wave?.wave_id ?? null, wave?.schedule_id ?? null]);
-  return getTestRun(result.lastId)!;
-}
-
-export function getTestRun(id: number): TestRunRow | undefined {
-  return getDb().get<TestRunRow>('SELECT * FROM test_runs WHERE id = ?', [id]);
-}
-
-export function listTestRuns(limit = 20, offset = 0): TestRunRow[] {
-  return getDb().all<TestRunRow>(
-    'SELECT * FROM test_runs ORDER BY id DESC LIMIT ? OFFSET ?',
-    [limit, offset],
-  );
-}
-
-export function updateTestRun(id: number, updates: Partial<Omit<TestRunRow, 'id'>>): void {
-  const fields: string[] = [];
-  const values: unknown[] = [];
-  for (const [key, val] of Object.entries(updates)) {
-    fields.push(`${key} = ?`);
-    values.push(val);
-  }
-  if (fields.length === 0) return;
-  values.push(id);
-  getDb().run(`UPDATE test_runs SET ${fields.join(', ')} WHERE id = ?`, values);
-}
-
-// ── Test Results ──
-
-export interface TestResultRow {
-  id: number;
-  run_id: number;
-  piece_name: string;
-  action_name: string;
-  test_type: 'action' | 'trigger';
-  status: string;
-  duration_ms: number;
-  flow_run_id: string | null;
-  error_message: string | null;
-  created_at: string;
-}
-
-export function createTestResult(r: {
-  run_id: number;
-  piece_name: string;
-  action_name: string;
-  test_type?: 'action' | 'trigger';
-  status: string;
-  duration_ms: number;
-  flow_run_id?: string;
-  error_message?: string;
-}): TestResultRow {
-  const result = getDb().run(`
-    INSERT INTO test_results (run_id, piece_name, action_name, test_type, status, duration_ms, flow_run_id, error_message)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-  `, [r.run_id, r.piece_name, r.action_name, r.test_type ?? 'action', r.status, r.duration_ms, r.flow_run_id ?? null, r.error_message ?? null]);
-  return getDb().get<TestResultRow>('SELECT * FROM test_results WHERE id = ?', [result.lastId])!;
-}
-
-export function listTestResults(runId: number): TestResultRow[] {
-  return getDb().all<TestResultRow>(
-    'SELECT * FROM test_results WHERE run_id = ? ORDER BY id',
-    [runId],
-  );
-}
-
 // ── Schedules ──
 
 export interface ScheduleTarget {
@@ -585,14 +501,10 @@ export function getPlanRun(id: number): TestPlanRunRow | undefined {
 }
 
 export function reconcileOrphanedRuns(): number {
-  const db = getDb();
-  const plan = db.run(
+  const plan = getDb().run(
     `UPDATE test_plan_runs SET status = 'interrupted', completed_at = datetime('now') WHERE status = 'running'`,
   );
-  const legacy = db.run(
-    `UPDATE test_runs SET status = 'interrupted', finished_at = datetime('now') WHERE status = 'running'`,
-  );
-  return plan.changes + legacy.changes;
+  return plan.changes;
 }
 
 export function listPlanRuns(planId: number): TestPlanRunRow[] {
@@ -1499,17 +1411,6 @@ export function deleteAllPlanRuns(before?: string): number {
   return getDb().run('DELETE FROM test_plan_runs').changes;
 }
 
-export function deleteTestRun(id: number): boolean {
-  return getDb().run('DELETE FROM test_runs WHERE id = ?', [id]).changes > 0;
-}
-
-export function deleteAllTestRuns(before?: string): number {
-  if (before) {
-    return getDb().run('DELETE FROM test_runs WHERE started_at < ?', [before]).changes;
-  }
-  return getDb().run('DELETE FROM test_runs').changes;
-}
-
 // ── AI Usage Tracking ──
 
 export interface AiUsageRow {
@@ -1662,6 +1563,7 @@ export interface CoverageRow {
   display_name: string;
   logo_url: string | null;
   connected: boolean;
+  requires_auth: boolean; // piece declares an auth/connection; if false it runs without one
   covered: boolean;
   schedule_id: number | null;
   cadence: CoverageCadence | null;
@@ -1697,7 +1599,7 @@ function safeParse(raw: string): unknown {
  * Kept as a pure DB read so it can be unit-tested against fixtures.
  */
 export function getCoverage(
-  catalog: { name: string; displayName: string; logoUrl?: string | null; actions?: number; triggers?: number }[],
+  catalog: { name: string; displayName: string; logoUrl?: string | null; actions?: number; triggers?: number; hasAuth?: boolean }[],
 ): CoverageRow[] {
   const db = getDb();
 
@@ -1753,6 +1655,7 @@ export function getCoverage(
       display_name: p.displayName,
       logo_url: p.logoUrl ?? null,
       connected: connected.has(p.name),
+      requires_auth: p.hasAuth ?? false,
       covered,
       schedule_id: cover ? cover.schedule_id : (covered && allPiecesSchedule ? allPiecesSchedule.id : null),
       cadence: cover ? cover.cadence : (covered ? allCadence : null),
