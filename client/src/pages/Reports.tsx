@@ -7,7 +7,7 @@ import {
 } from 'recharts';
 import { api } from '../lib/api';
 import {
-  TrendingUp, TrendingDown, Loader2, Calendar,
+  TrendingUp, TrendingDown, Loader2,
   Download, Link2, CheckCircle,
 } from 'lucide-react';
 
@@ -15,15 +15,12 @@ import {
 //  Shared constants & helpers
 // ══════════════════════════════════════════════════════════════
 
-type TimeRange = 'day' | 'week' | 'month' | 'year' | 'custom' | 'all';
+type TimeRange = 'recent' | 'all';
 
+const RECENT_DAYS = 30;
 const TIME_RANGE_OPTIONS: { value: TimeRange; label: string }[] = [
-  { value: 'day', label: 'Last 24h' },
-  { value: 'week', label: 'Last 7 days' },
-  { value: 'month', label: 'Last 30 days' },
-  { value: 'year', label: 'Last year' },
+  { value: 'recent', label: `Recent (${RECENT_DAYS}d)` },
   { value: 'all', label: 'All time' },
-  { value: 'custom', label: 'Custom' },
 ];
 
 const CHANGED_LANES: Record<string, { label: string; color: string }> = {
@@ -47,21 +44,14 @@ const TOOLTIP_STYLE = { background: '#0e131b', border: '1px solid #2a2f3a', bord
 const shortName = (p: string) => (p || '').replace('@activepieces/piece-', '');
 const rateColorHex = (r: number) => (r >= 80 ? '#4ade80' : r >= 50 ? '#fbbf24' : '#f87171');
 
-function computeDateBounds(range: TimeRange, customFrom: string, customTo: string): { dateFrom?: string; dateTo?: string } {
-  const now = new Date();
-  const dateTo = now.toISOString();
-  switch (range) {
-    case 'day': { const d = new Date(now); d.setDate(d.getDate() - 1); return { dateFrom: d.toISOString(), dateTo }; }
-    case 'week': { const d = new Date(now); d.setDate(d.getDate() - 7); return { dateFrom: d.toISOString(), dateTo }; }
-    case 'month': { const d = new Date(now); d.setMonth(d.getMonth() - 1); return { dateFrom: d.toISOString(), dateTo }; }
-    case 'year': { const d = new Date(now); d.setFullYear(d.getFullYear() - 1); return { dateFrom: d.toISOString(), dateTo }; }
-    case 'custom':
-      return {
-        dateFrom: customFrom ? new Date(customFrom).toISOString() : undefined,
-        dateTo: customTo ? new Date(customTo + 'T23:59:59').toISOString() : undefined,
-      };
-    default: return {};
+function computeDateBounds(range: TimeRange): { dateFrom?: string; dateTo?: string } {
+  if (range === 'recent') {
+    const now = new Date();
+    const from = new Date(now);
+    from.setDate(from.getDate() - RECENT_DAYS);
+    return { dateFrom: from.toISOString(), dateTo: now.toISOString() };
   }
+  return {}; // all time
 }
 
 // ══════════════════════════════════════════════════════════════
@@ -69,17 +59,18 @@ function computeDateBounds(range: TimeRange, customFrom: string, customTo: strin
 // ══════════════════════════════════════════════════════════════
 
 export default function Reports() {
-  const [timeRange, setTimeRange] = useState<TimeRange>('all');
-  const [customFrom, setCustomFrom] = useState('');
-  const [customTo, setCustomTo] = useState('');
+  const [timeRange, setTimeRange] = useState<TimeRange>('recent');
   const [copied, setCopied] = useState(false);
-  const { dateFrom, dateTo } = computeDateBounds(timeRange, customFrom, customTo);
+  // Memoize so the ISO bounds (which use `new Date()`) don't change every render —
+  // otherwise every render produces new dateFrom/dateTo, which change the query keys,
+  // which trigger a refetch + re-render → an infinite loop that never settles.
+  const { dateFrom, dateTo } = useMemo(() => computeDateBounds(timeRange), [timeRange]);
 
   const { data: summary, isLoading } = useQuery({ queryKey: ['report-summary', dateFrom, dateTo], queryFn: () => api.getPerformanceSummary(dateFrom, dateTo) });
   const { data: stats } = useQuery({ queryKey: ['report-stats', dateFrom, dateTo], queryFn: () => api.getReportStats(dateFrom, dateTo) });
-  const { data: regressions = [] } = useQuery({ queryKey: ['report-regressions'], queryFn: api.getReportRegressions });
+  const { data: regressions = [] } = useQuery({ queryKey: ['report-regressions', dateFrom, dateTo], queryFn: () => api.getReportRegressions(dateFrom, dateTo) });
   const { data: trends = [] } = useQuery({ queryKey: ['report-trends', dateFrom, dateTo], queryFn: () => api.getReportTrends(dateFrom, dateTo) });
-  const { data: breakdown = [] } = useQuery({ queryKey: ['report-failure-breakdown'], queryFn: api.getFailureBreakdown });
+  const { data: breakdown = [] } = useQuery({ queryKey: ['report-failure-breakdown', dateFrom, dateTo], queryFn: () => api.getFailureBreakdown(dateFrom, dateTo) });
   const { data: coverageRows } = useQuery({ queryKey: ['report-coverage'], queryFn: api.getCoverage, staleTime: 5 * 60 * 1000, retry: false });
   const coverage = coverageRows ? { covered: coverageRows.filter((r: any) => r.covered).length, total: coverageRows.length } : null;
 
@@ -98,7 +89,7 @@ export default function Reports() {
         </div>
       </div>
 
-      <PeriodSelector {...{ timeRange, setTimeRange, customFrom, setCustomFrom, customTo, setCustomTo }} />
+      <PeriodSelector timeRange={timeRange} setTimeRange={setTimeRange} />
 
       {isLoading || !summary ? (
         <LoadingState message="Loading analytics..." />
@@ -113,25 +104,15 @@ export default function Reports() {
   );
 }
 
-function PeriodSelector({ timeRange, setTimeRange, customFrom, setCustomFrom, customTo, setCustomTo }: any) {
+function PeriodSelector({ timeRange, setTimeRange }: { timeRange: TimeRange; setTimeRange: (t: TimeRange) => void }) {
   return (
-    <div className="flex items-center gap-3 flex-wrap">
-      <div className="flex items-center gap-1 bg-gray-900 border border-gray-800 rounded-lg p-1">
-        {TIME_RANGE_OPTIONS.map(opt => (
-          <button key={opt.value} onClick={() => setTimeRange(opt.value)}
-            className={`px-3 py-1.5 rounded text-xs font-medium transition-colors ${timeRange === opt.value ? 'bg-primary-600/30 text-primary-300' : 'text-gray-500 hover:text-gray-300 hover:bg-gray-800'}`}>
-            {opt.label}
-          </button>
-        ))}
-      </div>
-      {timeRange === 'custom' && (
-        <div className="flex items-center gap-2">
-          <Calendar size={12} className="text-gray-500" />
-          <input type="date" value={customFrom} onChange={e => setCustomFrom(e.target.value)} className="bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs text-gray-300" />
-          <span className="text-gray-600 text-xs">to</span>
-          <input type="date" value={customTo} onChange={e => setCustomTo(e.target.value)} className="bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs text-gray-300" />
-        </div>
-      )}
+    <div className="flex items-center gap-1 bg-gray-900 border border-gray-800 rounded-lg p-1 w-fit">
+      {TIME_RANGE_OPTIONS.map(opt => (
+        <button key={opt.value} onClick={() => setTimeRange(opt.value)}
+          className={`px-3 py-1.5 rounded text-xs font-medium transition-colors ${timeRange === opt.value ? 'bg-primary-600/30 text-primary-300' : 'text-gray-500 hover:text-gray-300 hover:bg-gray-800'}`}>
+          {opt.label}
+        </button>
+      ))}
     </div>
   );
 }

@@ -70,6 +70,18 @@ describe('getPieceRegressions', () => {
     const row = getPieceRegressions().find(r => r.piece_name === 'blk')!;
     expect(row.overallRate).toBe(100); // 5 passed / 5 decided; blocked ignored
   });
+
+  it('scopes rows to the given date range', () => {
+    const plan = seedPlan('scoped', 'a');
+    for (let d = 15; d <= 21; d++) seedRun(plan, 'completed', `2026-08-${d} 10:00:00`); // 7 in-range
+    for (let d = 22; d <= 24; d++) seedRun(plan, 'failed', `2026-08-${d} 10:00:00`, AUTH_FAIL); // 3 in-range
+    seedRun(plan, 'failed', '2026-06-01 10:00:00', AUTH_FAIL); // out of range
+
+    const all = getPieceRegressions().find(r => r.piece_name === 'scoped')!;
+    expect(all.failed).toBe(4); // 3 August + 1 June
+    const scoped = getPieceRegressions('2026-08-01T00:00:00Z', '2026-09-01T00:00:00Z').find(r => r.piece_name === 'scoped')!;
+    expect(scoped.failed).toBe(3); // June excluded
+  });
 });
 
 describe('getPerformanceSummary', () => {
@@ -108,5 +120,16 @@ describe('getFailureBreakdown', () => {
     expect(map.auth).toBe(2);
     expect(map.timeout).toBe(1);
     expect(bd[0].category).toBe('auth'); // sorted by count desc
+  });
+
+  it('scopes the breakdown to the given date range', () => {
+    const p = seedPlan('x', 'a');
+    seedRun(p, 'failed', '2026-08-20 10:00:00', AUTH_FAIL); // in range
+    seedRun(p, 'failed', '2026-06-01 10:00:00', TIMEOUT_FAIL); // out of range
+
+    const bd = getFailureBreakdown('2026-08-01T00:00:00Z', '2026-09-01T00:00:00Z');
+    const map = Object.fromEntries(bd.map(b => [b.category, b.count]));
+    expect(map.auth).toBe(1);
+    expect(map.timeout).toBeUndefined();
   });
 });

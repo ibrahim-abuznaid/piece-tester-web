@@ -27,18 +27,22 @@ import { getPieceRegressions, getPerformanceSummary, getFailureBreakdown } from 
 
 const router = Router();
 
-router.get('/regressions', (_req, res) => {
+router.get('/regressions', (req, res) => {
   try {
-    res.json(getPieceRegressions());
+    const dateFrom = req.query.date_from as string | undefined;
+    const dateTo = req.query.date_to as string | undefined;
+    res.json(getPieceRegressions(dateFrom, dateTo));
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
 });
 
 // Failure breakdown by category (auth / timeout / …) for the "why tests fail" chart.
-router.get('/failure-breakdown', (_req, res) => {
+router.get('/failure-breakdown', (req, res) => {
   try {
-    res.json(getFailureBreakdown());
+    const dateFrom = req.query.date_from as string | undefined;
+    const dateTo = req.query.date_to as string | undefined;
+    res.json(getFailureBreakdown(dateFrom, dateTo));
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
