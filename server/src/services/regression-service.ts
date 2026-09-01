@@ -56,8 +56,12 @@ const LANE_ORDER: Record<Lane, number> = {
   stale: 6,
 };
 
-export function getPieceRegressions(): RegressionRow[] {
+export function getPieceRegressions(dateFrom?: string, dateTo?: string): RegressionRow[] {
   const db = getDb();
+  const conds = ["r.trigger_type = 'scheduled'"];
+  const params: unknown[] = [];
+  if (dateFrom) { conds.push('r.started_at >= ?'); params.push(dateFrom); }
+  if (dateTo) { conds.push('r.started_at <= ?'); params.push(dateTo); }
   const rows = db.all<RunRow>(`
     SELECT p.piece_name AS piece_name, r.status AS status, r.started_at AS started_at,
            CASE WHEN r.completed_at IS NOT NULL
@@ -65,9 +69,9 @@ export function getPieceRegressions(): RegressionRow[] {
              ELSE NULL END AS dur_ms,
            p.updated_at AS plan_updated_at
     FROM test_plan_runs r JOIN test_plans p ON r.plan_id = p.id
-    WHERE r.trigger_type = 'scheduled'
+    WHERE ${conds.join(' AND ')}
     ORDER BY r.started_at ASC
-  `);
+  `, params);
 
   const now = new Date().toISOString();
   const byPiece = new Map<string, RunRow[]>();
@@ -107,11 +111,15 @@ export function getPieceRegressions(): RegressionRow[] {
 
 // Failure breakdown for the "why tests fail" chart: bucket every scheduled failure
 // by category (auth / timeout / no_trigger / …), most common first.
-export function getFailureBreakdown(): { category: FailureCategory; count: number }[] {
+export function getFailureBreakdown(dateFrom?: string, dateTo?: string): { category: FailureCategory; count: number }[] {
   const db = getDb();
+  const conds = ["r.trigger_type = 'scheduled'", "r.status = 'failed'"];
+  const params: unknown[] = [];
+  if (dateFrom) { conds.push('r.started_at >= ?'); params.push(dateFrom); }
+  if (dateTo) { conds.push('r.started_at <= ?'); params.push(dateTo); }
   const rows = db.all<{ step_results: string }>(
-    `SELECT r.step_results AS step_results FROM test_plan_runs r
-     WHERE r.trigger_type = 'scheduled' AND r.status = 'failed'`,
+    `SELECT r.step_results AS step_results FROM test_plan_runs r WHERE ${conds.join(' AND ')}`,
+    params,
   );
   const counts = new Map<FailureCategory, number>();
   for (const r of rows) {
@@ -148,7 +156,7 @@ export function getPerformanceSummary(dateFrom?: string, dateTo?: string): Perfo
   }
   const delta = prevRate === null ? null : stats.success_rate - prevRate;
 
-  const regs = getPieceRegressions();
+  const regs = getPieceRegressions(dateFrom, dateTo);
   const laneCounts: Record<Lane, number> = {
     newly_broken: 0, degrading: 0, flaky: 0, recovered: 0, still_broken: 0, stable: 0, stale: 0,
   };
