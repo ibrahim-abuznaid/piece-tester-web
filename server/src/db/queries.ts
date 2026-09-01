@@ -20,6 +20,7 @@ export interface SettingsRow {
   mcp_client_id: string;
   mcp_pkce_verifier: string; // temporary during OAuth flow
   mcp_oauth_state: string;   // temporary CSRF state
+  linear_report_webhook_url: string;
   updated_at: string;
 }
 
@@ -45,6 +46,7 @@ export function updateSettings(s: Partial<Omit<SettingsRow, 'id' | 'updated_at'>
       mcp_client_id = ?,
       mcp_pkce_verifier = ?,
       mcp_oauth_state = ?,
+      linear_report_webhook_url = ?,
       updated_at = datetime('now')
     WHERE id = 1
   `, [
@@ -62,6 +64,7 @@ export function updateSettings(s: Partial<Omit<SettingsRow, 'id' | 'updated_at'>
     s.mcp_client_id ?? current.mcp_client_id,
     s.mcp_pkce_verifier ?? current.mcp_pkce_verifier,
     s.mcp_oauth_state ?? current.mcp_oauth_state,
+    s.linear_report_webhook_url ?? current.linear_report_webhook_url,
   ]);
   return getSettings();
 }
@@ -849,6 +852,59 @@ export function addQuarantine(params: { piece_name: string; action_name?: string
 
 export function removeQuarantine(id: number): boolean {
   return getDb().run('DELETE FROM quarantined_items WHERE id = ?', [id]).changes > 0;
+}
+
+// ── Piece reports (Linear, via the AP flow transport) ──
+
+export interface PieceReportRow {
+  id: number;
+  piece_name: string;
+  linear_issue_id: string;
+  linear_url: string;
+  status: string;          // 'reported' in v1
+  error_category: string;
+  lane: string;
+  version_when_reported: string | null;
+  reported_at: string;
+  updated_at: string;
+}
+
+/** The open (not-done) report for a piece, if any. In v1 every report is open. */
+export function getOpenReportForPiece(pieceName: string): PieceReportRow | undefined {
+  return getDb().get<PieceReportRow>(
+    `SELECT * FROM piece_reports WHERE piece_name = ? AND status != 'done'`, [pieceName],
+  );
+}
+
+export function listOpenReports(): PieceReportRow[] {
+  return getDb().all<PieceReportRow>(
+    `SELECT * FROM piece_reports WHERE status != 'done' ORDER BY updated_at DESC`,
+  );
+}
+
+/** Insert or refresh the single report row for a piece (one open issue per piece). */
+export function upsertPieceReport(p: {
+  piece_name: string;
+  linear_issue_id: string;
+  linear_url: string;
+  error_category: string;
+  lane: string;
+  version_when_reported?: string | null;
+}): PieceReportRow {
+  getDb().run(
+    `INSERT INTO piece_reports (piece_name, linear_issue_id, linear_url, status, error_category, lane, version_when_reported)
+     VALUES (?, ?, ?, 'reported', ?, ?, ?)
+     ON CONFLICT(piece_name) DO UPDATE SET
+       linear_issue_id = excluded.linear_issue_id,
+       linear_url = excluded.linear_url,
+       status = 'reported',
+       error_category = excluded.error_category,
+       lane = excluded.lane,
+       version_when_reported = COALESCE(excluded.version_when_reported, piece_reports.version_when_reported),
+       updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')`,
+    [p.piece_name, p.linear_issue_id, p.linear_url, p.error_category, p.lane, p.version_when_reported ?? null],
+  );
+  return getDb().get<PieceReportRow>('SELECT * FROM piece_reports WHERE piece_name = ?', [p.piece_name])!;
 }
 
 // ── Needs-Attention inbox ──

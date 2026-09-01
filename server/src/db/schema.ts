@@ -89,6 +89,12 @@ function initTables(db: DatabaseAdapter): void {
     db.exec(`ALTER TABLE settings ADD COLUMN mcp_oauth_state TEXT NOT NULL DEFAULT ''`);
   }
 
+  // Migration: add linear_report_webhook_url column if missing
+  const cols4 = db.pragma(`table_info(settings)`) as { name: string }[];
+  if (!cols4.some(c => c.name === 'linear_report_webhook_url')) {
+    db.exec(`ALTER TABLE settings ADD COLUMN linear_report_webhook_url TEXT NOT NULL DEFAULT ''`);
+  }
+
   // Migration: add ai_config_meta column to piece_connections if missing
   const connCols = db.pragma(`table_info(piece_connections)`) as { name: string }[];
   // (table may not exist yet — the CREATE TABLE below creates it; run migration only if table exists)
@@ -263,6 +269,23 @@ function initTables(db: DatabaseAdapter): void {
       reason TEXT NOT NULL DEFAULT '',
       created_at TEXT DEFAULT (datetime('now')),
       expires_at TEXT
+    );
+  `);
+
+  db.exec(`
+    -- One open Linear report per piece. status stays 'reported' in v1; v2 syncs it.
+    -- Timestamps are UTC ISO-8601 (…Z) to avoid the naive-UTC parse pitfalls elsewhere.
+    CREATE TABLE IF NOT EXISTS piece_reports (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      piece_name TEXT NOT NULL UNIQUE,
+      linear_issue_id TEXT NOT NULL DEFAULT '',
+      linear_url TEXT NOT NULL DEFAULT '',
+      status TEXT NOT NULL DEFAULT 'reported',
+      error_category TEXT NOT NULL DEFAULT '',
+      lane TEXT NOT NULL DEFAULT '',
+      version_when_reported TEXT,
+      reported_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+      updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
     );
   `);
 
