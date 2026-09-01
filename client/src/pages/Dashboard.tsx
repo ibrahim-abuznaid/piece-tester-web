@@ -236,6 +236,7 @@ function HealthRow({ row }: { row: PieceHealthRow }) {
                 category={f.category}
                 planId={f.plan_id}
                 lastRunId={f.run_id}
+                reportable={f.category === 'piece_error'}
               />
             </div>
           ))}
