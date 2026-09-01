@@ -589,6 +589,7 @@ export interface ReportOverviewStats {
   passed_plan_runs: number;
   failed_plan_runs: number;
   running_plan_runs: number;
+  blocked_plan_runs: number;
   total_legacy_runs: number;
   total_legacy_tests: number;
   passed_legacy_tests: number;
@@ -612,20 +613,24 @@ export function getReportOverviewStats(dateFrom?: string, dateTo?: string): Repo
       SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) AS passed,
       SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) AS failed,
       SUM(CASE WHEN status = 'running' THEN 1 ELSE 0 END) AS running,
+      SUM(CASE WHEN status = 'blocked' THEN 1 ELSE 0 END) AS blocked,
       AVG(CASE WHEN completed_at IS NOT NULL
         THEN (julianday(completed_at) - julianday(started_at)) * 86400000
         ELSE NULL END) AS avg_duration_ms
     FROM test_plan_runs WHERE ${planWhere}
   `, planParams);
 
-  const finished = (planStats.total || 0) - (planStats.running || 0);
-  const successRate = finished > 0 ? Math.round(((planStats.passed || 0) / finished) * 100) : 0;
+  // Success rate is over decided (pass/fail) outcomes only. Blocked runs are skipped
+  // because a connection was broken — they are not failures and must not drag the rate.
+  const decided = (planStats.passed || 0) + (planStats.failed || 0);
+  const successRate = decided > 0 ? Math.round(((planStats.passed || 0) / decided) * 100) : 0;
 
   return {
     total_plan_runs: planStats.total || 0,
     passed_plan_runs: planStats.passed || 0,
     failed_plan_runs: planStats.failed || 0,
     running_plan_runs: planStats.running || 0,
+    blocked_plan_runs: planStats.blocked || 0,
     total_legacy_runs: 0,
     total_legacy_tests: 0,
     passed_legacy_tests: 0,
@@ -1189,11 +1194,11 @@ export function getRunTrends(dateFrom?: string, dateTo?: string): TrendDataPoint
   const db = getDb();
   const conditions = ["r.trigger_type = 'scheduled'"];
   const params: unknown[] = [];
+  // Honor the selected range: when no dateFrom is given the caller means "all time",
+  // so do NOT silently clamp to the last 30 days (that hid most history on this page).
   if (dateFrom) {
     conditions.push('r.started_at >= ?');
     params.push(dateFrom);
-  } else {
-    conditions.push("r.started_at >= datetime('now', '-30 days')");
   }
   if (dateTo) { conditions.push('r.started_at <= ?'); params.push(dateTo); }
 

@@ -1067,6 +1067,15 @@ export const api = {
     const qs = p.toString();
     return request<any>('GET', `/reports/stats${qs ? `?${qs}` : ''}`);
   },
+  getReportRegressions: () => request<any[]>('GET', '/reports/regressions'),
+  getFailureBreakdown: () => request<any[]>('GET', '/reports/failure-breakdown'),
+  getPerformanceSummary: (dateFrom?: string, dateTo?: string) => {
+    const p = new URLSearchParams();
+    if (dateFrom) p.set('date_from', dateFrom);
+    if (dateTo) p.set('date_to', dateTo);
+    const qs = p.toString();
+    return request<any>('GET', `/reports/summary${qs ? `?${qs}` : ''}`);
+  },
   getPieceHealth: () => request<PieceHealthRow[]>('GET', '/reports/piece-health'),
   getAttention: () => request<AttentionItem[]>('GET', '/reports/attention'),
   getScheduledWaves: (limit = 30) => request<WaveSummary[]>('GET', `/reports/waves?limit=${limit}`),
