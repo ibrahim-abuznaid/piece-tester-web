@@ -14,6 +14,7 @@ const raw = {
   mcp_client_id: 'client-id-123',
   mcp_pkce_verifier: 'pkce-verifier-secret',
   mcp_oauth_state: 'oauth-state-secret',
+  linear_report_webhook_url: 'https://cloud.activepieces.com/api/v1/webhooks/SECRETHOOK',
 };
 
 describe('maskedSettings', () => {
@@ -46,6 +47,12 @@ describe('maskedSettings', () => {
     expect(out.has_anthropic_key).toBe(false);
     expect(out.has_jwt).toBe(false);
     expect(out.api_key_masked).toBe('');
+  });
+  it('exposes the linear webhook as presence + mask, never raw', () => {
+    const out = maskedSettings(raw) as any;
+    expect(out.has_linear_webhook).toBe(true);
+    expect(JSON.stringify(out)).not.toContain('SECRETHOOK');
+    expect(out.linear_report_webhook_url).toBeUndefined();
   });
   it('does not over-expose short secrets', () => {
     const out = maskedSettings({ ...raw, api_key: 'short', anthropic_api_key: 'alsoShortKey' }) as any;

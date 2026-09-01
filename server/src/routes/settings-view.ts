@@ -15,6 +15,7 @@ export interface SettingsForView {
   mcp_client_id: string;
   mcp_pkce_verifier: string;
   mcp_oauth_state: string;
+  linear_report_webhook_url: string;
 }
 
 /** Mask a secret as head…tail, but only when it is long enough that the
@@ -45,5 +46,7 @@ export function maskedSettings(s: SettingsForView) {
     has_mcp_token: !!(s.mcp_access_token || s.mcp_token),
     mcp_connected_via_oauth: !!s.mcp_access_token,
     mcp_token_masked: s.mcp_token ? '...' + s.mcp_token.slice(-8) : '',
+    has_linear_webhook: !!s.linear_report_webhook_url,
+    linear_webhook_masked: maskLong(s.linear_report_webhook_url, 34, 40),
   };
 }

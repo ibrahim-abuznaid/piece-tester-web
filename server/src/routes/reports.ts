@@ -21,9 +21,15 @@ import {
   updateResolvedIssueNote,
   getPlanRun,
   getTestPlan,
+  getSettings,
+  getOpenReportForPiece,
+  listOpenReports,
+  upsertPieceReport,
 } from '../db/queries.js';
 import { startAnalysis } from '../services/report-analyzer.js';
 import { getPieceRegressions, getPerformanceSummary, getFailureBreakdown } from '../services/regression-service.js';
+import { buildReportDraft, type ReportFinding } from '../services/report-draft.js';
+import { sendReport, ReportTransportError } from '../services/report-transport.js';
 
 const router = Router();
 
@@ -320,6 +326,85 @@ router.patch('/resolved-issues/:id/note', (req, res) => {
     const { note } = req.body;
     updateResolvedIssueNote(id, note || '');
     res.json({ ok: true });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Report to Pieces team (Linear via the AP flow) ──
+
+/** Assemble a ReportFinding for a piece from its current health + test-plan steps. */
+function gatherFinding(pieceName: string): ReportFinding | null {
+  const piece = getPieceHealth().find(p => p.piece_name === pieceName);
+  if (!piece || piece.failing_actions.length === 0) return null;
+  const failing_targets = piece.failing_actions.map(fa => {
+    let reproduction: string[] = [];
+    try {
+      const steps = JSON.parse(getTestPlan(fa.plan_id)?.steps || '[]');
+      if (Array.isArray(steps)) reproduction = steps.map((s: any) => String(s.label || s.actionName || s.id || 'step'));
+    } catch { /* ignore malformed steps */ }
+    return { action: fa.action, category: fa.category, error: fa.error, run_id: fa.run_id, reproduction };
+  });
+  return { piece_name: pieceName, failing_targets };
+}
+
+// Build a draft (no network) so the modal can render + let the user edit before filing.
+router.post('/report/preview', (req, res) => {
+  try {
+    const { piece_name } = req.body;
+    if (!piece_name) { res.status(400).json({ error: 'piece_name is required' }); return; }
+    const finding = gatherFinding(piece_name);
+    if (!finding) { res.status(404).json({ error: 'No failing actions for this piece' }); return; }
+    const existing = getOpenReportForPiece(piece_name);
+    res.json({
+      draft: buildReportDraft(finding),
+      mode: existing ? 'comment' : 'create',
+      existing: existing ? { linear_url: existing.linear_url, linear_issue_id: existing.linear_issue_id } : null,
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// File the user-approved report through the AP webhook, then mirror it into piece_reports.
+router.post('/report', async (req, res) => {
+  try {
+    const { piece_name, title, description, label, priority } = req.body;
+    if (!piece_name || !title) { res.status(400).json({ error: 'piece_name and title are required' }); return; }
+
+    const webhookUrl = getSettings().linear_report_webhook_url;
+    if (!webhookUrl) { res.status(400).json({ error: 'No Linear reporting webhook configured in Settings' }); return; }
+
+    const existing = getOpenReportForPiece(piece_name);
+    // Prefer the live category; if the piece has since healed, keep what was recorded.
+    const category = gatherFinding(piece_name)?.failing_targets[0]?.category || existing?.error_category || 'piece_error';
+
+    const result = await sendReport(webhookUrl, {
+      mode: existing ? 'comment' : 'create',
+      piece_name, title, description,
+      label: label || `piece:${piece_name.replace('@activepieces/piece-', '')}`,
+      priority: typeof priority === 'number' ? priority : 2,
+      linear_issue_id: existing?.linear_issue_id,
+    });
+
+    // On comment mode we keep the existing issue's id/url; on create we take the flow's.
+    const row = upsertPieceReport({
+      piece_name,
+      linear_issue_id: existing ? existing.linear_issue_id : result.linear_issue_id,
+      linear_url: existing ? existing.linear_url : result.linear_url,
+      error_category: category,
+      lane: 'likely_broken',
+    });
+    res.json(row);
+  } catch (err: any) {
+    if (err instanceof ReportTransportError) { res.status(502).json({ error: err.message }); return; }
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.get('/reported', (_req, res) => {
+  try {
+    res.json(listOpenReports());
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
