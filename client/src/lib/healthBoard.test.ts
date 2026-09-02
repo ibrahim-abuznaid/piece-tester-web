@@ -13,17 +13,17 @@ function item(over: Partial<AttentionItem>): AttentionItem {
 const noReports = new Set<string>();
 
 describe('assignColumn', () => {
-  it('routes piece_error to the piece column', () => {
-    expect(assignColumn(item({ category: 'piece_error' }), noReports)).toBe('piece');
+  it('routes piece_error to the errors column', () => {
+    expect(assignColumn(item({ category: 'piece_error' }), noReports)).toBe('errors');
   });
   it('routes auth / connection_broken / reauth-bucket to connection', () => {
     expect(assignColumn(item({ category: 'auth' }), noReports)).toBe('connection');
     expect(assignColumn(item({ category: 'connection_broken', bucket: 'reauth' }), noReports)).toBe('connection');
     expect(assignColumn(item({ category: 'whatever', bucket: 'reauth' }), noReports)).toBe('connection');
   });
-  it('routes bad_request / not_found / assert_failed / unknown to test', () => {
+  it('routes bad_request / not_found / assert_failed / unknown to the errors column', () => {
     for (const c of ['bad_request', 'not_found', 'assert_failed', 'unknown']) {
-      expect(assignColumn(item({ category: c }), noReports)).toBe('test');
+      expect(assignColumn(item({ category: c }), noReports)).toBe('errors');
     }
   });
   it('muted takes precedence over everything (quarantined or noise bucket)', () => {
@@ -57,16 +57,16 @@ describe('sortByConfidence', () => {
 });
 
 describe('groupByColumn', () => {
-  it('distributes items into all five columns and sorts each', () => {
+  it('distributes items into the four columns and sorts each', () => {
     const g = groupByColumn([
       item({ plan_id: 1, category: 'piece_error' }),
       item({ plan_id: 2, category: 'auth', bucket: 'reauth' }),
       item({ plan_id: 3, category: 'bad_request' }),
       item({ plan_id: 4, quarantined: true }),
     ], new Set());
-    expect(g.piece.map(x => x.plan_id)).toEqual([1]);
+    // piece_error + bad_request both land in the merged errors column.
+    expect(g.errors.map(x => x.plan_id).sort()).toEqual([1, 3]);
     expect(g.connection.map(x => x.plan_id)).toEqual([2]);
-    expect(g.test.map(x => x.plan_id)).toEqual([3]);
     expect(g.muted.map(x => x.plan_id)).toEqual([4]);
     expect(g.reported).toEqual([]);
   });

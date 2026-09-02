@@ -6,9 +6,8 @@ import { COLUMNS, groupByColumn, isConfirmed, type ColumnKey } from '../lib/heal
 import { CheckCircle2, HelpCircle } from 'lucide-react';
 
 const COLUMN_DOT: Record<ColumnKey, string> = {
-  piece: 'bg-red-500',
+  errors: 'bg-red-500',
   connection: 'bg-amber-500',
-  test: 'bg-blue-500',
   reported: 'bg-green-500',
   muted: 'bg-gray-500',
 };
@@ -44,21 +43,9 @@ export default function HealthBoard() {
           <div className="flex items-stretch gap-3 w-max mx-auto">
             {COLUMNS.map(col => {
               const cards = grouped[col.key];
-
-              // Empty column → slim collapsed rail (same height as the rest, so the row stays even).
-              if (cards.length === 0) {
-                return (
-                  <div key={col.key} title={`${col.label} — no pieces`}
-                    className="w-12 shrink-0 h-[calc(100vh-300px)] min-h-[360px] flex flex-col items-center gap-2 py-3 rounded-xl border border-gray-800/60 bg-gray-900/20">
-                    <span className={`w-2 h-2 rounded-full shrink-0 ${COLUMN_DOT[col.key]}`} />
-                    <span className="text-[11px] text-gray-600 [writing-mode:vertical-rl] rotate-180 whitespace-nowrap">{col.label}</span>
-                    <span className="mt-auto text-[10px] text-gray-600">0</span>
-                  </div>
-                );
-              }
-
               const confirmed = cards.filter(isConfirmed);
               const unconfirmed = cards.filter(c => !isConfirmed(c));
+              const reportable = col.key === 'errors'; // every error in this column can be reported
               return (
                 <div key={col.key} className="w-[300px] shrink-0 h-[calc(100vh-300px)] min-h-[360px] flex flex-col rounded-xl border border-gray-800 bg-gray-900/30">
                   <div className="px-3.5 py-3 border-b border-gray-800/70 shrink-0">
@@ -70,7 +57,10 @@ export default function HealthBoard() {
                     <p className="text-[11px] text-gray-500 mt-1 leading-snug">{col.hint}</p>
                   </div>
                   <div className="p-2.5 space-y-2 overflow-y-auto flex-1">
-                    {confirmed.map(it => <BoardCard key={it.plan_id} item={it} reportUrl={reportUrlByPiece.get(it.piece_name)} />)}
+                    {cards.length === 0 && (
+                      <div className="flex items-center justify-center h-full text-[11px] text-gray-600">No pieces</div>
+                    )}
+                    {confirmed.map(it => <BoardCard key={it.plan_id} item={it} reportable={reportable} reportUrl={reportUrlByPiece.get(it.piece_name)} />)}
                     {unconfirmed.length > 0 && confirmed.length > 0 && (
                       <div className="flex items-center gap-2 pt-1">
                         <span className="h-px flex-1 bg-gray-800" />
@@ -78,7 +68,7 @@ export default function HealthBoard() {
                         <span className="h-px flex-1 bg-gray-800" />
                       </div>
                     )}
-                    {unconfirmed.map(it => <BoardCard key={it.plan_id} item={it} reportUrl={reportUrlByPiece.get(it.piece_name)} />)}
+                    {unconfirmed.map(it => <BoardCard key={it.plan_id} item={it} reportable={reportable} reportUrl={reportUrlByPiece.get(it.piece_name)} />)}
                   </div>
                 </div>
               );
