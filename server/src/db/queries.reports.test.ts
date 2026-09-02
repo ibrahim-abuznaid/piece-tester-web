@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { getDb } from './schema.js';
-import { getReportOverviewStats, getRunTrends } from './queries.js';
+import { getReportOverviewStats, getRunTrends, upsertPieceReport, getOpenReportForPiece, listOpenReports } from './queries.js';
 
 function seedPlan(piece: string, action: string): number {
   return getDb().run(
@@ -50,5 +50,51 @@ describe('getRunTrends — honors "all time"', () => {
 
     expect(dates).toContain('2020-01-01');
     expect(dates).toContain('2026-08-14');
+  });
+});
+
+describe('piece_reports schema', () => {
+  it('creates piece_reports with the expected columns', () => {
+    const cols = (getDb().pragma('table_info(piece_reports)') as { name: string }[]).map(c => c.name);
+    for (const c of ['piece_name', 'linear_issue_id', 'linear_url', 'status', 'error_category', 'lane', 'version_when_reported', 'reported_at', 'updated_at']) {
+      expect(cols).toContain(c);
+    }
+  });
+
+  it('adds linear_report_webhook_url to settings', () => {
+    const cols = (getDb().pragma('table_info(settings)') as { name: string }[]).map(c => c.name);
+    expect(cols).toContain('linear_report_webhook_url');
+  });
+});
+
+describe('piece_reports queries', () => {
+  beforeEach(() => getDb().exec('DELETE FROM piece_reports;'));
+
+  it('inserts a report and reads it back', () => {
+    const row = upsertPieceReport({
+      piece_name: '@activepieces/piece-streak', linear_issue_id: 'i1', linear_url: 'https://linear.app/x',
+      error_category: 'piece_error', lane: 'likely_broken',
+    });
+    expect(row.status).toBe('reported');
+    expect(getOpenReportForPiece('@activepieces/piece-streak')?.linear_url).toBe('https://linear.app/x');
+  });
+
+  it('keeps one row per piece across repeat reports', () => {
+    const p = { piece_name: 'p', linear_issue_id: 'i1', linear_url: 'u1', error_category: 'piece_error', lane: 'likely_broken' };
+    upsertPieceReport(p);
+    upsertPieceReport(p);
+    expect(listOpenReports().filter(r => r.piece_name === 'p').length).toBe(1);
+  });
+
+  it('returns undefined for an unreported piece', () => {
+    expect(getOpenReportForPiece('nope')).toBeUndefined();
+  });
+
+  it('reopens a previously-done report on re-report', () => {
+    upsertPieceReport({ piece_name: 'p', linear_issue_id: 'i1', linear_url: 'u1', error_category: 'piece_error', lane: 'likely_broken' });
+    getDb().run(`UPDATE piece_reports SET status = 'done' WHERE piece_name = 'p'`);
+    expect(getOpenReportForPiece('p')).toBeUndefined();
+    upsertPieceReport({ piece_name: 'p', linear_issue_id: 'i1', linear_url: 'u1', error_category: 'piece_error', lane: 'likely_broken' });
+    expect(getOpenReportForPiece('p')?.status).toBe('reported');
   });
 });

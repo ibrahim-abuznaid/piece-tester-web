@@ -379,6 +379,25 @@ export interface ConnectionBacklinks {
   reimport: string;      // in-app route, e.g. "/connections?piece=hubspot"
 }
 
+export interface PieceReportRow {
+  id: number;
+  piece_name: string;
+  linear_issue_id: string;
+  linear_url: string;
+  status: string;
+  error_category: string;
+  lane: string;
+  version_when_reported: string | null;
+  reported_at: string;
+  updated_at: string;
+}
+export interface ReportDraft { title: string; description: string; label: string; priority: number; }
+export interface ReportPreview {
+  draft: ReportDraft;
+  mode: 'create' | 'comment';
+  existing: { linear_url: string; linear_issue_id: string } | null;
+}
+
 /** One item in the Needs-Attention inbox — a failing (piece, action), classified into a lane. */
 export interface AttentionItem {
   plan_id: number;
@@ -1095,6 +1114,11 @@ export const api = {
   quarantineItem: (params: { piece_name: string; action_name?: string; reason?: string; expires_at?: string }) =>
     request<any>('POST', '/reports/quarantine', params),
   unquarantineItem: (id: number) => request<{ success: boolean }>('DELETE', `/reports/quarantine/${id}`),
+  previewReport: (piece_name: string) => request<ReportPreview>('POST', '/reports/report/preview', { piece_name }),
+  submitReport: (payload: { piece_name: string; title: string; description: string; label: string; priority: number }) =>
+    request<PieceReportRow>('POST', '/reports/report', payload),
+  getReported: () => request<PieceReportRow[]>('GET', '/reports/reported'),
+  removeLinearWebhook: () => request<{ success: boolean }>('POST', '/settings/remove-linear-webhook'),
   getReportPieceBreakdown: (dateFrom?: string, dateTo?: string) => {
     const p = new URLSearchParams();
     if (dateFrom) p.set('date_from', dateFrom);

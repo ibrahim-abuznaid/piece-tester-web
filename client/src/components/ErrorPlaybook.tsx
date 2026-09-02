@@ -5,8 +5,9 @@ import { api } from '../lib/api';
 import {
   Lightbulb, KeyRound, CalendarClock, Wand2, ListChecks, ExternalLink,
   Pencil, ScrollText, RotateCcw, Loader2, CheckCircle, XCircle,
-  VolumeX, Undo2, Info, type LucideIcon,
+  VolumeX, Undo2, Info, Send, type LucideIcon,
 } from 'lucide-react';
+import ReportToPiecesModal from './ReportToPiecesModal';
 
 const clean = (n: string) => n.replace('@activepieces/piece-', '');
 
@@ -40,6 +41,8 @@ export interface ErrorPlaybookProps {
    * Off in Needs Attention (the row header already carries them); on elsewhere.
    */
   showRunActions?: boolean;
+  /** Show the "Report to Pieces team" action (genuine piece faults only). */
+  reportable?: boolean;
 }
 
 type Blame = 'connection' | 'piece' | 'test' | 'environment' | 'unknown';
@@ -159,6 +162,9 @@ export default function ErrorPlaybook(props: ErrorPlaybookProps) {
   const { pieceName, actionName, category, planId, lastRunId, quarantined, quarantineId, showRunActions = true } = props;
   const navigate = useNavigate();
   const qc = useQueryClient();
+  const [showReport, setShowReport] = useState(false);
+  const { data: reported } = useQuery({ queryKey: ['reported'], queryFn: api.getReported, staleTime: 15000 });
+  const existingReport = reported?.find(r => r.piece_name === pieceName);
 
   const targets = {
     connections: '/connections',
@@ -274,7 +280,21 @@ export default function ErrorPlaybook(props: ErrorPlaybookProps) {
             {quarantined ? <><Undo2 size={12} /> Unquarantine</> : <><VolumeX size={12} /> Quarantine</>}
           </button>
         )}
+
+        {existingReport ? (
+          <a href={existingReport.linear_url} target="_blank" rel="noreferrer"
+            title="Open the Linear issue for this piece"
+            className={`${btnBase} border-green-500/30 text-green-400 hover:bg-green-500/10`}>
+            <CheckCircle size={12} /> Reported
+          </a>
+        ) : props.reportable ? (
+          <button onClick={() => setShowReport(true)} title="Draft a Linear issue for the Pieces team"
+            className={`${btnBase} border-primary-500/40 text-primary-300 hover:bg-primary-500/10`}>
+            <Send size={12} /> Report to Pieces team
+          </button>
+        ) : null}
       </div>
+      {showReport && <ReportToPiecesModal pieceName={pieceName} onClose={() => setShowReport(false)} />}
     </div>
   );
 }

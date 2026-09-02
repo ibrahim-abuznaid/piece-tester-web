@@ -77,6 +77,8 @@ router.put('/', (req, res) => {
     // Only overwrite the API key when a non-empty value is supplied. An empty/absent
     // field means "keep the stored key" — this prevents a normal Save from wiping it.
     if (typeof b.api_key === 'string' && b.api_key.trim()) updates.api_key = b.api_key.trim();
+    // Only overwrite the webhook when a non-empty value is supplied (same "keep stored" rule as api_key).
+    if (typeof b.linear_report_webhook_url === 'string' && b.linear_report_webhook_url.trim()) updates.linear_report_webhook_url = b.linear_report_webhook_url.trim();
     res.json(maskedSettings(updateSettings(updates)));
   } catch (err: any) {
     res.status(400).json({ error: err.message });
@@ -191,6 +193,12 @@ router.post('/save-anthropic-key', async (req, res) => {
 /** Remove Anthropic API key */
 router.post('/remove-anthropic-key', (_req, res) => {
   updateSettings({ anthropic_api_key: '' });
+  res.json({ success: true });
+});
+
+/** Clear the Linear reporting webhook URL */
+router.post('/remove-linear-webhook', (_req, res) => {
+  updateSettings({ linear_report_webhook_url: '' });
   res.json({ success: true });
 });
 

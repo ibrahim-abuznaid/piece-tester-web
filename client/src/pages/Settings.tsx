@@ -18,6 +18,11 @@ export default function Settings() {
   const [currentAiModel, setCurrentAiModel] = useState('claude-sonnet-4-6');
   const [hasMcpToken, setHasMcpToken] = useState(false);
   const [mcpTokenMasked, setMcpTokenMasked] = useState('');
+  const [hasLinearWebhook, setHasLinearWebhook] = useState(false);
+  const [linearWebhookMasked, setLinearWebhookMasked] = useState('');
+  const [linearWebhookInput, setLinearWebhookInput] = useState('');
+  const [savingLinear, setSavingLinear] = useState(false);
+  const [linearResult, setLinearResult] = useState<{ success: boolean; message: string } | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
@@ -54,6 +59,8 @@ export default function Settings() {
       setAiModel(s.ai_model || 'claude-sonnet-4-6');
       setHasMcpToken(s.has_mcp_token || false);
       setMcpTokenMasked(s.mcp_token_masked || '');
+      setHasLinearWebhook(s.has_linear_webhook || false);
+      setLinearWebhookMasked(s.linear_webhook_masked || '');
       setMcpConnectedViaOAuth(s.mcp_connected_via_oauth || false);
       setLoading(false);
     });
@@ -98,6 +105,35 @@ export default function Settings() {
       setSaveMsg(`Error: ${err.message}`);
     }
     setSaving(false);
+  };
+
+  const handleSaveLinearWebhook = async () => {
+    if (!linearWebhookInput.trim()) return;
+    setSavingLinear(true);
+    setLinearResult(null);
+    try {
+      await api.updateSettings({ linear_report_webhook_url: linearWebhookInput.trim() });
+      const s = await api.getSettings();
+      setHasLinearWebhook(s.has_linear_webhook || false);
+      setLinearWebhookMasked(s.linear_webhook_masked || '');
+      setLinearWebhookInput('');
+      setLinearResult({ success: true, message: 'Linear reporting webhook saved.' });
+    } catch (e: any) {
+      setLinearResult({ success: false, message: e?.message || 'Failed to save.' });
+    } finally {
+      setSavingLinear(false);
+    }
+  };
+
+  const handleRemoveLinearWebhook = async () => {
+    try {
+      await api.removeLinearWebhook();
+      setHasLinearWebhook(false);
+      setLinearWebhookMasked('');
+      setLinearResult({ success: true, message: 'Linear reporting webhook removed.' });
+    } catch (e: any) {
+      setLinearResult({ success: false, message: e?.message || 'Failed to remove.' });
+    }
   };
 
   const handleTest = async () => {
@@ -489,6 +525,35 @@ export default function Settings() {
             {mcpResult.success ? <CheckCircle size={16} /> : <XCircle size={16} />}
             {mcpResult.message}
           </div>
+        )}
+      </div>
+
+      {/* Linear Reporting Webhook */}
+      <div className="mt-6 rounded-lg border border-gray-800 bg-gray-900 p-4">
+        <h3 className="mb-1 text-sm font-semibold text-gray-200">Linear reporting webhook</h3>
+        <p className="mb-3 text-[12px] text-gray-500">
+          Paste the Catch-Webhook URL of the ActivePieces flow that runs <span className="text-gray-300">Linear → Create Issue</span>.
+          The Health board's "Report to Pieces team" action POSTs approved reports here.
+        </p>
+        {hasLinearWebhook ? (
+          <div className="mb-2 flex items-center gap-2 text-[12px] text-gray-400">
+            <span className="rounded bg-gray-800 px-2 py-1 font-mono">{linearWebhookMasked}</span>
+            <button type="button" onClick={handleRemoveLinearWebhook} className="text-red-400 hover:underline">Remove</button>
+          </div>
+        ) : (
+          <p className="mb-2 text-[12px] text-amber-400/80">Not configured — the report action will prompt for this.</p>
+        )}
+        <div className="flex gap-2">
+          <input value={linearWebhookInput} onChange={e => setLinearWebhookInput(e.target.value)}
+            placeholder="https://cloud.activepieces.com/api/v1/webhooks/…"
+            className="flex-1 rounded border border-gray-700 bg-gray-950 px-2 py-1.5 text-sm text-gray-200" />
+          <button onClick={handleSaveLinearWebhook} disabled={savingLinear || !linearWebhookInput.trim()}
+            className="rounded bg-primary-600 px-3 py-1.5 text-sm text-white hover:bg-primary-500 disabled:opacity-50">
+            {savingLinear ? 'Saving…' : 'Save'}
+          </button>
+        </div>
+        {linearResult && (
+          <p className={`mt-2 text-[12px] ${linearResult.success ? 'text-green-400' : 'text-red-400'}`}>{linearResult.message}</p>
         )}
       </div>
 

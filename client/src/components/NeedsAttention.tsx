@@ -33,18 +33,24 @@ export default function NeedsAttention() {
     refetchInterval: 30_000,
   });
 
+  const { data: reports = [] } = useQuery({ queryKey: ['reported'], queryFn: api.getReported, staleTime: 15_000 });
+
   const [showWatching, setShowWatching] = useState(false);
   const [showNoise, setShowNoise] = useState(false);
   const [showQuarantined, setShowQuarantined] = useState(false);
+  const [showReported, setShowReported] = useState(false);
 
   if (isLoading) return null;
 
-  const active = items.filter(i => !i.quarantined);
+  // Reported pieces are handed off to the piece team → out of active triage, into their own lane.
+  const reportedUrlByPiece = new Map(reports.map(r => [r.piece_name, r.linear_url]));
   const quarantined = items.filter(i => i.quarantined);
+  const reported = items.filter(i => !i.quarantined && reportedUrlByPiece.has(i.piece_name));
+  const triage = items.filter(i => !i.quarantined && !reportedUrlByPiece.has(i.piece_name));
   // Strict default: only these two lanes are shown expanded.
-  const primary = active.filter(i => i.bucket === 'likely_broken' || i.bucket === 'reauth');
-  const watching = active.filter(i => i.bucket === 'watching');
-  const noise = active.filter(i => i.bucket === 'noise');
+  const primary = triage.filter(i => i.bucket === 'likely_broken' || i.bucket === 'reauth');
+  const watching = triage.filter(i => i.bucket === 'watching');
+  const noise = triage.filter(i => i.bucket === 'noise');
 
   const nothingAtAll = items.length === 0;
 
@@ -67,7 +73,7 @@ export default function NeedsAttention() {
       ) : primary.length === 0 ? (
         <div className="bg-gray-900 border border-gray-800 rounded-lg p-4 text-sm text-gray-400 flex items-center gap-2">
           <CheckCircle size={15} className="text-green-400" /> No high-confidence breakages right now.
-          {(watching.length + noise.length + quarantined.length) > 0 && <span className="text-gray-600">See the lanes below.</span>}
+          {(watching.length + noise.length + reported.length + quarantined.length) > 0 && <span className="text-gray-600">See the lanes below.</span>}
         </div>
       ) : (
         <div className="space-y-1.5">
@@ -86,6 +92,12 @@ export default function NeedsAttention() {
           <CollapsibleLane open={showNoise} onToggle={() => setShowNoise(v => !v)}
             label={`Transient / rate-limit (${noise.length})`} hint="likely environment — hidden by default">
             {noise.map(it => <AttentionRow key={it.plan_id} item={it} />)}
+          </CollapsibleLane>
+        )}
+        {reported.length > 0 && (
+          <CollapsibleLane open={showReported} onToggle={() => setShowReported(v => !v)}
+            label={`Reported · awaiting fix (${reported.length})`} hint="handed off to the piece team — tracked in Linear">
+            {reported.map(it => <AttentionRow key={it.plan_id} item={it} reportUrl={reportedUrlByPiece.get(it.piece_name)} />)}
           </CollapsibleLane>
         )}
         {quarantined.length > 0 && (
@@ -114,7 +126,7 @@ function CollapsibleLane({ open, onToggle, label, hint, children }: {
   );
 }
 
-function AttentionRow({ item }: { item: AttentionItem }) {
+function AttentionRow({ item, reportUrl }: { item: AttentionItem; reportUrl?: string }) {
   const qc = useQueryClient();
   const navigate = useNavigate();
   const [open, setOpen] = useState(false);
@@ -211,6 +223,12 @@ function AttentionRow({ item }: { item: AttentionItem }) {
               <RotateCcw size={11} /> Retest
             </button>
           )}
+          {reportUrl && (
+            <a href={reportUrl} target="_blank" rel="noreferrer" title="Open the Linear issue for this piece"
+              className="flex items-center gap-1 px-2 py-1 rounded text-[11px] text-green-500 hover:text-green-400 hover:bg-green-500/10">
+              <CheckCircle size={11} /> Linear ↗
+            </a>
+          )}
           <button onClick={() => navigate(`/history?piece=${encodeURIComponent(clean(item.piece_name))}`)} title="View this piece's runs"
             className="px-2 py-1 rounded text-[11px] text-gray-500 hover:text-gray-200 hover:bg-gray-800">
             Runs
@@ -237,6 +255,7 @@ function AttentionRow({ item }: { item: AttentionItem }) {
           quarantined={item.quarantined}
           quarantineId={item.quarantine_id}
           showRunActions={false}
+          reportable={item.bucket === 'likely_broken' || item.category === 'piece_error'}
         />
       )}
     </div>
