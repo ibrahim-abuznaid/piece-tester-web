@@ -19,7 +19,7 @@ const CHIP: Record<string, string> = {
   unknown: 'bg-gray-500/15 text-gray-400 border-gray-600/40',
 };
 
-export default function BoardCard({ item, reportUrl }: { item: AttentionItem; reportUrl?: string }) {
+export default function BoardCard({ item, reportable, reportUrl }: { item: AttentionItem; reportable?: boolean; reportUrl?: string }) {
   const [open, setOpen] = useState(false);
   const confirmed = isConfirmed(item);
   const chip = CHIP[item.category] ?? CHIP.unknown;
@@ -78,7 +78,7 @@ export default function BoardCard({ item, reportUrl }: { item: AttentionItem; re
             flaky={item.flaky}
             quarantined={item.quarantined}
             quarantineId={item.quarantine_id}
-            reportable={item.bucket === 'likely_broken' || item.category === 'piece_error'}
+            reportable={reportable}
           />
         </div>
       )}
