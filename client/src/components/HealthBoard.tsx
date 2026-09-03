@@ -1,8 +1,9 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../lib/api';
-import BoardCard from './BoardCard';
-import { COLUMNS, groupByColumn, isConfirmed, type ColumnKey } from '../lib/healthBoard';
+import PieceCard from './PieceCard';
+import PieceDrawer from './PieceDrawer';
+import { COLUMNS, groupPiecesByColumn, type ColumnKey } from '../lib/healthBoard';
 import { CheckCircle2, HelpCircle } from 'lucide-react';
 
 const COLUMN_DOT: Record<ColumnKey, string> = {
@@ -18,12 +19,19 @@ export default function HealthBoard() {
   const { data: health = [] } = useQuery({ queryKey: ['piece-health'], queryFn: api.getPieceHealth, refetchInterval: 30_000 });
 
   const [showHealthy, setShowHealthy] = useState(false);
+  const [selectedPiece, setSelectedPiece] = useState<string | null>(null);
 
   if (isLoading) return <p className="text-sm text-gray-400">Loading piece health…</p>;
 
   const reportedPieces = new Set(reports.map(r => r.piece_name));
   const reportUrlByPiece = new Map(reports.map(r => [r.piece_name, r.linear_url]));
-  const grouped = groupByColumn(items, reportedPieces);
+  const grouped = groupPiecesByColumn(items, reportedPieces);
+
+  // Derive the open drawer's group from the live data so it updates (and closes)
+  // as pieces heal on the 30s refetch, rather than pinning a stale snapshot.
+  const selectedGroup = selectedPiece
+    ? Object.values(grouped).flat().find(g => g.piece_name === selectedPiece) ?? null
+    : null;
 
   const healthy = health.filter(h => h.status === 'healthy');
   const unknown = health.filter(h => h.status === 'unknown');
@@ -43,9 +51,8 @@ export default function HealthBoard() {
           <div className="flex items-stretch gap-3 w-max mx-auto">
             {COLUMNS.map(col => {
               const cards = grouped[col.key];
-              const confirmed = cards.filter(isConfirmed);
-              const unconfirmed = cards.filter(c => !isConfirmed(c));
-              const reportable = col.key === 'errors'; // every error in this column can be reported
+              const confirmed = cards.filter(c => c.confirmed);
+              const unconfirmed = cards.filter(c => !c.confirmed);
               return (
                 <div key={col.key} className="w-[300px] shrink-0 h-[calc(100vh-300px)] min-h-[360px] flex flex-col rounded-xl border border-gray-800 bg-gray-900/30">
                   <div className="px-3.5 py-3 border-b border-gray-800/70 shrink-0">
@@ -60,7 +67,7 @@ export default function HealthBoard() {
                     {cards.length === 0 && (
                       <div className="flex items-center justify-center h-full text-[11px] text-gray-600">No pieces</div>
                     )}
-                    {confirmed.map(it => <BoardCard key={it.plan_id} item={it} reportable={reportable} reportUrl={reportUrlByPiece.get(it.piece_name)} />)}
+                    {confirmed.map(g => <PieceCard key={g.piece_name} group={g} reportUrl={reportUrlByPiece.get(g.piece_name)} onOpen={() => setSelectedPiece(g.piece_name)} />)}
                     {unconfirmed.length > 0 && confirmed.length > 0 && (
                       <div className="flex items-center gap-2 pt-1">
                         <span className="h-px flex-1 bg-gray-800" />
@@ -68,7 +75,7 @@ export default function HealthBoard() {
                         <span className="h-px flex-1 bg-gray-800" />
                       </div>
                     )}
-                    {unconfirmed.map(it => <BoardCard key={it.plan_id} item={it} reportable={reportable} reportUrl={reportUrlByPiece.get(it.piece_name)} />)}
+                    {unconfirmed.map(g => <PieceCard key={g.piece_name} group={g} reportUrl={reportUrlByPiece.get(g.piece_name)} onOpen={() => setSelectedPiece(g.piece_name)} />)}
                   </div>
                 </div>
               );
@@ -95,6 +102,14 @@ export default function HealthBoard() {
           </div>
         )}
       </div>
+
+      {selectedGroup && (
+        <PieceDrawer
+          group={selectedGroup}
+          reportUrl={reportUrlByPiece.get(selectedGroup.piece_name)}
+          onClose={() => setSelectedPiece(null)}
+        />
+      )}
     </section>
   );
 }
