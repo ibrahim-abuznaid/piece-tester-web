@@ -1,5 +1,8 @@
 import { describe, it, expect } from 'vitest';
-import { assignColumn, isConfirmed, sortByConfidence, groupByColumn } from './healthBoard';
+import {
+  assignColumn, assignPieceColumn, isConfirmed, sortByConfidence,
+  groupByPiece, groupPiecesByColumn, pieceKindCounts,
+} from './healthBoard';
 import type { AttentionItem } from './api';
 
 function item(over: Partial<AttentionItem>): AttentionItem {
@@ -56,18 +59,66 @@ describe('sortByConfidence', () => {
   });
 });
 
-describe('groupByColumn', () => {
-  it('distributes items into the four columns and sorts each', () => {
-    const g = groupByColumn([
-      item({ plan_id: 1, category: 'piece_error' }),
-      item({ plan_id: 2, category: 'auth', bucket: 'reauth' }),
-      item({ plan_id: 3, category: 'bad_request' }),
-      item({ plan_id: 4, quarantined: true }),
+describe('assignPieceColumn', () => {
+  const px = '@activepieces/piece-x';
+  it('routes a piece with any live error to the errors lane, even mixed with auth', () => {
+    const items = [item({ category: 'piece_error' }), item({ category: 'auth', bucket: 'reauth' })];
+    expect(assignPieceColumn(items, noReports)).toBe('errors');
+  });
+  it('routes a connection-only piece to the connection lane', () => {
+    const items = [item({ category: 'auth' }), item({ category: 'connection_broken', bucket: 'reauth' })];
+    expect(assignPieceColumn(items, noReports)).toBe('connection');
+  });
+  it('is muted only when ALL failing actions are muted', () => {
+    expect(assignPieceColumn([item({ quarantined: true }), item({ bucket: 'noise', category: 'transient' })], noReports)).toBe('muted');
+    // one muted + one live error → not muted, the error wins.
+    expect(assignPieceColumn([item({ quarantined: true }), item({ category: 'piece_error' })], noReports)).toBe('errors');
+  });
+  it('treats reported/muted as terminal: reported wins over a live error, muted-all wins over reported', () => {
+    const reported = new Set([px]);
+    expect(assignPieceColumn([item({ category: 'piece_error' })], reported)).toBe('reported');
+    expect(assignPieceColumn([item({ category: 'piece_error', quarantined: true })], reported)).toBe('muted');
+  });
+});
+
+describe('pieceKindCounts', () => {
+  it('counts error / connection / muted actions', () => {
+    const counts = pieceKindCounts([
+      item({ category: 'piece_error' }),
+      item({ category: 'bad_request' }),
+      item({ category: 'auth', bucket: 'reauth' }),
+      item({ quarantined: true }),
+    ]);
+    expect(counts).toEqual({ error: 2, connection: 1, muted: 1 });
+  });
+});
+
+describe('groupByPiece', () => {
+  it('collapses multiple failing actions of one piece into a single group', () => {
+    const groups = groupByPiece([
+      item({ plan_id: 1, piece_name: '@activepieces/piece-slack', action_name: 'send', category: 'piece_error' }),
+      item({ plan_id: 2, piece_name: '@activepieces/piece-slack', action_name: 'update', category: 'piece_error' }),
+      item({ plan_id: 3, piece_name: '@activepieces/piece-gmail', action_name: 'send', category: 'auth', bucket: 'reauth' }),
+    ], noReports);
+    expect(groups).toHaveLength(2);
+    const slack = groups.find(g => g.piece_name.endsWith('slack'))!;
+    expect(slack.items).toHaveLength(2);
+    expect(slack.lane).toBe('errors');
+    expect(slack.confirmed).toBe(true);
+  });
+});
+
+describe('groupPiecesByColumn', () => {
+  it('places one card per piece into its lane, sorted confirmed-first', () => {
+    const g = groupPiecesByColumn([
+      item({ plan_id: 1, piece_name: '@activepieces/piece-slack', category: 'piece_error', fail_streak: 1, flaky: true }), // unconfirmed
+      item({ plan_id: 2, piece_name: '@activepieces/piece-hubspot', category: 'bad_request', fail_streak: 4 }),            // confirmed
+      item({ plan_id: 3, piece_name: '@activepieces/piece-dropbox', category: 'auth', bucket: 'reauth' }),
+      item({ plan_id: 4, piece_name: '@activepieces/piece-noisy', quarantined: true }),
     ], new Set());
-    // piece_error + bad_request both land in the merged errors column.
-    expect(g.errors.map(x => x.plan_id).sort()).toEqual([1, 3]);
-    expect(g.connection.map(x => x.plan_id)).toEqual([2]);
-    expect(g.muted.map(x => x.plan_id)).toEqual([4]);
+    expect(g.errors.map(x => x.piece_name)).toEqual(['@activepieces/piece-hubspot', '@activepieces/piece-slack']);
+    expect(g.connection.map(x => x.piece_name)).toEqual(['@activepieces/piece-dropbox']);
+    expect(g.muted.map(x => x.piece_name)).toEqual(['@activepieces/piece-noisy']);
     expect(g.reported).toEqual([]);
   });
 });

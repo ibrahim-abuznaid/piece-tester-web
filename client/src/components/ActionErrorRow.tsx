@@ -1,11 +1,8 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { type AttentionItem } from '../lib/api';
-import { isConfirmed } from '../lib/healthBoard';
 import ErrorPlaybook from './ErrorPlaybook';
-import { ChevronDown, ChevronRight, ExternalLink, CheckCircle } from 'lucide-react';
-
-const clean = (n: string) => n.replace('@activepieces/piece-', '');
+import { ChevronDown, ChevronRight, ExternalLink } from 'lucide-react';
 
 const CHIP: Record<string, string> = {
   piece_error: 'bg-red-500/15 text-red-300 border-red-500/25',
@@ -19,23 +16,22 @@ const CHIP: Record<string, string> = {
   unknown: 'bg-gray-500/15 text-gray-400 border-gray-600/40',
 };
 
-export default function BoardCard({ item, reportable, reportUrl }: { item: AttentionItem; reportable?: boolean; reportUrl?: string }) {
+/** One failing action inside a piece drawer: chip + error + expandable playbook. */
+export default function ActionErrorRow({ item, reportable }: { item: AttentionItem; reportable?: boolean }) {
   const [open, setOpen] = useState(false);
-  const confirmed = isConfirmed(item);
   const chip = CHIP[item.category] ?? CHIP.unknown;
 
   return (
-    <div className={`rounded-lg border bg-gray-900 transition-colors ${confirmed ? 'border-gray-700/80' : 'border-gray-800 opacity-70'}`}>
+    <div className="rounded-lg border border-gray-800 bg-gray-900">
       <button onClick={() => setOpen(o => !o)} aria-expanded={open}
         className="w-full flex items-start gap-2 px-3 py-2.5 text-left rounded-lg hover:bg-gray-800/40">
         {open
           ? <ChevronDown size={13} className="text-gray-500 mt-1 shrink-0" />
           : <ChevronRight size={13} className="text-gray-500 mt-1 shrink-0" />}
         <div className="min-w-0 flex-1">
-          <div className="text-sm font-semibold text-gray-100 truncate leading-tight">{clean(item.piece_name)}</div>
-          <div className="text-[11px] text-gray-500 truncate mt-0.5">{item.action_name}</div>
+          <div className="text-sm text-gray-200 truncate leading-tight">{item.action_name}</div>
 
-          <div className="flex items-center gap-1.5 mt-2">
+          <div className="flex items-center gap-1.5 mt-1.5">
             <span className={`text-[10px] px-1.5 py-0.5 rounded-full border font-medium ${chip}`}>{item.category}</span>
             <span className="ml-auto text-[10px] text-gray-500 tabular-nums shrink-0">{item.fail_streak}× fail</span>
           </div>
@@ -45,24 +41,14 @@ export default function BoardCard({ item, reportable, reportUrl }: { item: Atten
       </button>
 
       {/* Deep-links live outside the toggle button — nesting <a> in <button> is invalid HTML. */}
-      {(reportUrl || item.backlinks) && (
+      {item.backlinks && (
         <div className="flex items-center flex-wrap gap-x-3 gap-y-1 px-3 pb-2.5 pl-8">
-          {reportUrl && (
-            <a href={reportUrl} target="_blank" rel="noreferrer"
-              className="flex items-center gap-1 text-[10px] text-green-500 hover:text-green-400">
-              <CheckCircle size={10} /> Linear ↗
-            </a>
-          )}
-          {item.backlinks && (
-            <>
-              <a href={item.backlinks.activepieces} target="_blank" rel="noreferrer"
-                className="flex items-center gap-1 text-[10px] text-primary-400 hover:underline">
-                Fix in AP <ExternalLink size={9} />
-              </a>
-              <Link to={item.backlinks.reimport}
-                className="text-[10px] text-primary-400 hover:underline">Re-import</Link>
-            </>
-          )}
+          <a href={item.backlinks.activepieces} target="_blank" rel="noreferrer"
+            className="flex items-center gap-1 text-[10px] text-primary-400 hover:underline">
+            Fix in AP <ExternalLink size={9} />
+          </a>
+          <Link to={item.backlinks.reimport}
+            className="text-[10px] text-primary-400 hover:underline">Re-import</Link>
         </div>
       )}
 
