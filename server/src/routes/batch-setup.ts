@@ -1,7 +1,8 @@
 import { Router } from 'express';
 import { createClient } from '../services/test-engine.js';
-import { createTestPlanWithAi, fixTestPlanWithAi, type AgentLogEntry } from '../services/ai-config-generator.js';
-import { createTriggerTestPlanV2 } from '../agents/v2/index.js';
+import { type AgentLogEntry } from '../services/ai-config-generator.js';
+import { createTestPlanV2, fixTestPlanV2, createTriggerTestPlanV2 } from '../agents/v2/index.js';
+import { detectBrokenInputMappings } from '../agents/v2/tools/inspect-output.js';
 import {
   createTestPlan, updateTestPlan, listTestPlans,
   createSetupRun, addSetupRunItems, updateSetupRunItem, finalizeSetupRun,
@@ -114,8 +115,8 @@ async function runBatchInBackground(queue: BatchQueue) {
           continue;
         }
 
-        // Create the plan
-        const planResult = await createTestPlanWithAi(piece, actionName, onLog);
+        // Create the plan (v2 multi-agent planner — same as the per-piece flow)
+        const planResult = await createTestPlanV2({ pieceMeta: piece, actionName, onLog: (l: any) => onLog(l) });
 
         if (queue.cancelled) break;
 
@@ -178,12 +179,19 @@ async function runBatchInBackground(queue: BatchQueue) {
               break;
             }
 
-            onLog({ timestamp: Date.now(), type: 'thinking', message: 'Auto-test failed, running AI fix...' });
+            onLog({ timestamp: Date.now(), type: 'thinking', message: 'Auto-test failed, running v2 fixer...' });
             const stepResults = JSON.parse(finalRun.step_results || '[]');
+            const brokenMappings = detectBrokenInputMappings(currentSteps, stepResults);
 
-            const fixResult = await fixTestPlanWithAi(
-              piece, actionName, currentSteps, stepResults, currentMemory, onLog,
-            );
+            const fixResult = await fixTestPlanV2({
+              pieceMeta: piece,
+              actionName,
+              previousSteps: currentSteps,
+              stepResults,
+              brokenMappings,
+              agentMemory: currentMemory,
+              onLog: (l: any) => onLog(l),
+            });
 
             if (queue.cancelled) break;
 
