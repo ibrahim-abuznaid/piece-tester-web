@@ -13,10 +13,22 @@ export interface McpTool {
   inputSchema: Record<string, unknown>;
 }
 
+export interface McpProxyClientOptions {
+  /** Per-request timeout in ms. Guards against a stalled MCP server. Default 60s. */
+  timeoutMs?: number;
+  /** Optional external signal (e.g. an agent's abort) that also cancels in-flight requests. */
+  signal?: AbortSignal;
+}
+
 export class McpProxyClient {
   private sessionId: string | null = null;
+  private timeoutMs: number;
+  private externalSignal?: AbortSignal;
 
-  constructor(private url: string, private token: string) {}
+  constructor(private url: string, private token: string, opts: McpProxyClientOptions = {}) {
+    this.timeoutMs = opts.timeoutMs ?? 60_000;
+    this.externalSignal = opts.signal;
+  }
 
   private async rpc(method: string, params?: unknown, expectResponse = true): Promise<unknown> {
     const headers: Record<string, string> = {
@@ -33,7 +45,10 @@ export class McpProxyClient {
       params: params ?? {},
     });
 
-    const res = await fetch(this.url, { method: 'POST', headers, body });
+    const timeout = AbortSignal.timeout(this.timeoutMs);
+    const signal = this.externalSignal ? AbortSignal.any([timeout, this.externalSignal]) : timeout;
+
+    const res = await fetch(this.url, { method: 'POST', headers, body, signal });
 
     if (!expectResponse || res.status === 202) return null; // notification accepted
 

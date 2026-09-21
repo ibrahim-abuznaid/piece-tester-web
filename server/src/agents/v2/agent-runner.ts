@@ -125,7 +125,7 @@ export async function runAgentLoop(
   if (mcpEnabled) {
     try {
       const authToken = hasMcpOAuth ? await refreshMcpTokenIfNeeded() : settings.mcp_token;
-      mcpProxy = new McpProxyClient(mcpUrl, authToken);
+      mcpProxy = new McpProxyClient(mcpUrl, authToken, { signal: abortSignal });
       await mcpProxy.initialize();
 
       const mcpTools = await mcpProxy.listTools();
