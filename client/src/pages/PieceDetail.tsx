@@ -1528,13 +1528,21 @@ function BatchSetupPanel({
   onClose: () => void;
   onOpenTarget: (item: BatchItem) => void;
 }) {
-  const logEndRef = useRef<HTMLDivElement>(null);
+  const logPaneRef = useRef<HTMLDivElement>(null);
+  const stickToBottom = useRef(true);
   const currentLogs = expandedLog ? (logs[expandedLog] || []) : [];
   const expandedItem = expandedLog ? items.find(i => i.key === expandedLog) : undefined;
 
   useEffect(() => {
-    logEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    const el = logPaneRef.current;
+    if (el && stickToBottom.current) el.scrollTop = el.scrollHeight;
   }, [currentLogs.length]);
+
+  useEffect(() => {
+    stickToBottom.current = true;
+    const el = logPaneRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [expandedLog]);
 
   const counts = items.map(i => i.status);
   const doneCount = counts.filter(s => s === 'done' || s === 'skipped').length;
@@ -1634,7 +1642,14 @@ function BatchSetupPanel({
         </div>
 
         {/* Right: logs for selected action */}
-        <div className="flex-1 overflow-y-auto bg-gray-950 p-3 min-h-[200px]">
+        <div
+          ref={logPaneRef}
+          onScroll={(e) => {
+            const el = e.currentTarget;
+            stickToBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
+          }}
+          className="flex-1 overflow-y-auto bg-gray-950 p-3 min-h-[200px]"
+        >
           {expandedLog ? (
             <>
               <div className="flex items-center justify-between mb-2">
@@ -1670,7 +1685,6 @@ function BatchSetupPanel({
                     <Loader2 size={10} className="animate-spin" /> Working...
                   </div>
                 )}
-                <div ref={logEndRef} />
               </div>
               {currentLogs.length === 0 && expandedItem?.status !== 'running' && (
                 <p className="text-xs text-gray-600 italic">
