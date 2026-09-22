@@ -325,6 +325,14 @@ export default function PieceDetail() {
     }),
     onSuccess: () => { invalidateConns(); setStep('configure'); },
   });
+  const sweepPieceMut = useMutation({
+    mutationFn: () => api.sweepConnections([name!]),
+    onSuccess: () => {
+      invalidateConns();
+      qc.invalidateQueries({ queryKey: ['testMatch', name] });
+      setStep('configure');
+    },
+  });
   const createConnMut = useMutation({
     mutationFn: (data: any) => api.createConnection(data),
     onSuccess: () => { invalidateConns(); setStep('configure'); },
@@ -788,7 +796,7 @@ export default function PieceDetail() {
                 </button>
               </div>
               {connMode === 'import' && (
-                <ImportPanel remoteConns={remoteConns} loadingRemote={loadingRemote} isOAuth={isOAuth} dashInfo={dashInfo} importMut={importMut} hasExisting={inactiveConns.length > 0} match={testMatch} />
+                <ImportPanel remoteConns={remoteConns} loadingRemote={loadingRemote} isOAuth={isOAuth} dashInfo={dashInfo} importMut={importMut} sweepMut={sweepPieceMut} hasExisting={inactiveConns.length > 0} match={testMatch} />
               )}
               {connMode === 'manual' && (
                 <ManualConnPanel isOAuth={isOAuth} form={connForm} setForm={setConnForm}
@@ -1948,27 +1956,25 @@ function ConnectedCard({ conn, onDelete, onNext, inactiveConns, onActivate, onDe
   );
 }
 
-function ImportPanel({ remoteConns, loadingRemote, isOAuth, dashInfo, importMut, hasExisting, match }: any) {
+function ImportPanel({ remoteConns, loadingRemote, isOAuth, dashInfo, importMut, sweepMut, hasExisting, match }: any) {
   return (
     <div className="bg-gray-900 border border-gray-800 rounded-lg p-5 space-y-4">
       <h3 className="font-semibold text-sm">Import existing connection from Activepieces</h3>
-      {match?.status === 'matched' && match.connection && (
+      {match?.status === 'found' && match.connections?.length > 0 && (
         <div className="flex items-center justify-between bg-green-950/40 border border-green-800 rounded-lg px-4 py-3">
           <div>
-            <p className="text-sm font-medium text-green-300">Detected test connection</p>
-            <p className="text-xs text-gray-400">{match.connection.displayName} &middot; matches <code>{match.expected}</code></p>
+            <p className="text-sm font-medium text-green-300">
+              Found {match.connections.length} connection{match.connections.length > 1 ? 's' : ''} for this piece
+            </p>
+            <p className="text-xs text-gray-400">{match.connections?.map((c: any) => c.displayName).join(', ')}</p>
           </div>
-          <button onClick={() => importMut.mutate(match.connection)} disabled={importMut.isPending}
+          <button onClick={() => sweepMut.mutate()} disabled={sweepMut.isPending}
             className="flex items-center gap-1.5 px-3 py-1.5 bg-green-600 hover:bg-green-700 rounded text-xs font-medium disabled:opacity-50">
-            <Download size={13} /> Link
+            <Download size={13} /> {sweepMut.isPending ? 'Importing…' : 'Import all'}
           </button>
         </div>
       )}
-      {match?.status === 'ambiguous' && (
-        <div className="bg-amber-950/40 border border-amber-800 rounded-lg px-4 py-3 text-xs text-amber-300">
-          Multiple connections match <code>{match.expected}</code> ({(match.candidates || []).map((c: any) => c.displayName).join(', ')}). Pick one below.
-        </div>
-      )}
+      {sweepMut.error && <p className="text-sm text-red-400">{(sweepMut.error as Error).message}</p>}
       <p className="text-xs text-gray-500">
         {isOAuth ? 'This piece uses OAuth -- import your existing AP connection (recommended).' : 'Select a connection already set up in your AP project.'}
         {hasExisting && ' Adding a new connection will make it active. Your previous connections are saved.'}
