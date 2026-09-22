@@ -5,6 +5,7 @@
  */
 
 import Anthropic from '@anthropic-ai/sdk';
+import { buildAnthropicClientOptions } from './anthropic-client.js';
 import { getSettings, addLesson, getLessonsForPiece } from '../db/queries.js';
 import type { TestPlanStep } from './ai-config-generator.js';
 
@@ -35,7 +36,7 @@ export async function extractAndStoreLessons(
   const prompt = buildExtractorPrompt(pieceDisplayName, oldSteps, failedResults, newSteps, existingLessons);
 
   try {
-    const client = new Anthropic({ apiKey: settings.anthropic_api_key });
+    const client = new Anthropic(buildAnthropicClientOptions(settings.anthropic_api_key));
     const model = settings.ai_model || 'claude-sonnet-4-6';
 
     const response = await client.messages.create({

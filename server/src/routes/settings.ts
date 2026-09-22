@@ -6,6 +6,7 @@ import { maskedSettings } from './settings-view.js';
 import { encryptSecret, hasEncryptionKey } from '../services/crypto-vault.js';
 import { decodeJwtExp } from '../services/jwt-util.js';
 import { postDiscordMessage } from '../services/notifier.js';
+import { buildAnthropicClientOptions } from '../services/anthropic-client.js';
 
 // ── MCP OAuth constants ──
 const MCP_OAUTH_AUTHORIZE_URL = 'https://mcp.activepieces.com/authorize';
@@ -213,7 +214,7 @@ router.post('/save-anthropic-key', async (req, res) => {
   // Validate the key by making a small API call
   try {
     const Anthropic = (await import('@anthropic-ai/sdk')).default;
-    const client = new Anthropic({ apiKey: api_key.trim() });
+    const client = new Anthropic(buildAnthropicClientOptions(api_key.trim()));
     await client.messages.create({
       model: model || 'claude-sonnet-4-6',
       max_tokens: 10,
