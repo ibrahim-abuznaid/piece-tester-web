@@ -1,76 +1,100 @@
 import type { AppConnection, ActivepiecesClient } from './ap-client.js';
-import { getConnectionByPiece, createConnection, markPlansStaleByPiece } from '../db/queries.js';
-import { classify, expectedTestName } from './test-connection-matcher.js';
+import {
+  listConnectionsForPiece, getConnectionByPiece, createConnection,
+  activateConnection, markPlansStaleByPiece, type PieceConnectionRow,
+} from '../db/queries.js';
+import { classify } from './test-connection-matcher.js';
 
 export interface SweepPieceResult {
   pieceName: string;
-  outcome: 'linked' | 'already_linked' | 'skipped_none' | 'skipped_ambiguous' | 'error';
-  displayName?: string;
-  candidates?: string[];
+  outcome: 'linked' | 'already_linked' | 'skipped_none' | 'error';
+  importedNames?: string[];
   error?: string;
-  expected: string;
 }
 export interface SweepResult {
   linked: SweepPieceResult[];
   alreadyLinked: SweepPieceResult[];
   skippedNone: SweepPieceResult[];
-  skippedAmbiguous: SweepPieceResult[];
   errored: SweepPieceResult[];
 }
 
-/** True when the piece has an active _imported connection whose remote_id still resolves to a
- *  row upstream (presence only — does not check the remote connection's health/status). */
-function isLiveImported(pieceName: string, remoteList: AppConnection[]): boolean {
-  const row = getConnectionByPiece(pieceName);
-  if (!row) return false;
-  let value: any;
-  try { value = JSON.parse(row.connection_value); } catch { return false; }
-  if (!value?._imported) return false;
-  const rid = value.remote_id;
-  return remoteList.some(rc => rc.id === rid || rc.externalId === rid);
+/** The remote_id stored on an imported row, or undefined for a non-imported/local row. */
+function importedRemoteId(row: PieceConnectionRow): string | undefined {
+  try {
+    const v = JSON.parse(row.connection_value);
+    return v?._imported ? v.remote_id : undefined;
+  } catch { return undefined; }
 }
 
-/** Fetch the AP connection list once; per piece, skip if already linked, else link a single match. */
+/** AP timestamp used to pick the "newest" connection; '' when AP omits it. */
+function apTimestamp(c: AppConnection): string {
+  return String((c as any).updated ?? (c as any).created ?? '');
+}
+
+/** Newest by timestamp; ties or missing timestamps fall back to last in list order. */
+function pickNewest(conns: AppConnection[]): AppConnection {
+  return conns.reduce((best, c) => (apTimestamp(c) >= apTimestamp(best) ? c : best));
+}
+
+/**
+ * Fetch the AP connection list once; for each piece import every connection (by pieceName)
+ * not already imported, keeping a pre-existing active connection or else activating the newest.
+ */
 export async function sweepTestConnections(
   client: ActivepiecesClient,
   pieceNames: string[],
 ): Promise<SweepResult> {
   const remoteList = await client.listConnections();
-  const result: SweepResult = { linked: [], alreadyLinked: [], skippedNone: [], skippedAmbiguous: [], errored: [] };
+  const result: SweepResult = { linked: [], alreadyLinked: [], skippedNone: [], errored: [] };
 
   for (const pieceName of pieceNames) {
-    const expected = expectedTestName(pieceName);
-    if (isLiveImported(pieceName, remoteList)) {
-      result.alreadyLinked.push({ pieceName, outcome: 'already_linked', expected });
+    const { status, connections } = classify(pieceName, remoteList);
+    if (status === 'none') {
+      result.skippedNone.push({ pieceName, outcome: 'skipped_none' });
       continue;
     }
-    const m = classify(pieceName, remoteList);
-    if (m.status === 'matched' && m.connection) {
-      const c = m.connection;
-      try {
-        createConnection({
+
+    const existingRemoteIds = new Set(
+      listConnectionsForPiece(pieceName).map(importedRemoteId).filter(Boolean) as string[],
+    );
+    const toImport = connections.filter(c => !existingRemoteIds.has(c.externalId || c.id));
+    if (toImport.length === 0) {
+      result.alreadyLinked.push({ pieceName, outcome: 'already_linked' });
+      continue;
+    }
+
+    // Capture the active connection before importing — createConnection flips is_active.
+    const preActive = getConnectionByPiece(pieceName);
+
+    try {
+      const imported = toImport.map(c => ({
+        ap: c,
+        row: createConnection({
           piece_name: pieceName,
           display_name: c.displayName,
           connection_type: c.type || 'IMPORTED',
           connection_value: JSON.stringify({ _imported: true, remote_id: c.externalId || c.id }),
-        });
-        markPlansStaleByPiece(pieceName);
-        result.linked.push({ pieceName, outcome: 'linked', displayName: c.displayName, expected });
-      } catch (err) {
-        // A matched connection that failed to persist is an actionable error, not a benign
-        // no-match — keep it distinct and carry the message so the report can surface it.
-        result.errored.push({
-          pieceName, outcome: 'error', expected,
-          error: err instanceof Error ? err.message : String(err),
-        });
+        }),
+      }));
+
+      if (preActive) {
+        // Don't disturb a prior active connection (manual choice or earlier import).
+        activateConnection(preActive.id);
+      } else {
+        const newest = pickNewest(imported.map(i => i.ap));
+        const row = imported.find(i => i.ap.id === newest.id)!.row;
+        activateConnection(row.id);
       }
-    } else if (m.status === 'ambiguous') {
-      result.skippedAmbiguous.push({
-        pieceName, outcome: 'skipped_ambiguous', expected,
-        candidates: (m.candidates || []).map(c => c.displayName),
+      markPlansStaleByPiece(pieceName);
+      result.linked.push({
+        pieceName, outcome: 'linked',
+        importedNames: imported.map(i => i.ap.displayName),
       });
-    } else {
-      result.skippedNone.push({ pieceName, outcome: 'skipped_none', expected });
+    } catch (err) {
+      result.errored.push({
+        pieceName, outcome: 'error',
+        error: err instanceof Error ? err.message : String(err),
+      });
     }
   }
   return result;
