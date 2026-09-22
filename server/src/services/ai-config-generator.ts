@@ -1,4 +1,5 @@
 import Anthropic from '@anthropic-ai/sdk';
+import { buildAnthropicClientOptions } from './anthropic-client.js';
 import axios from 'axios';
 import { getSettings, getConnectionByPiece } from '../db/queries.js';
 import type { PieceMetadataFull, PieceActionMeta } from './ap-client.js';
@@ -301,7 +302,7 @@ async function runAgentLoop(
   if (!action) throw new Error(`Action "${actionName}" not found in piece ${pieceMeta.name}`);
 
   const model = settings.ai_model || 'claude-sonnet-4-6';
-  const client = new Anthropic({ apiKey: settings.anthropic_api_key });
+  const client = new Anthropic(buildAnthropicClientOptions(settings.anthropic_api_key));
 
   function log(type: AgentLogEntry['type'], message: string, detail?: string) {
     onLog({ timestamp: Date.now(), type, message, detail });

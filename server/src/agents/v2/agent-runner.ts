@@ -4,6 +4,7 @@ import { ActivepiecesClient } from '../../services/ap-client.js';
 import { refreshMcpTokenIfNeeded } from '../../routes/settings.js';
 import { McpProxyClient, mcpToolToAnthropic } from './mcp-proxy-client.js';
 import { ToolRegistry } from './tool-registry.js';
+import { buildAnthropicClientOptions } from '../../services/anthropic-client.js';
 import { TERMINAL_TOOLS } from './tools/index.js';
 import type { AgentRunnerConfig, AgentRunnerResult, OnLogCallback, AgentRole, ToolContext } from './types.js';
 import { CostTracker } from './cost-tracker.js';
@@ -95,7 +96,7 @@ export async function runAgentLoop(
   }
 
   const model = settings.ai_model || 'claude-sonnet-4-6';
-  const client = new Anthropic({ apiKey: settings.anthropic_api_key });
+  const client = new Anthropic(buildAnthropicClientOptions(settings.anthropic_api_key));
   const { role, systemPrompt, maxIterations, toolNames, abortSignal, onLog } = config;
 
   function log(type: Parameters<OnLogCallback>[0]['type'], message: string, detail?: string) {

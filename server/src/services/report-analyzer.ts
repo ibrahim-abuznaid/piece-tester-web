@@ -8,6 +8,7 @@
  */
 
 import Anthropic from '@anthropic-ai/sdk';
+import { buildAnthropicClientOptions } from './anthropic-client.js';
 import {
   getSettings,
   getRecentFailures,
@@ -220,7 +221,7 @@ async function runAnalysisInBackground(analysisId: number, dateFrom?: string, da
 
     const prompt = buildAnalysisPrompt(failures, pieceBreakdown, overviewStats);
     const model = settings.ai_model || 'claude-sonnet-4-6';
-    const client = new Anthropic({ apiKey: settings.anthropic_api_key });
+    const client = new Anthropic(buildAnthropicClientOptions(settings.anthropic_api_key));
 
     log('thinking', `Analyzing with ${model}...`);
 
