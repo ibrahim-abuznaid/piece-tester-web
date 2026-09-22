@@ -414,8 +414,8 @@ export default function BatchSetup() {
       {step === 'connections' && (
         <div>
           <p className="text-gray-400 text-sm mb-4">
-            Only pieces with an active connection can be set up. Sweep to auto-link the test connections already
-            configured in Activepieces (named <code className="text-gray-300">&lt;slug&gt;-piece-testing</code>).
+            Only pieces with an active connection can be set up. Import the connections already
+            configured in Activepieces for each piece.
           </p>
           <div className="bg-gray-900 border border-gray-800 rounded-lg p-6 mb-6 flex items-center justify-between">
             <div>
@@ -425,7 +425,7 @@ export default function BatchSetup() {
             <button onClick={() => sweepMut.mutate()} disabled={sweepMut.isPending}
               className="flex items-center gap-2 px-4 py-2 text-sm bg-primary-600 hover:bg-primary-700 rounded-lg font-medium disabled:opacity-50">
               {sweepMut.isPending ? <Loader2 size={16} className="animate-spin" /> : <Plug size={16} />}
-              {sweepMut.isPending ? 'Sweeping…' : 'Sweep connections'}
+              {sweepMut.isPending ? 'Importing…' : 'Import connections'}
             </button>
           </div>
           {sweepMut.error && <p className="text-sm text-red-400 mb-4">{(sweepMut.error as Error).message}</p>}
