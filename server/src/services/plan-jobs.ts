@@ -45,7 +45,8 @@ export interface BatchQueue {
 }
 
 const activeJobs = new Map<string, PlanJob>();
-let activeBatchQueue: BatchQueue | null = null;
+const batches = new Map<string, BatchQueue>();
+let batchCounter = 0;
 
 const CLEANUP_DELAY_MS = 2 * 60 * 1000;
 
@@ -64,12 +65,13 @@ export function getActiveJobsForPiece(pieceName: string): Record<string, { statu
       result[job.actionName] = { status: job.status, startedAt: job.startedAt, source: 'individual' };
     }
   }
-  // Also check the batch queue
-  if (activeBatchQueue && activeBatchQueue.status === 'running') {
-    for (const item of activeBatchQueue.items) {
+  // Also check running batches
+  for (const q of batches.values()) {
+    if (q.status !== 'running') continue;
+    for (const item of q.items) {
       if (item.pieceName === pieceName && (item.status === 'running' || item.status === 'pending')) {
         if (!result[item.actionName]) {
-          result[item.actionName] = { status: item.status, startedAt: activeBatchQueue.startedAt, source: 'batch' };
+          result[item.actionName] = { status: item.status, startedAt: q.startedAt, source: 'batch' };
         }
       }
     }
@@ -85,8 +87,9 @@ export function getActiveJobCountsByPiece(): Record<string, number> {
       counts[job.pieceName] = (counts[job.pieceName] ?? 0) + 1;
     }
   }
-  if (activeBatchQueue && activeBatchQueue.status === 'running') {
-    for (const item of activeBatchQueue.items) {
+  for (const q of batches.values()) {
+    if (q.status !== 'running') continue;
+    for (const item of q.items) {
       if (item.status === 'running' || item.status === 'pending') {
         counts[item.pieceName] = (counts[item.pieceName] ?? 0) + 1;
       }
@@ -235,55 +238,40 @@ export function subscribeToJobWithCleanup(
 // Batch Queue
 // ══════════════════════════════════════════════════════════════
 
-export function getBatchQueue(): BatchQueue | null {
-  return activeBatchQueue;
+export function createBatchQueue(items: BatchQueueItem[]): BatchQueue {
+  const id = `batch_${++batchCounter}_${Date.now()}`;
+  const queue: BatchQueue = {
+    id, status: 'running', items, currentIndex: -1, startedAt: Date.now(),
+    emitter: new EventEmitter(), events: [], cancelled: false,
+  };
+  queue.emitter.setMaxListeners(50);
+  batches.set(id, queue);
+  return queue;
 }
 
-export function getBatchQueueStatus(): {
-  id: string;
-  status: string;
-  startedAt: number;
-  completedAt?: number;
-  currentIndex: number;
-  totalItems: number;
-  items: Omit<BatchQueueItem, 'error'>[];
-  stats: { pending: number; running: number; done: number; error: number; skipped: number };
-} | null {
-  if (!activeBatchQueue) return null;
-  const q = activeBatchQueue;
+export function getBatch(id: string): BatchQueue | null { return batches.get(id) ?? null; }
+export function listBatches(): BatchQueue[] { return [...batches.values()].sort((a, b) => b.startedAt - a.startedAt); }
+
+export function getBatchStatus(id: string) {
+  const q = batches.get(id);
+  if (!q) return null;
   const stats = { pending: 0, running: 0, done: 0, error: 0, skipped: 0 };
-  for (const item of q.items) {
-    stats[item.status]++;
-  }
+  for (const it of q.items) stats[it.status]++;
   return {
-    id: q.id,
-    status: q.status,
-    startedAt: q.startedAt,
-    completedAt: q.completedAt,
-    currentIndex: q.currentIndex,
-    totalItems: q.items.length,
+    id: q.id, status: q.status, startedAt: q.startedAt, completedAt: q.completedAt,
+    currentIndex: q.currentIndex, totalItems: q.items.length,
     items: q.items.map(i => ({ pieceName: i.pieceName, pieceDisplayName: i.pieceDisplayName, actionName: i.actionName, actionDisplayName: i.actionDisplayName, targetType: i.targetType, status: i.status })),
     stats,
   };
 }
 
-export function createBatchQueue(items: BatchQueueItem[]): BatchQueue {
-  if (activeBatchQueue && activeBatchQueue.status === 'running') {
-    throw new Error('A batch queue is already running');
+/** Pieces held by batches still running — used to keep a piece out of a second concurrent batch. */
+export function activeBatchPieceNames(): Set<string> {
+  const names = new Set<string>();
+  for (const q of batches.values()) {
+    if (q.status === 'running') for (const it of q.items) names.add(it.pieceName);
   }
-  const queue: BatchQueue = {
-    id: `batch_${Date.now()}`,
-    status: 'running',
-    items,
-    currentIndex: -1,
-    startedAt: Date.now(),
-    emitter: new EventEmitter(),
-    events: [],
-    cancelled: false,
-  };
-  queue.emitter.setMaxListeners(50);
-  activeBatchQueue = queue;
-  return queue;
+  return names;
 }
 
 export function emitBatchEvent(queue: BatchQueue, event: string, data: any): void {
@@ -296,17 +284,13 @@ export function completeBatchQueue(queue: BatchQueue, status: 'done' | 'cancelle
   queue.status = status;
   queue.completedAt = Date.now();
   queue.emitter.emit('complete');
-
-  setTimeout(() => {
-    if (activeBatchQueue === queue) {
-      activeBatchQueue = null;
-    }
-  }, 5 * CLEANUP_DELAY_MS);
+  setTimeout(() => { batches.delete(queue.id); }, 5 * CLEANUP_DELAY_MS);
 }
 
-export function cancelBatchQueue(): boolean {
-  if (!activeBatchQueue || activeBatchQueue.status !== 'running') return false;
-  activeBatchQueue.cancelled = true;
+export function cancelBatch(id: string): boolean {
+  const q = batches.get(id);
+  if (!q || q.status !== 'running') return false;
+  q.cancelled = true;
   return true;
 }
 

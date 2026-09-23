@@ -9,17 +9,18 @@ import {
   getSetupRun, listSetupRuns, listSetupRunItems, getSettings,
 } from '../db/queries.js';
 import { executePlan } from '../services/plan-executor.js';
-import { runWithConcurrency, boundConcurrency } from '../services/concurrency.js';
+import { boundConcurrency } from '../services/concurrency.js';
 import { itemsForSelection } from '../services/batch-selection.js';
 import { extractAndStoreLessons } from '../services/lesson-extractor.js';
 import { createSchedulesForRun } from '../services/setup-scheduler.js';
 import type { Cadence } from '../services/schedule-planner.js';
 import {
-  getJob, createJob, emitJobEvent, completeJob,
-  getBatchQueue, getBatchQueueStatus, createBatchQueue, emitBatchEvent, completeBatchQueue, cancelBatchQueue,
-  subscribeToBatchWithCleanup,
+  getBatch, listBatches, getBatchStatus, createBatchQueue, cancelBatch, activeBatchPieceNames,
+  emitBatchEvent, completeBatchQueue, subscribeToBatchWithCleanup,
   type BatchQueueItem, type BatchQueue,
 } from '../services/plan-jobs.js';
+import { groupByPiece } from '../services/batch-grouping.js';
+import { configureBatchScheduler, submitPieceUnit } from '../services/batch-scheduler.js';
 
 const router = Router();
 
@@ -34,13 +35,9 @@ function setupSSE(res: any) {
   };
 }
 
-/** Max targets generated concurrently per batch. Bounded because the Activepieces instance
- *  (especially Cloud) — not Anthropic — is the capacity ceiling. Settings UI value wins,
- *  then the BATCH_CONCURRENCY env var, then a default of 3; clamped to [1, 20]. Read per run
- *  so a Settings change takes effect on the next batch without a restart. */
-function batchConcurrency(): number {
-  return boundConcurrency(getSettings().batch_concurrency || Number(process.env.BATCH_CONCURRENCY) || 3);
-}
+// Global cap = Settings value → env → 3, clamped. Shared across ALL batches.
+configureBatchScheduler(() =>
+  boundConcurrency(getSettings().batch_concurrency || Number(process.env.BATCH_CONCURRENCY) || 3));
 
 async function processBatchItem(
   queue: BatchQueue,
@@ -231,23 +228,27 @@ async function processBatchItem(
 
 async function runBatchInBackground(queue: BatchQueue) {
   const client = createClient();
+  const groups = groupByPiece(queue.items);
 
-  // Generate targets concurrently (bounded) instead of one-at-a-time. Cancellation is honoured
-  // by processBatchItem's internal queue.cancelled checks: in-flight items bail at their next
-  // checkpoint and not-yet-started items return immediately.
-  await runWithConcurrency(queue.items, batchConcurrency(), async (item, i) => {
-    try {
-      await processBatchItem(queue, client, item, i);
-    } catch (err: any) {
-      // processBatchItem catches its own errors; this guard just ensures one unexpected
-      // failure can't reject the pool and skip finalization / abandon the other items.
-      console.error(`[batch-setup] Unexpected failure for ${item.pieceName}/${item.actionName}:`, err?.message);
-      item.status = 'error';
-      item.error = err?.message ?? 'Unknown error';
-      if (item.setupItemId) updateSetupRunItem(item.setupItemId, { status: 'error', error: item.error });
-      emitBatchEvent(queue, 'item_update', { index: i, ...item });
+  // Each piece is one unit submitted to the global scheduler (a single cap across all batches).
+  // Targets within a piece run serially. Cancellation is honoured by processBatchItem's internal
+  // queue.cancelled checks and the per-target guard below.
+  await Promise.all(groups.map(group => submitPieceUnit(queue.id, async () => {
+    for (const { item, index } of group) {
+      if (queue.cancelled) break;
+      try {
+        await processBatchItem(queue, client, item, index);
+      } catch (err: any) {
+        // processBatchItem catches its own errors; this guard just ensures one unexpected
+        // failure can't reject the pool and skip finalization / abandon the other items.
+        console.error(`[batch-setup] Unexpected failure for ${item.pieceName}/${item.actionName}:`, err?.message);
+        item.status = 'error';
+        item.error = err?.message ?? 'Unknown error';
+        if (item.setupItemId) updateSetupRunItem(item.setupItemId, { status: 'error', error: item.error });
+        emitBatchEvent(queue, 'item_update', { index, ...item });
+      }
     }
-  });
+  })));
 
   const finalStatus = queue.cancelled ? 'cancelled' : 'done';
 
@@ -306,16 +307,18 @@ router.post('/start', async (req, res) => {
     return res.status(400).json({ error: 'pieceNames array is required' });
   }
 
-  const existing = getBatchQueue();
-  if (existing && existing.status === 'running') {
-    return res.status(409).json({ error: 'A batch is already running' });
+  const active = activeBatchPieceNames();
+  const skippedPieces = selections.filter(s => active.has(s.pieceName)).map(s => s.pieceName);
+  const usable = selections.filter(s => !active.has(s.pieceName));
+  if (usable.length === 0) {
+    return res.status(409).json({ error: 'All selected pieces are already in an active batch.', skippedPieces });
   }
 
   try {
     const client = createClient();
     const items: BatchQueueItem[] = [];
 
-    for (const selection of selections) {
+    for (const selection of usable) {
       const { pieceName } = selection;
       const piece = await client.getPieceMetadata(pieceName);
       const existingTargets = new Set(listTestPlans(pieceName).map(p => `${p.target_type}:${p.target_action}`));
@@ -323,7 +326,7 @@ router.post('/start', async (req, res) => {
       items.push(...itemsForSelection(piece, selection, existingTargets));
     }
 
-    const pieceNamesDistinct = [...new Set(selections.map(s => s.pieceName))];
+    const pieceNamesDistinct = [...new Set(usable.map(s => s.pieceName))];
     const cadence: Cadence = schedule?.enabled === false ? 'none' : (schedule?.cadence ?? 'monthly');
     const run = createSetupRun({
       cadence,
@@ -348,6 +351,7 @@ router.post('/start', async (req, res) => {
       id: queue.id,
       setupRunId: run.id,
       totalItems: items.length,
+      skippedPieces,
       pendingItems: items.filter(i => i.status === 'pending').length,
       skippedItems: items.filter(i => i.status === 'skipped').length,
     });
@@ -356,38 +360,7 @@ router.post('/start', async (req, res) => {
   }
 });
 
-// ── Get batch status ──
-router.get('/status', (_req, res) => {
-  const status = getBatchQueueStatus();
-  if (!status) {
-    return res.json(null);
-  }
-  res.json(status);
-});
-
-// ── Subscribe to batch events (SSE) ──
-router.get('/subscribe', (req, res) => {
-  const queue = getBatchQueue();
-  if (!queue) {
-    return res.status(404).json({ error: 'No batch queue exists' });
-  }
-
-  req.setTimeout(600_000);
-  const sendEvent = setupSSE(res);
-  const unsubscribe = subscribeToBatchWithCleanup(queue, sendEvent, () => res.end());
-  res.on('close', () => { unsubscribe(); });
-});
-
-// ── Cancel batch ──
-router.post('/cancel', (_req, res) => {
-  const cancelled = cancelBatchQueue();
-  if (!cancelled) {
-    return res.status(404).json({ error: 'No running batch to cancel' });
-  }
-  res.json({ success: true });
-});
-
-// ── Setup run history ──
+// ── Setup run history ── (registered before /:id/... so it isn't captured as an id)
 router.get('/runs', (_req, res) => {
   res.json(listSetupRuns());
 });
@@ -396,6 +369,34 @@ router.get('/runs/:id', (req, res) => {
   const run = getSetupRun(parseInt(req.params.id));
   if (!run) return res.status(404).json({ error: 'Setup run not found' });
   res.json({ run, items: listSetupRunItems(run.id) });
+});
+
+// ── List all batches ── (registered before /:id/status so 'batches' isn't read as an id)
+router.get('/batches', (_req, res) => {
+  res.json(listBatches().map(q => getBatchStatus(q.id)));
+});
+
+// ── Get batch status ──
+router.get('/:id/status', (req, res) => {
+  const s = getBatchStatus(req.params.id);
+  return s ? res.json(s) : res.json(null);
+});
+
+// ── Subscribe to batch events (SSE) ──
+router.get('/:id/subscribe', (req, res) => {
+  const queue = getBatch(req.params.id);
+  if (!queue) return res.status(404).json({ error: 'No such batch' });
+  req.setTimeout(600_000);
+  const sendEvent = setupSSE(res);
+  const unsubscribe = subscribeToBatchWithCleanup(queue, sendEvent, () => res.end());
+  res.on('close', () => { unsubscribe(); });
+});
+
+// ── Cancel batch ──
+router.post('/:id/cancel', (req, res) => {
+  return cancelBatch(req.params.id)
+    ? res.json({ success: true })
+    : res.status(404).json({ error: 'No running batch to cancel' });
 });
 
 export default router;
