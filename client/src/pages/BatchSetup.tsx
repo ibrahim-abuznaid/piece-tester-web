@@ -86,6 +86,7 @@ export default function BatchSetup() {
   const [scheduleExpanded, setScheduleExpanded] = useState(false);
 
   // Batch state
+  const [activeBatchId, setActiveBatchId] = useState<string | null>(null);
   const [batchStatus, setBatchStatus] = useState<BatchStatus | null>(null);
   const [batchItems, setBatchItems] = useState<(BatchQueueItemStatus & { index: number })[]>([]);
   const [batchLogs, setBatchLogs] = useState<Record<number, AgentLogEntry[]>>({});
@@ -93,32 +94,19 @@ export default function BatchSetup() {
   const [expandedItemLog, setExpandedItemLog] = useState<number | null>(null);
   const [starting, setStarting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [skippedNotice, setSkippedNotice] = useState<string | null>(null);
   const subControllerRef = useRef<AbortController | null>(null);
+
+  // Running batches for the dashboard — polled while on the landing view.
+  const { data: activeBatches } = useQuery({
+    queryKey: ['activeBatches'], queryFn: api.listActiveBatches, refetchInterval: 3000,
+  });
 
   const connectedPieces = new Set(connections?.map((c: any) => c.piece_name) ?? []);
 
-  // Check for existing batch on mount — resume a running/finished wizard.
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const status = await api.getBatchStatus();
-        if (cancelled) return;
-        if (status) {
-          setBatchStatus(status);
-          setBatchItems(status.items.map((it, i) => ({ ...it, index: i })));
-          setWizardActive(true);
-          setStep(status.status === 'running' ? 'generate' : 'done');
-          if (status.status === 'running') subscribeToExistingBatch();
-        }
-      } catch {}
-    })();
-    return () => { cancelled = true; };
-  }, []);
-
-  const subscribeToExistingBatch = useCallback(() => {
+  const subscribeToExistingBatch = useCallback((id: string) => {
     subControllerRef.current?.abort();
-    const controller = api.subscribeBatchSetup({
+    const controller = api.subscribeBatchSetup(id, {
       onItemUpdate: (data) => {
         setBatchItems(prev => {
           const next = [...prev];
@@ -156,21 +144,22 @@ export default function BatchSetup() {
         setBatchStatus(prev => prev ? { ...prev, status: data.status as any, completedAt: Date.now() } : prev);
         if (typeof data.schedulesCreated === 'number') setSchedulesCreated(data.schedulesCreated);
         if (data.status === 'done' || data.status === 'cancelled') setStep('done');
-        refreshStatus();
+        refreshStatus(id);
         refetchRuns();
+        qc.invalidateQueries({ queryKey: ['activeBatches'] });
       },
       onError: (msg) => setError(msg),
     });
     subControllerRef.current = controller;
-  }, [refetchRuns]);
+  }, [refetchRuns, qc]);
 
   useEffect(() => {
     return () => { subControllerRef.current?.abort(); };
   }, []);
 
-  async function refreshStatus() {
+  async function refreshStatus(id: string) {
     try {
-      const status = await api.getBatchStatus();
+      const status = await api.getBatchStatus(id);
       if (status) {
         setBatchStatus(status);
         setBatchItems(status.items.map((it, i) => ({ ...it, index: i })));
@@ -251,10 +240,31 @@ export default function BatchSetup() {
     return (pieces || []).filter((p: any) => connectedPieces.has(p.name));
   }
 
+  async function openBatch(id: string) {
+    setError(null);
+    setSkippedNotice(null);
+    setBatchLogs({});
+    setSchedulesCreated(null);
+    setActiveBatchId(id);
+    setWizardActive(true);
+    try {
+      const status = await api.getBatchStatus(id);
+      if (status) {
+        setBatchStatus(status);
+        setBatchItems(status.items.map((it, i) => ({ ...it, index: i })));
+        setStep(status.status === 'running' ? 'generate' : 'done');
+        if (status.status === 'running') subscribeToExistingBatch(id);
+      }
+    } catch (err: any) {
+      setError(err.message);
+    }
+  }
+
   async function handleStart() {
     if (selected.size === 0) return;
     setStarting(true);
     setError(null);
+    setSkippedNotice(null);
     setBatchLogs({});
     setSchedulesCreated(null);
     try {
@@ -272,13 +282,18 @@ export default function BatchSetup() {
         const targets = keys.filter(k => !deselected.has(k)).map(keyToTarget);
         return { pieceName, targets };
       });
-      await api.startBatchSetup(selections, schedule);
-      const status = await api.getBatchStatus();
+      const res = await api.startBatchSetup(selections, schedule);
+      setActiveBatchId(res.id);
+      if (res.skippedPieces?.length) {
+        setSkippedNotice(`${res.skippedPieces.length} piece(s) skipped — already in an active batch`);
+      }
+      const status = await api.getBatchStatus(res.id);
       if (status) {
         setBatchStatus(status);
         setBatchItems(status.items.map((it, i) => ({ ...it, index: i })));
       }
-      subscribeToExistingBatch();
+      subscribeToExistingBatch(res.id);
+      qc.invalidateQueries({ queryKey: ['activeBatches'] });
     } catch (err: any) {
       setError(err.message);
     } finally {
@@ -287,20 +302,24 @@ export default function BatchSetup() {
   }
 
   async function handleCancel() {
+    if (!activeBatchId) return;
     try {
-      await api.cancelBatchSetup();
-      setTimeout(refreshStatus, 1000);
+      await api.cancelBatchSetup(activeBatchId);
+      setTimeout(() => refreshStatus(activeBatchId), 1000);
     } catch (err: any) {
       setError(err.message);
     }
   }
 
   function startNewRun() {
+    subControllerRef.current?.abort();
+    setActiveBatchId(null);
     setBatchStatus(null);
     setBatchItems([]);
     setBatchLogs({});
     setSelected(new Set());
     setError(null);
+    setSkippedNotice(null);
     setSchedulesCreated(null);
     setStep('connections');
     setWizardActive(true);
@@ -308,16 +327,20 @@ export default function BatchSetup() {
 
   function backToLanding() {
     subControllerRef.current?.abort();
+    setActiveBatchId(null);
     setBatchStatus(null);
     setBatchItems([]);
     setBatchLogs({});
     setError(null);
+    setSkippedNotice(null);
     setWizardActive(false);
     setStep('connections');
     refetchRuns();
+    qc.invalidateQueries({ queryKey: ['activeBatches'] });
   }
 
   const isRunning = batchStatus?.status === 'running';
+  const runningBatches = (activeBatches ?? []).filter((b: any) => b?.status === 'running');
 
   // Group items by piece for display
   const groupedItems = batchItems.reduce<Record<string, (BatchQueueItemStatus & { index: number })[]>>((acc, item) => {
@@ -366,6 +389,34 @@ export default function BatchSetup() {
           </button>
         </div>
 
+        {runningBatches.length > 0 && (
+          <div className="mb-8">
+            <div className="flex items-center gap-2 mb-3 text-sm text-gray-400">
+              <Loader2 size={16} className="animate-spin text-blue-400" /> Running batches
+            </div>
+            <div className="bg-gray-900 border border-gray-800 rounded-lg divide-y divide-gray-800">
+              {runningBatches.map((b: any) => {
+                const pieceNames = Array.from(new Set((b.items ?? []).map((it: any) => it.pieceDisplayName || it.pieceName)));
+                const done = b.stats?.done ?? 0;
+                return (
+                  <div key={b.id} className="flex items-center justify-between px-4 py-3">
+                    <div className="min-w-0">
+                      <div className="font-medium text-sm truncate">
+                        {pieceNames.slice(0, 4).join(', ')}
+                        {pieceNames.length > 4 && ` +${pieceNames.length - 4} more`}
+                      </div>
+                      <div className="text-xs text-gray-500">{done} of {b.totalItems} targets done</div>
+                    </div>
+                    <button onClick={() => openBatch(b.id)} className="flex items-center gap-1.5 px-3 py-1.5 text-sm bg-primary-600 hover:bg-primary-700 rounded-lg font-medium transition-colors shrink-0">
+                      Open <ArrowRight size={14} />
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
         <div className="flex items-center gap-2 mb-3 text-sm text-gray-400">
           <History size={16} /> Recent Setup Runs
         </div>
@@ -407,6 +458,12 @@ export default function BatchSetup() {
       {error && (
         <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-3 mb-4 text-sm text-red-300 flex items-center gap-2">
           <AlertTriangle size={14} /> {error}
+        </div>
+      )}
+
+      {skippedNotice && (
+        <div className="bg-yellow-500/10 border border-yellow-500/30 rounded-lg p-3 mb-4 text-sm text-yellow-300 flex items-center gap-2">
+          <SkipForward size={14} /> {skippedNotice}
         </div>
       )}
 

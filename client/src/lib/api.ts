@@ -957,9 +957,9 @@ export interface BatchStreamCallbacks {
   onError: (message: string) => void;
 }
 
-function subscribeBatchSetup(callbacks: BatchStreamCallbacks): AbortController {
+function subscribeBatchSetup(id: string, callbacks: BatchStreamCallbacks): AbortController {
   const controller = new AbortController();
-  const url = `${BASE}/batch-setup/subscribe`;
+  const url = `${BASE}/batch-setup/${id}/subscribe`;
 
   (async () => {
     try {
@@ -1217,10 +1217,11 @@ export const api = {
 
   // Batch Setup
   startBatchSetup: (selections: BatchSelection[], schedule?: ScheduleConfigInput) =>
-    request<{ id: string; setupRunId: number; totalItems: number; pendingItems: number; skippedItems: number }>('POST', '/batch-setup/start', { selections, schedule }),
-  getBatchStatus: () => request<BatchStatus | null>('GET', '/batch-setup/status'),
+    request<{ id: string; setupRunId: number; totalItems: number; skippedPieces: string[]; pendingItems: number; skippedItems: number }>('POST', '/batch-setup/start', { selections, schedule }),
+  listActiveBatches: () => request<BatchStatus[]>('GET', '/batch-setup/batches'),
+  getBatchStatus: (id: string) => request<BatchStatus | null>('GET', `/batch-setup/${id}/status`),
   subscribeBatchSetup,
-  cancelBatchSetup: () => request<{ success: boolean }>('POST', '/batch-setup/cancel'),
+  cancelBatchSetup: (id: string) => request<{ success: boolean }>('POST', `/batch-setup/${id}/cancel`),
   getSetupRuns: () => request<SetupRunSummary[]>('GET', '/batch-setup/runs'),
   getSetupRunDetail: (id: number) =>
     request<{ run: SetupRunSummary; items: SetupRunItem[] }>('GET', `/batch-setup/runs/${id}`),
