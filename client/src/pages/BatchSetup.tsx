@@ -556,7 +556,7 @@ export default function BatchSetup() {
             <>
               <div className="flex items-center justify-between mb-4">
                 <p className="text-gray-400 text-sm">
-                  {isRunning ? 'Creating plans sequentially…' : `Batch ${batchStatus.status}`} — {batchItems.length} targets total
+                  {isRunning ? 'Creating plans…' : `Batch ${batchStatus.status}`} — {batchItems.length} targets total
                 </p>
                 {isRunning && (
                   <button onClick={handleCancel} className="flex items-center gap-2 px-4 py-2 bg-red-600 hover:bg-red-700 rounded-lg text-sm font-medium transition-colors">

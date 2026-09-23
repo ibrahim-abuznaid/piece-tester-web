@@ -31,6 +31,7 @@ export interface SettingsRow {
   notify_storm_threshold: number;
   notify_retest_count: number;
   notify_reauth_digest_time: string;
+  batch_concurrency: number;
   updated_at: string;
 }
 
@@ -66,6 +67,7 @@ export function updateSettings(s: Partial<Omit<SettingsRow, 'id' | 'updated_at'>
       notify_storm_threshold = ?,
       notify_retest_count = ?,
       notify_reauth_digest_time = ?,
+      batch_concurrency = ?,
       updated_at = datetime('now')
     WHERE id = 1
   `, [
@@ -93,6 +95,7 @@ export function updateSettings(s: Partial<Omit<SettingsRow, 'id' | 'updated_at'>
     s.notify_storm_threshold ?? current.notify_storm_threshold,
     s.notify_retest_count ?? current.notify_retest_count,
     s.notify_reauth_digest_time ?? current.notify_reauth_digest_time,
+    s.batch_concurrency ?? current.batch_concurrency,
   ]);
   return getSettings();
 }

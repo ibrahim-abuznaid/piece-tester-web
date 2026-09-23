@@ -6,9 +6,10 @@ import { detectBrokenInputMappings } from '../agents/v2/tools/inspect-output.js'
 import {
   createTestPlan, updateTestPlan, listTestPlans,
   createSetupRun, addSetupRunItems, updateSetupRunItem, finalizeSetupRun,
-  getSetupRun, listSetupRuns, listSetupRunItems,
+  getSetupRun, listSetupRuns, listSetupRunItems, getSettings,
 } from '../db/queries.js';
 import { executePlan } from '../services/plan-executor.js';
+import { runWithConcurrency, boundConcurrency } from '../services/concurrency.js';
 import { itemsForSelection } from '../services/batch-selection.js';
 import { extractAndStoreLessons } from '../services/lesson-extractor.js';
 import { createSchedulesForRun } from '../services/setup-scheduler.js';
@@ -33,192 +34,220 @@ function setupSSE(res: any) {
   };
 }
 
+/** Max targets generated concurrently per batch. Bounded because the Activepieces instance
+ *  (especially Cloud) — not Anthropic — is the capacity ceiling. Settings UI value wins,
+ *  then the BATCH_CONCURRENCY env var, then a default of 3; clamped to [1, 20]. Read per run
+ *  so a Settings change takes effect on the next batch without a restart. */
+function batchConcurrency(): number {
+  return boundConcurrency(getSettings().batch_concurrency || Number(process.env.BATCH_CONCURRENCY) || 3);
+}
+
+async function processBatchItem(
+  queue: BatchQueue,
+  client: ReturnType<typeof createClient>,
+  item: BatchQueueItem,
+  i: number,
+): Promise<void> {
+  if (queue.cancelled) return;
+  queue.currentIndex = i;
+
+  if (item.status === 'skipped') {
+    if (item.setupItemId) updateSetupRunItem(item.setupItemId, { status: 'skipped' });
+    emitBatchEvent(queue, 'item_update', { index: i, ...item });
+    return;
+  }
+
+  item.status = 'running';
+  if (item.setupItemId) updateSetupRunItem(item.setupItemId, { status: 'running' });
+  emitBatchEvent(queue, 'item_update', { index: i, ...item });
+
+  try {
+    const piece = await client.getPieceMetadata(item.pieceName);
+    const actionName = item.actionName;
+    let planId: number | undefined;
+
+    const onLog = (log: AgentLogEntry) => {
+      emitBatchEvent(queue, 'log', { index: i, pieceName: item.pieceName, actionName, log });
+    };
+
+    if (item.targetType === 'trigger') {
+      if (!piece.triggers?.[actionName]) {
+        item.status = 'error';
+        item.error = `Trigger "${actionName}" not found`;
+        if (item.setupItemId) updateSetupRunItem(item.setupItemId, { status: 'error', error: item.error });
+        emitBatchEvent(queue, 'item_update', { index: i, ...item });
+        return;
+      }
+
+      const planResult = await createTriggerTestPlanV2({
+        pieceMeta: piece,
+        triggerName: actionName,
+        onLog: (l: any) => onLog(l),
+      });
+
+      if (queue.cancelled) return;
+
+      const saved = createTestPlan({
+        piece_name: item.pieceName,
+        target_action: actionName,
+        target_type: 'trigger',
+        steps: JSON.stringify(planResult.steps),
+        status: 'draft',
+        agent_memory: planResult.agentMemory || '',
+      });
+      planId = saved.id;
+
+      emitBatchEvent(queue, 'plan_created', {
+        index: i, pieceName: item.pieceName, actionName, planId: saved.id, steps: planResult.steps, status: 'draft',
+      });
+
+      // triggers: single auto-test, no fixer loop (unlike the action path)
+      const hasHumanInput = planResult.steps.some((s: any) => s.type === 'human_input');
+      if (!hasHumanInput && planResult.steps.length > 0) {
+        onLog({ timestamp: Date.now(), type: 'thinking', message: 'Auto-testing trigger plan...' });
+        const finalRun = await executePlan(saved.id, () => {}, 'auto_test');
+        if (queue.cancelled) return;
+        if (finalRun.status === 'completed') {
+          onLog({ timestamp: Date.now(), type: 'done', message: 'Auto-test passed!' });
+          updateTestPlan(saved.id, { status: 'approved' });
+          emitBatchEvent(queue, 'plan_approved', { index: i, pieceName: item.pieceName, actionName, planId: saved.id });
+        } else {
+          onLog({ timestamp: Date.now(), type: 'error', message: 'Auto-test did not pass. Left as draft.' });
+        }
+      }
+    } else {
+      if (!piece.actions[actionName]) {
+        item.status = 'error';
+        item.error = `Action "${actionName}" not found`;
+        if (item.setupItemId) updateSetupRunItem(item.setupItemId, { status: 'error', error: item.error });
+        emitBatchEvent(queue, 'item_update', { index: i, ...item });
+        return;
+      }
+
+      // Create the plan (v2 multi-agent planner — same as the per-piece flow)
+      const planResult = await createTestPlanV2({ pieceMeta: piece, actionName, onLog: (l: any) => onLog(l) });
+
+      if (queue.cancelled) return;
+
+      const saved = createTestPlan({
+        piece_name: item.pieceName,
+        target_action: actionName,
+        steps: JSON.stringify(planResult.steps),
+        status: 'draft',
+        agent_memory: planResult.agentMemory || '',
+      });
+      planId = saved.id;
+
+      emitBatchEvent(queue, 'plan_created', {
+        index: i,
+        pieceName: item.pieceName,
+        actionName,
+        planId: saved.id,
+        steps: planResult.steps,
+        status: 'draft',
+      });
+
+      // Auto-test if no human input steps
+      const hasHumanInputSteps = planResult.steps.some((s: any) => s.type === 'human_input');
+
+      if (!hasHumanInputSteps && planResult.steps.length > 0) {
+        const MAX_FIX_ATTEMPTS = 3;
+        let currentSteps = planResult.steps;
+        let currentMemory = planResult.agentMemory;
+        let autoTestPassed = false;
+
+        for (let attempt = 0; attempt <= MAX_FIX_ATTEMPTS; attempt++) {
+          if (queue.cancelled) break;
+
+          onLog({ timestamp: Date.now(), type: 'thinking', message: `Auto-testing plan (attempt ${attempt + 1}/${MAX_FIX_ATTEMPTS + 1})...` });
+
+          const finalRun = await executePlan(saved.id, () => {}, 'auto_test');
+
+          if (queue.cancelled) break;
+
+          if (finalRun.status === 'completed') {
+            onLog({ timestamp: Date.now(), type: 'done', message: 'Auto-test passed!' });
+            autoTestPassed = true;
+            updateTestPlan(saved.id, { status: 'approved' });
+
+            if (attempt > 0) {
+              extractAndStoreLessons(
+                item.pieceName, piece.displayName,
+                planResult.steps, JSON.parse(finalRun.step_results || '[]'), currentSteps,
+              ).catch(() => {});
+            }
+
+            emitBatchEvent(queue, 'plan_approved', {
+              index: i, pieceName: item.pieceName, actionName, planId: saved.id,
+            });
+            break;
+          }
+
+          if (attempt >= MAX_FIX_ATTEMPTS) {
+            onLog({ timestamp: Date.now(), type: 'error', message: `Auto-test still failing after ${MAX_FIX_ATTEMPTS + 1} attempts.` });
+            break;
+          }
+
+          onLog({ timestamp: Date.now(), type: 'thinking', message: 'Auto-test failed, running v2 fixer...' });
+          const stepResults = JSON.parse(finalRun.step_results || '[]');
+          const brokenMappings = detectBrokenInputMappings(currentSteps, stepResults);
+
+          const fixResult = await fixTestPlanV2({
+            pieceMeta: piece,
+            actionName,
+            previousSteps: currentSteps,
+            stepResults,
+            brokenMappings,
+            agentMemory: currentMemory,
+            onLog: (l: any) => onLog(l),
+          });
+
+          if (queue.cancelled) break;
+
+          updateTestPlan(saved.id, {
+            steps: JSON.stringify(fixResult.steps),
+            agent_memory: fixResult.agentMemory || currentMemory || '',
+          });
+
+          currentSteps = fixResult.steps;
+          currentMemory = fixResult.agentMemory || currentMemory;
+        }
+      }
+    }
+
+    item.status = 'done';
+    if (item.setupItemId) updateSetupRunItem(item.setupItemId, { status: 'done', plan_id: planId ?? null });
+    emitBatchEvent(queue, 'item_update', { index: i, ...item });
+
+  } catch (err: any) {
+    if (queue.cancelled) return;
+    console.error(`[batch-setup] Error for ${item.pieceName}/${item.actionName}:`, err.message);
+    item.status = 'error';
+    item.error = err.message;
+    if (item.setupItemId) updateSetupRunItem(item.setupItemId, { status: 'error', error: err.message });
+    emitBatchEvent(queue, 'item_update', { index: i, ...item });
+  }
+}
+
 async function runBatchInBackground(queue: BatchQueue) {
   const client = createClient();
 
-  for (let i = 0; i < queue.items.length; i++) {
-    if (queue.cancelled) break;
-
-    const item = queue.items[i];
-    queue.currentIndex = i;
-
-    if (item.status === 'skipped') {
-      if (item.setupItemId) updateSetupRunItem(item.setupItemId, { status: 'skipped' });
-      emitBatchEvent(queue, 'item_update', { index: i, ...item });
-      continue;
-    }
-
-    item.status = 'running';
-    if (item.setupItemId) updateSetupRunItem(item.setupItemId, { status: 'running' });
-    emitBatchEvent(queue, 'item_update', { index: i, ...item });
-
+  // Generate targets concurrently (bounded) instead of one-at-a-time. Cancellation is honoured
+  // by processBatchItem's internal queue.cancelled checks: in-flight items bail at their next
+  // checkpoint and not-yet-started items return immediately.
+  await runWithConcurrency(queue.items, batchConcurrency(), async (item, i) => {
     try {
-      const piece = await client.getPieceMetadata(item.pieceName);
-      const actionName = item.actionName;
-      let planId: number | undefined;
-
-      const onLog = (log: AgentLogEntry) => {
-        emitBatchEvent(queue, 'log', { index: i, pieceName: item.pieceName, actionName, log });
-      };
-
-      if (item.targetType === 'trigger') {
-        if (!piece.triggers?.[actionName]) {
-          item.status = 'error';
-          item.error = `Trigger "${actionName}" not found`;
-          if (item.setupItemId) updateSetupRunItem(item.setupItemId, { status: 'error', error: item.error });
-          emitBatchEvent(queue, 'item_update', { index: i, ...item });
-          continue;
-        }
-
-        const planResult = await createTriggerTestPlanV2({
-          pieceMeta: piece,
-          triggerName: actionName,
-          onLog: (l: any) => onLog(l),
-        });
-
-        if (queue.cancelled) break;
-
-        const saved = createTestPlan({
-          piece_name: item.pieceName,
-          target_action: actionName,
-          target_type: 'trigger',
-          steps: JSON.stringify(planResult.steps),
-          status: 'draft',
-          agent_memory: planResult.agentMemory || '',
-        });
-        planId = saved.id;
-
-        emitBatchEvent(queue, 'plan_created', {
-          index: i, pieceName: item.pieceName, actionName, planId: saved.id, steps: planResult.steps, status: 'draft',
-        });
-
-        // triggers: single auto-test, no fixer loop (unlike the action path)
-        const hasHumanInput = planResult.steps.some((s: any) => s.type === 'human_input');
-        if (!hasHumanInput && planResult.steps.length > 0) {
-          onLog({ timestamp: Date.now(), type: 'thinking', message: 'Auto-testing trigger plan...' });
-          const finalRun = await executePlan(saved.id, () => {}, 'auto_test');
-          if (queue.cancelled) break;
-          if (finalRun.status === 'completed') {
-            onLog({ timestamp: Date.now(), type: 'done', message: 'Auto-test passed!' });
-            updateTestPlan(saved.id, { status: 'approved' });
-            emitBatchEvent(queue, 'plan_approved', { index: i, pieceName: item.pieceName, actionName, planId: saved.id });
-          } else {
-            onLog({ timestamp: Date.now(), type: 'error', message: 'Auto-test did not pass. Left as draft.' });
-          }
-        }
-      } else {
-        if (!piece.actions[actionName]) {
-          item.status = 'error';
-          item.error = `Action "${actionName}" not found`;
-          if (item.setupItemId) updateSetupRunItem(item.setupItemId, { status: 'error', error: item.error });
-          emitBatchEvent(queue, 'item_update', { index: i, ...item });
-          continue;
-        }
-
-        // Create the plan (v2 multi-agent planner — same as the per-piece flow)
-        const planResult = await createTestPlanV2({ pieceMeta: piece, actionName, onLog: (l: any) => onLog(l) });
-
-        if (queue.cancelled) break;
-
-        const saved = createTestPlan({
-          piece_name: item.pieceName,
-          target_action: actionName,
-          steps: JSON.stringify(planResult.steps),
-          status: 'draft',
-          agent_memory: planResult.agentMemory || '',
-        });
-        planId = saved.id;
-
-        emitBatchEvent(queue, 'plan_created', {
-          index: i,
-          pieceName: item.pieceName,
-          actionName,
-          planId: saved.id,
-          steps: planResult.steps,
-          status: 'draft',
-        });
-
-        // Auto-test if no human input steps
-        const hasHumanInputSteps = planResult.steps.some((s: any) => s.type === 'human_input');
-
-        if (!hasHumanInputSteps && planResult.steps.length > 0) {
-          const MAX_FIX_ATTEMPTS = 3;
-          let currentSteps = planResult.steps;
-          let currentMemory = planResult.agentMemory;
-          let autoTestPassed = false;
-
-          for (let attempt = 0; attempt <= MAX_FIX_ATTEMPTS; attempt++) {
-            if (queue.cancelled) break;
-
-            onLog({ timestamp: Date.now(), type: 'thinking', message: `Auto-testing plan (attempt ${attempt + 1}/${MAX_FIX_ATTEMPTS + 1})...` });
-
-            const finalRun = await executePlan(saved.id, () => {}, 'auto_test');
-
-            if (queue.cancelled) break;
-
-            if (finalRun.status === 'completed') {
-              onLog({ timestamp: Date.now(), type: 'done', message: 'Auto-test passed!' });
-              autoTestPassed = true;
-              updateTestPlan(saved.id, { status: 'approved' });
-
-              if (attempt > 0) {
-                extractAndStoreLessons(
-                  item.pieceName, piece.displayName,
-                  planResult.steps, JSON.parse(finalRun.step_results || '[]'), currentSteps,
-                ).catch(() => {});
-              }
-
-              emitBatchEvent(queue, 'plan_approved', {
-                index: i, pieceName: item.pieceName, actionName, planId: saved.id,
-              });
-              break;
-            }
-
-            if (attempt >= MAX_FIX_ATTEMPTS) {
-              onLog({ timestamp: Date.now(), type: 'error', message: `Auto-test still failing after ${MAX_FIX_ATTEMPTS + 1} attempts.` });
-              break;
-            }
-
-            onLog({ timestamp: Date.now(), type: 'thinking', message: 'Auto-test failed, running v2 fixer...' });
-            const stepResults = JSON.parse(finalRun.step_results || '[]');
-            const brokenMappings = detectBrokenInputMappings(currentSteps, stepResults);
-
-            const fixResult = await fixTestPlanV2({
-              pieceMeta: piece,
-              actionName,
-              previousSteps: currentSteps,
-              stepResults,
-              brokenMappings,
-              agentMemory: currentMemory,
-              onLog: (l: any) => onLog(l),
-            });
-
-            if (queue.cancelled) break;
-
-            updateTestPlan(saved.id, {
-              steps: JSON.stringify(fixResult.steps),
-              agent_memory: fixResult.agentMemory || currentMemory || '',
-            });
-
-            currentSteps = fixResult.steps;
-            currentMemory = fixResult.agentMemory || currentMemory;
-          }
-        }
-      }
-
-      item.status = 'done';
-      if (item.setupItemId) updateSetupRunItem(item.setupItemId, { status: 'done', plan_id: planId ?? null });
-      emitBatchEvent(queue, 'item_update', { index: i, ...item });
-
+      await processBatchItem(queue, client, item, i);
     } catch (err: any) {
-      if (queue.cancelled) break;
-      console.error(`[batch-setup] Error for ${item.pieceName}/${item.actionName}:`, err.message);
+      // processBatchItem catches its own errors; this guard just ensures one unexpected
+      // failure can't reject the pool and skip finalization / abandon the other items.
+      console.error(`[batch-setup] Unexpected failure for ${item.pieceName}/${item.actionName}:`, err?.message);
       item.status = 'error';
-      item.error = err.message;
-      if (item.setupItemId) updateSetupRunItem(item.setupItemId, { status: 'error', error: err.message });
+      item.error = err?.message ?? 'Unknown error';
+      if (item.setupItemId) updateSetupRunItem(item.setupItemId, { status: 'error', error: item.error });
       emitBatchEvent(queue, 'item_update', { index: i, ...item });
     }
-  }
+  });
 
   const finalStatus = queue.cancelled ? 'cancelled' : 'done';
 

@@ -118,6 +118,7 @@ function initTables(db: DatabaseAdapter): void {
     ['notify_storm_threshold',   `ALTER TABLE settings ADD COLUMN notify_storm_threshold INTEGER NOT NULL DEFAULT 8`],
     ['notify_retest_count',      `ALTER TABLE settings ADD COLUMN notify_retest_count INTEGER NOT NULL DEFAULT 2`],
     ['notify_reauth_digest_time',`ALTER TABLE settings ADD COLUMN notify_reauth_digest_time TEXT NOT NULL DEFAULT '09:00'`],
+    ['batch_concurrency',        `ALTER TABLE settings ADD COLUMN batch_concurrency INTEGER NOT NULL DEFAULT 3`],
   ] as const) {
     const c = db.pragma(`table_info(settings)`) as { name: string }[];
     if (!c.some(x => x.name === col)) db.exec(ddl);

@@ -24,6 +24,7 @@ const raw = {
   notify_storm_threshold: 8,
   notify_retest_count: 2,
   notify_reauth_digest_time: '09:00',
+  batch_concurrency: 3,
 };
 
 describe('maskedSettings', () => {
@@ -51,6 +52,7 @@ describe('maskedSettings', () => {
     expect(out.has_jwt).toBe(true);
     expect(out.anthropic_key_masked).toContain('...');
     expect(out.base_url).toBe('https://x/api');
+    expect(out.batch_concurrency).toBe(3);
   });
   it('reports absence when secrets are empty', () => {
     const out = maskedSettings({ ...raw, api_key: '', anthropic_api_key: '', jwt_token: '', mcp_token: '', mcp_access_token: '' }) as any;
