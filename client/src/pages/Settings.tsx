@@ -355,7 +355,7 @@ export default function Settings() {
             onChange={(e) => setForm({ ...form, batch_concurrency: parseInt(e.target.value) || 3 })}
           />
           <p className="text-xs text-gray-500 mt-1">
-            Plans generated at once in Batch Setup. Higher is faster, but too high can overload Activepieces (especially Cloud). Default 3.
+            Pieces tested at once across all running batches. Higher is faster, but too high can overload Activepieces (especially Cloud). Default 3.
           </p>
         </div>
         <div className="flex gap-3 pt-2">
