@@ -18,19 +18,56 @@ export interface McpProxyClientOptions {
   timeoutMs?: number;
   /** Optional external signal (e.g. an agent's abort) that also cancels in-flight requests. */
   signal?: AbortSignal;
+  /** Max automatic retries on transient (429/502/503/504) errors. Default 3. */
+  maxRetries?: number;
+  /** Base backoff in ms between retries (exponential, capped at 4s). Default 500. */
+  retryBackoffMs?: number;
 }
 
 export class McpProxyClient {
+  private static readonly RETRYABLE_STATUS = new Set([429, 502, 503, 504]);
+
   private sessionId: string | null = null;
   private timeoutMs: number;
   private externalSignal?: AbortSignal;
+  private maxRetries: number;
+  private retryBackoffMs: number;
 
   constructor(private url: string, private token: string, opts: McpProxyClientOptions = {}) {
     this.timeoutMs = opts.timeoutMs ?? 60_000;
     this.externalSignal = opts.signal;
+    this.maxRetries = opts.maxRetries ?? 3;
+    this.retryBackoffMs = opts.retryBackoffMs ?? 500;
   }
 
+  /** Retry transient gateway/rate-limit failures with capped exponential backoff. */
   private async rpc(method: string, params?: unknown, expectResponse = true): Promise<unknown> {
+    for (let attempt = 0; ; attempt++) {
+      try {
+        return await this.rpcOnce(method, params, expectResponse);
+      } catch (err) {
+        const status = (err as { status?: number }).status;
+        const retryable = status !== undefined && McpProxyClient.RETRYABLE_STATUS.has(status);
+        if (!retryable || attempt >= this.maxRetries) throw err;
+        await this.backoff(attempt);
+      }
+    }
+  }
+
+  /** Abortable exponential backoff. Rejects promptly if the external signal fires mid-wait. */
+  private backoff(attempt: number): Promise<void> {
+    const ms = Math.min(this.retryBackoffMs * 2 ** attempt, 4000);
+    return new Promise<void>((resolve, reject) => {
+      const signal = this.externalSignal;
+      if (signal?.aborted) return reject(new Error('aborted during backoff'));
+      let timer: ReturnType<typeof setTimeout>;
+      const onAbort = () => { clearTimeout(timer); reject(new Error('aborted during backoff')); };
+      timer = setTimeout(() => { signal?.removeEventListener('abort', onAbort); resolve(); }, ms);
+      signal?.addEventListener('abort', onAbort, { once: true });
+    });
+  }
+
+  private async rpcOnce(method: string, params?: unknown, expectResponse = true): Promise<unknown> {
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
       'Accept': 'application/json, text/event-stream',
@@ -54,7 +91,9 @@ export class McpProxyClient {
 
     if (!res.ok) {
       const text = await res.text().catch(() => `HTTP ${res.status}`);
-      throw new Error(`MCP RPC ${method} failed (${res.status}): ${text}`);
+      const err = new Error(`MCP RPC ${method} failed (${res.status}): ${text}`) as Error & { status: number };
+      err.status = res.status;
+      throw err;
     }
 
     // Capture session ID from server for multi-turn sessions

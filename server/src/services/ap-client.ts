@@ -1,4 +1,4 @@
-import axios, { AxiosInstance, AxiosError } from 'axios';
+import axios, { AxiosInstance, AxiosError, InternalAxiosRequestConfig } from 'axios';
 
 // ── Types (shared with client via API responses) ──
 
@@ -100,19 +100,56 @@ export interface TriggerEventWithPayload {
 
 // ── Client ──
 
+/** Transient errors worth retrying — gateway hiccups (origin overload) and rate limits. */
+const AP_RETRYABLE_STATUS = new Set([429, 502, 503, 504]);
+const delay = (ms: number): Promise<void> => new Promise(resolve => setTimeout(resolve, ms));
+
+export interface ApRetryOptions {
+  /** Max automatic retries on transient (429/502/503/504) GET failures. Default 3. */
+  maxRetries?: number;
+  /** Base backoff in ms between retries (exponential, capped at 4s). Default 500. */
+  retryBackoffMs?: number;
+}
+
 export class ActivepiecesClient {
   private http: AxiosInstance;
   private projectId: string;
   /** If set, this JWT token is used for endpoints that require a user principal (test-step) */
   private jwtToken: string | null;
+  private maxRetries: number;
+  private retryBackoffMs: number;
 
-  constructor(baseUrl: string, apiKey: string, projectId: string, jwtToken?: string) {
+  constructor(baseUrl: string, apiKey: string, projectId: string, jwtToken?: string, retry: ApRetryOptions = {}) {
     this.projectId = projectId;
     this.jwtToken = jwtToken || null;
+    this.maxRetries = retry.maxRetries ?? 3;
+    this.retryBackoffMs = retry.retryBackoffMs ?? 500;
     this.http = axios.create({
       baseURL: baseUrl.replace(/\/+$/, ''),
       headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
       timeout: 30_000,
+    });
+    this.installRetry(this.http);
+  }
+
+  /**
+   * Retry idempotent GETs (metadata reads, flow-run/trigger-event polls) on transient
+   * gateway/rate-limit errors with capped exponential backoff. Writes (POST/DELETE) are
+   * never retried — a retried write could create duplicate flows or double-run a step.
+   */
+  private installRetry(http: AxiosInstance): void {
+    http.interceptors.response.use(undefined, async (error: AxiosError) => {
+      const config = error.config as (InternalAxiosRequestConfig & { _retryCount?: number }) | undefined;
+      const status = error.response?.status;
+      const isGet = config?.method?.toLowerCase() === 'get';
+      const retryable = isGet && status !== undefined && AP_RETRYABLE_STATUS.has(status);
+      if (!config || !retryable) throw error;
+
+      const attempt = config._retryCount ?? 0;
+      if (attempt >= this.maxRetries) throw error;
+      config._retryCount = attempt + 1;
+      await delay(Math.min(this.retryBackoffMs * 2 ** attempt, 4000));
+      return http(config);
     });
   }
 
