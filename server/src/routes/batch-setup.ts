@@ -253,36 +253,42 @@ async function runBatchInBackground(queue: BatchQueue) {
   const finalStatus = queue.cancelled ? 'cancelled' : 'done';
 
   let scheduleIds: number[] = [];
-  if (!queue.cancelled && queue.setupRunId) {
-    const run = getSetupRun(queue.setupRunId);
-    let cfg: Record<string, any> = {};
-    try { cfg = JSON.parse(run?.config ?? '{}'); } catch { /* malformed config — treat as empty */ }
-    const cadence = (run?.cadence ?? 'none') as Cadence;
-    if (cfg.scheduleEnabled) {
-      const selectedPieces: string[] = cfg.pieceNames ?? [];
-      const eligible = selectedPieces.filter(p => listTestPlans(p).some(pl => pl.status === 'approved'));
-      try {
-        scheduleIds = createSchedulesForRun({
-          pieceNames: eligible,
-          cadence,
-          customCron: cfg.customCron || undefined,
-        });
-      } catch (e: any) {
-        console.error('[batch-setup] auto-schedule failed:', e.message);
+  try {
+    if (!queue.cancelled && queue.setupRunId) {
+      const run = getSetupRun(queue.setupRunId);
+      let cfg: Record<string, any> = {};
+      try { cfg = JSON.parse(run?.config ?? '{}'); } catch { /* malformed config — treat as empty */ }
+      const cadence = (run?.cadence ?? 'none') as Cadence;
+      if (cfg.scheduleEnabled) {
+        const selectedPieces: string[] = cfg.pieceNames ?? [];
+        const eligible = selectedPieces.filter(p => listTestPlans(p).some(pl => pl.status === 'approved'));
+        try {
+          scheduleIds = createSchedulesForRun({
+            pieceNames: eligible,
+            cadence,
+            customCron: cfg.customCron || undefined,
+          });
+        } catch (e: any) {
+          console.error('[batch-setup] auto-schedule failed:', e.message);
+        }
       }
     }
-  }
 
-  if (queue.setupRunId) {
-    finalizeSetupRun(queue.setupRunId, {
-      status: finalStatus,
-      schedule_ids: scheduleIds,
-      schedules_created: scheduleIds.length,
-    });
+    if (queue.setupRunId) {
+      finalizeSetupRun(queue.setupRunId, {
+        status: finalStatus,
+        schedule_ids: scheduleIds,
+        schedules_created: scheduleIds.length,
+      });
+    }
+  } catch (err: any) {
+    console.error('[batch-setup] finalization failed:', err?.message);
+  } finally {
+    // Always complete the batch — otherwise it stays 'running' forever and its pieces
+    // stay locked out of every future batch (activeBatchPieceNames).
+    completeBatchQueue(queue, finalStatus);
+    emitBatchEvent(queue, 'batch_done', { status: queue.status, setupRunId: queue.setupRunId, schedulesCreated: scheduleIds.length });
   }
-
-  completeBatchQueue(queue, finalStatus);
-  emitBatchEvent(queue, 'batch_done', { status: queue.status, setupRunId: queue.setupRunId, schedulesCreated: scheduleIds.length });
 }
 
 // ── Start batch setup ──
@@ -345,7 +351,7 @@ router.post('/start', async (req, res) => {
 
     const queue = createBatchQueue(items);
     queue.setupRunId = run.id;
-    runBatchInBackground(queue);
+    runBatchInBackground(queue).catch(err => console.error('[batch-setup] background run error:', err?.message));
 
     res.json({
       id: queue.id,

@@ -40,7 +40,9 @@ function pump(): void {
     const task = pending.splice(idx, 1)[0];
     active++; activeByBatch[task.batchId] = (activeByBatch[task.batchId] ?? 0) + 1;
     task.run().then(task.resolve, task.reject).finally(() => {
-      active--; activeByBatch[task.batchId] = (activeByBatch[task.batchId] ?? 1) - 1;
+      active--;
+      const remaining = (activeByBatch[task.batchId] ?? 1) - 1;
+      if (remaining > 0) activeByBatch[task.batchId] = remaining; else delete activeByBatch[task.batchId];
       pump();
     });
   }
