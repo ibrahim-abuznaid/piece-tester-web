@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { runWithConcurrency } from './concurrency.js';
+import { runWithConcurrency, boundConcurrency } from './concurrency.js';
 
 describe('runWithConcurrency', () => {
   it('never exceeds the limit and processes every item', async () => {
@@ -24,5 +24,32 @@ describe('runWithConcurrency', () => {
     let called = 0;
     await runWithConcurrency([], 3, async () => { called++; });
     expect(called).toBe(0);
+  });
+});
+
+describe('boundConcurrency', () => {
+  it('passes a valid value through', () => {
+    expect(boundConcurrency(3)).toBe(3);
+  });
+
+  it('floors to at least 1', () => {
+    expect(boundConcurrency(0)).toBe(1);
+    expect(boundConcurrency(-5)).toBe(1);
+  });
+
+  it('caps at the default max of 20', () => {
+    expect(boundConcurrency(100)).toBe(20);
+  });
+
+  it('truncates fractional values', () => {
+    expect(boundConcurrency(2.9)).toBe(2);
+  });
+
+  it('falls back to 1 for non-finite input', () => {
+    expect(boundConcurrency(NaN)).toBe(1);
+  });
+
+  it('respects a custom max', () => {
+    expect(boundConcurrency(8, 5)).toBe(5);
   });
 });

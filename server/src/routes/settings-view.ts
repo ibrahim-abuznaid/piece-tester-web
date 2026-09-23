@@ -21,6 +21,7 @@ export interface SettingsForView {
   notify_storm_threshold: number;
   notify_retest_count: number;
   notify_reauth_digest_time: string;
+  batch_concurrency: number;
   ap_service_email: string;
   ap_service_password: string;
   jwt_expiry: string;
@@ -70,6 +71,7 @@ export function maskedSettings(s: SettingsForView) {
     notify_storm_threshold: s.notify_storm_threshold,
     notify_retest_count: s.notify_retest_count,
     notify_reauth_digest_time: s.notify_reauth_digest_time,
+    batch_concurrency: s.batch_concurrency,
     auto_refresh_enabled: !!(s.ap_service_email && s.ap_service_password),
     service_email_masked: maskEmail(s.ap_service_email),
     jwt_expires_at: s.jwt_expiry || '',

@@ -1,6 +1,7 @@
 import crypto from 'crypto';
 import { Router } from 'express';
 import { getSettings, updateSettings, getAiUsageSummary, getAiUsageBySession, getAiUsageByPiece, getAiUsageRecent } from '../db/queries.js';
+import { boundConcurrency } from '../services/concurrency.js';
 import { ActivepiecesClient } from '../services/ap-client.js';
 import { maskedSettings } from './settings-view.js';
 import { encryptSecret, hasEncryptionKey } from '../services/crypto-vault.js';
@@ -88,6 +89,7 @@ router.put('/', (req, res) => {
     if (typeof b.notify_storm_threshold === 'number' && Number.isFinite(b.notify_storm_threshold)) updates.notify_storm_threshold = Math.max(1, Math.floor(b.notify_storm_threshold));
     if (typeof b.notify_retest_count === 'number' && Number.isFinite(b.notify_retest_count)) updates.notify_retest_count = Math.max(0, Math.min(5, Math.floor(b.notify_retest_count)));
     if (typeof b.notify_reauth_digest_time === 'string' && /^\d{2}:\d{2}$/.test(b.notify_reauth_digest_time)) updates.notify_reauth_digest_time = b.notify_reauth_digest_time;
+    if (typeof b.batch_concurrency === 'number' && Number.isFinite(b.batch_concurrency)) updates.batch_concurrency = boundConcurrency(b.batch_concurrency);
     res.json(maskedSettings(updateSettings(updates)));
   } catch (err: any) {
     res.status(400).json({ error: err.message });

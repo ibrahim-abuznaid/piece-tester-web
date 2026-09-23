@@ -9,7 +9,7 @@ const AI_MODELS = [
 ];
 
 export default function Settings() {
-  const [form, setForm] = useState({ base_url: '', api_key: '', project_id: '', test_timeout_ms: 180000 });
+  const [form, setForm] = useState({ base_url: '', api_key: '', project_id: '', test_timeout_ms: 180000, batch_concurrency: 3 });
   const [hasApiKey, setHasApiKey] = useState(false);
   const [apiKeyMasked, setApiKeyMasked] = useState('');
   const [hasJwt, setHasJwt] = useState(false);
@@ -63,7 +63,7 @@ export default function Settings() {
 
   useEffect(() => {
     api.getSettings().then((s) => {
-      setForm({ base_url: s.base_url, api_key: '', project_id: s.project_id, test_timeout_ms: s.test_timeout_ms });
+      setForm({ base_url: s.base_url, api_key: '', project_id: s.project_id, test_timeout_ms: s.test_timeout_ms, batch_concurrency: s.batch_concurrency ?? 3 });
       setHasApiKey(s.has_api_key || false);
       setApiKeyMasked(s.api_key_masked || '');
       setHasJwt(s.has_jwt);
@@ -114,6 +114,7 @@ export default function Settings() {
         base_url: form.base_url,
         project_id: form.project_id,
         test_timeout_ms: form.test_timeout_ms,
+        batch_concurrency: form.batch_concurrency,
       };
       const submittedKey = form.api_key.trim();
       if (submittedKey) payload.api_key = submittedKey;
@@ -342,6 +343,20 @@ export default function Settings() {
             value={form.test_timeout_ms}
             onChange={(e) => setForm({ ...form, test_timeout_ms: parseInt(e.target.value) || 180000 })}
           />
+        </div>
+        <div>
+          <label className="block text-sm text-gray-400 mb-1">Batch concurrency</label>
+          <input
+            className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm focus:outline-none focus:border-primary-500"
+            type="number"
+            min={1}
+            max={20}
+            value={form.batch_concurrency}
+            onChange={(e) => setForm({ ...form, batch_concurrency: parseInt(e.target.value) || 3 })}
+          />
+          <p className="text-xs text-gray-500 mt-1">
+            Pieces tested at once across all running batches. Higher is faster, but too high can overload Activepieces (especially Cloud). Default 3.
+          </p>
         </div>
         <div className="flex gap-3 pt-2">
           <button onClick={handleSave} disabled={saving} className="px-4 py-2 bg-primary-600 hover:bg-primary-700 rounded text-sm font-medium disabled:opacity-50">
