@@ -59,8 +59,9 @@ export async function seedRosterIfEmpty(
   try {
     users = await loadUsers();
   } catch {
-    return { roster: null, seeded: [], notFound: DEFAULT_ROSTER_NAMES };
+    return { roster: null, seeded: [], notFound: [...DEFAULT_ROSTER_NAMES] };
   }
   const { matched, notFound } = matchRosterSeed(users, DEFAULT_ROSTER_NAMES);
-  return { roster: matched, seeded: matched.map(m => m.name), notFound };
+  const roster = validateRoster(matched) ?? [];
+  return { roster, seeded: roster.map(m => m.name), notFound };
 }

@@ -81,5 +81,14 @@ describe('seedRosterIfEmpty', () => {
   it('reports every default name as not found when loading users fails', async () => {
     const r = await seedRosterIfEmpty('[]', async () => { throw new Error('Linear down'); });
     expect(r).toEqual({ roster: null, seeded: [], notFound: DEFAULT_ROSTER_NAMES });
+    expect(r.notFound).not.toBe(DEFAULT_ROSTER_NAMES);
+  });
+  it('seeds a user once when they match two default names', async () => {
+    const r = await seedRosterIfEmpty('[]', async () => [
+      { id: 'u-kishan', name: 'Kishan Parmar', displayName: 'Sanket Nannaware' },
+    ]);
+    expect(r.roster).toEqual([{ id: 'u-kishan', name: 'Kishan Parmar' }]);
+    expect(r.seeded).toEqual(['Kishan Parmar']);
+    expect(r.notFound).toEqual(['Ibrahim Abu Znaid', 'Odai Thalji', 'Talal Jaber']);
   });
 });
