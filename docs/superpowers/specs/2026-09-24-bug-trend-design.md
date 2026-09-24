@@ -54,8 +54,8 @@ A **tracked bug** is a Linear issue that matches either query, and whose state t
   2. has label `🛟 support` → **Reported by support** (`support`)
   3. otherwise → **Found internally** (`internal`)
 - **Fixed** means `completedAt` is set. Days to fix = `(completedAt − createdAt) / 1 day`.
-- Label names and team keys live in one constants block in `linear-client.ts`
-  (`GIT_BUG_LABEL`, `PIE_TESTER_LABEL`, `SUPPORT_LABEL`, team keys `GIT` / `PIE`).
+- Label names and team keys live in one constants block in `bug-trend.ts` (`LINEAR_LABELS`,
+  `LINEAR_TEAMS`), which `linear-client.ts` imports.
 
 ### 2. Server: fetching from Linear
 
