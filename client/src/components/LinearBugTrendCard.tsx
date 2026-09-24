@@ -8,7 +8,7 @@ export default function LinearBugTrendCard() {
   const [keyInput, setKeyInput] = useState('');
   const [savingKey, setSavingKey] = useState(false);
   const [roster, setRoster] = useState<RosterMember[]>([]);
-  const [savedIds, setSavedIds] = useState<string[]>([]);
+  const [saved, setSaved] = useState<RosterMember[]>([]);
   const [users, setUsers] = useState<LinearUser[] | null>(null);
   const [usersError, setUsersError] = useState('');
   const [search, setSearch] = useState('');
@@ -16,11 +16,11 @@ export default function LinearBugTrendCard() {
   const [result, setResult] = useState<{ success: boolean; message: string } | null>(null);
 
   const applySettings = (s: any) => {
-    const saved: RosterMember[] = Array.isArray(s.bug_trend_roster) ? s.bug_trend_roster : [];
+    const stored: RosterMember[] = Array.isArray(s.bug_trend_roster) ? s.bug_trend_roster : [];
     setHasKey(!!s.has_linear_api_key);
     setKeyMasked(s.linear_api_key_masked || '');
-    setRoster(saved);
-    setSavedIds(saved.map(m => m.id));
+    setRoster(stored);
+    setSaved(stored);
   };
 
   const loadUsers = async () => {
@@ -88,8 +88,8 @@ export default function LinearBugTrendCard() {
     }
   };
 
-  const rows = useMemo(() => (users ? buildRosterRows(users, roster, savedIds, search) : []), [users, roster, savedIds, search]);
-  const rosterChanged = roster.map(m => m.id).sort().join(',') !== [...savedIds].sort().join(',');
+  const rows = useMemo(() => (users ? buildRosterRows(users, roster, saved, search) : []), [users, roster, saved, search]);
+  const rosterChanged = roster.map(m => m.id).sort().join(',') !== saved.map(m => m.id).sort().join(',');
 
   return (
     <div className="mt-6 rounded-lg border border-gray-800 bg-gray-900 p-4">
