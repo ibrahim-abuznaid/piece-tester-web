@@ -5,6 +5,8 @@ export const LINEAR_TEAMS = { git: 'GIT', pie: 'PIE' } as const;
 /** The month Piece Tester plan runs jumped from hundreds to thousands. Drawn as a marker, not a setting. */
 export const TESTER_AT_SCALE_DATE = '2026-08-01';
 export const DEFAULT_FROM = '2026-06-01';
+/** Earliest allowed `from`: bounds the per-day loop so one request can't stall the server. */
+export const EARLIEST_FROM = '2024-01-01';
 
 export type BugSource = 'support' | 'internal' | 'tester';
 

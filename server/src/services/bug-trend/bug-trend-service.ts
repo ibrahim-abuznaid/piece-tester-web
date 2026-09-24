@@ -1,4 +1,4 @@
-import { buildBugTrend, DEFAULT_FROM, LINEAR_LABELS, TESTER_AT_SCALE_DATE, type BugTrend } from './bug-trend.js';
+import { buildBugTrend, DEFAULT_FROM, EARLIEST_FROM, LINEAR_LABELS, TESTER_AT_SCALE_DATE, type BugTrend } from './bug-trend.js';
 import { createBugCache, type BugCache } from './bug-trend-cache.js';
 import { fetchTrackedBugs } from './linear-client.js';
 import { parseRoster } from './roster.js';
@@ -45,6 +45,7 @@ export async function resolveBugTrendRequest(
 ): Promise<{ status: number; body: BugTrendResponse | { error: string } }> {
   const from = req.from ?? DEFAULT_FROM;
   if (!isValidYmd(from)) return { status: 400, body: { error: 'from must be a date like 2026-06-01' } };
+  if (from < EARLIEST_FROM) return { status: 400, body: { error: `from cannot be before ${EARLIEST_FROM}` } };
   if (Date.parse(`${from}T00:00:00Z`) > req.now.getTime()) return { status: 400, body: { error: 'from cannot be in the future' } };
   if (!req.apiKey) return { status: 200, body: { state: 'needs-setup', missing: 'key' } };
   const roster = parseRoster(req.rosterJson);

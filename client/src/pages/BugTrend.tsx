@@ -11,10 +11,16 @@ import BugTable from '../components/bug-trend/BugTable';
 import { downloadCardPng } from '../components/bug-trend/exportPng';
 
 const DEFAULT_FROM = '2026-06-01';
+const EARLIEST_FROM = '2024-01-01';
 const FOOTNOTE =
   'Counts GIT bugs whose current assignee is on the Pieces team, plus bugs the Piece Tester filed on PIE. ' +
   'Support routes some piece bugs to other engineers, so routing changes move these numbers. ' +
   'Canceled and duplicate issues are left out. Weeks start Monday (UTC). Lighter bar = this week so far.';
+
+/** A full date in [EARLIEST_FROM, today UTC]; a half-typed year like 0202-06-01 never reaches the server. */
+function isUsableFrom(value: string): boolean {
+  return /^\d{4}-\d{2}-\d{2}$/.test(value) && value >= EARLIEST_FROM && value <= new Date().toISOString().slice(0, 10);
+}
 
 export default function BugTrend() {
   const [from, setFrom] = useState(DEFAULT_FROM);
@@ -35,8 +41,8 @@ export default function BugTrend() {
     setExportError('');
     try {
       await downloadCardPng(cardRef.current, pngFileName(data.trend.asOf));
-    } catch (e: any) {
-      setExportError(`Couldn't create the PNG: ${e?.message || String(e)}`);
+    } catch (e) {
+      setExportError(`Couldn't create the PNG: ${e instanceof Error ? e.message : 'the browser could not render the card'}`);
     } finally {
       setExporting(false);
     }
@@ -49,8 +55,9 @@ export default function BugTrend() {
         <div className="flex flex-wrap items-center gap-3 text-sm text-gray-400">
           <label className="flex items-center gap-2">
             From
-            <input type="date" value={from} max={new Date().toISOString().slice(0, 10)}
-              onChange={e => { if (e.target.value) { setFrom(e.target.value); setRefreshNonce(0); } }}
+            <input type="date" defaultValue={from} min={EARLIEST_FROM} max={new Date().toISOString().slice(0, 10)}
+              onChange={e => { if (isUsableFrom(e.target.value)) { setFrom(e.target.value); setRefreshNonce(0); } }}
+              onBlur={e => { if (e.target.value !== from) e.target.value = from; }}
               className="rounded border border-gray-700 bg-gray-950 px-2 py-1 text-gray-200" />
           </label>
           {data?.state === 'ok' && <span>Updated {data.fetchedAt.slice(11, 16)} UTC</span>}
@@ -58,7 +65,7 @@ export default function BugTrend() {
             className="flex items-center gap-1.5 rounded border border-gray-700 px-3 py-1.5 text-gray-200 hover:bg-gray-800 disabled:opacity-50">
             <RefreshCw size={14} className={query.isFetching ? 'animate-spin' : ''} /> Refresh
           </button>
-          <button onClick={handleDownload} disabled={data?.state !== 'ok' || exporting}
+          <button onClick={handleDownload} disabled={data?.state !== 'ok' || exporting || query.isFetching}
             className="flex items-center gap-1.5 rounded bg-primary-600 px-3 py-1.5 text-white hover:bg-primary-500 disabled:opacity-50">
             {exporting ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />} Download PNG
           </button>

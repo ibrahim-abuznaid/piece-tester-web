@@ -162,7 +162,7 @@ New router `server/src/routes/bug-trend.ts`, mounted at `/api/bug-trend` **after
 | Fetch OK (or served from cache) | `200 { state: 'ok', fetchedAt, warnings: string[], trend: BugTrend }` |
 | Fetch failed, no cache | `502 { error: <LinearError message> }` |
 | `from` missing | defaults to `2026-06-01` |
-| `from` malformed or in the future | `400 { error }` |
+| `from` malformed, before 2024-01-01, or in the future | `400 { error }` |
 
 `from` is checked against the request time, but the trend is built as of `fetchedAt`. When the
 cached data was fetched before UTC midnight and `from` is today, the trend starts on the fetch day
@@ -239,6 +239,10 @@ Bug Trend                          From [2026-06-01]   Updated 20:31 UTC ↻   [
 ▸ Show the 33 bugs                     (table, not in the PNG)
 ```
 
+The **From** input allows 2024-01-01 through today (UTC). It changes `from` only when the value is
+a full date in that range, so a half-typed year (`0202-06-01`) never becomes a request. Leaving
+the field with anything else puts the last accepted date back.
+
 **Chart 1: Bugs opened per week** (`recharts` `ComposedChart`, height 240):
 
 - Stacked `Bar`s in a fixed order, bottom to top: support, internal, tester. A source that is zero
@@ -297,7 +301,8 @@ KPI tiles, both charts, footnote); plain SVG-to-canvas would capture one chart a
   `mx-auto` margin onto the clone, which on wide screens shifts the capture right and cuts off the
   card's right edge.
 - All chart series set `isAnimationActive={false}` so a capture never catches a half-drawn chart.
-- The button shows a spinner while capturing and an inline error if `toPng` throws.
+- The button is disabled while the data is fetching, so an export never starts on data that is
+  about to be replaced. It shows a spinner while capturing and an inline error if `toPng` fails.
 
 **Bug table.** Collapsed by default under the card, not part of the PNG. It is the table view
 behind the charts and the place to answer "which bugs were those?". Columns: ID (links to Linear),

@@ -44,6 +44,14 @@ describe('resolveBugTrendRequest', () => {
     }
   });
 
+  it('rejects a `from` before 2024-01-01 but accepts that day', async () => {
+    const { cache } = stubCache();
+    expect(await resolveBugTrendRequest(cache, req({ from: '2023-12-31' })))
+      .toEqual({ status: 400, body: { error: 'from cannot be before 2024-01-01' } });
+    expect((await resolveBugTrendRequest(cache, req({ from: '2024-01-01' }))).status).toBe(200);
+    expect((await resolveBugTrendRequest(cache, req({ from: '0202-06-01' }))).status).toBe(400);
+  });
+
   it('rejects a `from` in the future but accepts today', async () => {
     const { cache } = stubCache();
     expect((await resolveBugTrendRequest(cache, req({ from: '2026-09-25' }))).status).toBe(400);
