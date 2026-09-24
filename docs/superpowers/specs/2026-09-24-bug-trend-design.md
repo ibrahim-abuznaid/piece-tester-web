@@ -3,7 +3,7 @@
 **Date:** 2026-09-24
 **Server:** `server/src/db/schema.ts`, `server/src/routes/settings-view.ts`, `server/src/routes/settings.ts`, `server/src/index.ts`, new `server/src/services/bug-trend/*`, new `server/src/routes/bug-trend.ts`
 **Client:** `client/src/App.tsx`, `client/src/components/Layout.tsx`, `client/src/lib/api.ts`, `client/src/pages/Settings.tsx`, new `client/src/pages/BugTrend.tsx`, new `client/src/components/bug-trend/*`
-**Status:** Draft, awaiting review
+**Status:** Approved, ready for implementation plan
 **Relates to:** the "Report to Pieces" transport (`server/src/services/report-transport.ts`), which files `piece-tester` issues into Linear through a webhook. This spec adds the first *read* path from Linear.
 
 ## Problem
