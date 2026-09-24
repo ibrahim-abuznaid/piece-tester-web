@@ -15,7 +15,7 @@ const EARLIEST_FROM = '2024-01-01';
 const FOOTNOTE =
   'Counts GIT bugs whose current assignee is on the Pieces team, plus bugs the Piece Tester filed on PIE. ' +
   'Support routes some piece bugs to other engineers, so routing changes move these numbers. ' +
-  'Canceled and duplicate issues are left out. Weeks start Monday (UTC). Lighter bar = this week so far.';
+  'Canceled, duplicate and deleted issues are left out. Weeks start Monday (UTC). Lighter bar = this week so far.';
 
 /** A full date in [EARLIEST_FROM, today UTC]; a half-typed year like 0202-06-01 never reaches the server. */
 function isUsableFrom(value: string): boolean {

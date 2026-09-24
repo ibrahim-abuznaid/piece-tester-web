@@ -1,19 +1,26 @@
-import { useEffect, useState } from 'react';
+import { lazy, Suspense, useEffect, useState, type ReactNode } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { api } from './lib/api';
 import Layout from './components/Layout';
 import Login from './pages/Login';
 import Dashboard from './pages/Dashboard';
-import PieceDetail from './pages/PieceDetail';
 import Connections from './pages/Connections';
 import TestRunner from './pages/TestRunner';
 import History from './pages/History';
 import Schedules from './pages/Schedules';
-import Reports from './pages/Reports';
-import BugTrend from './pages/BugTrend';
 import Settings from './pages/Settings';
 import BatchSetup from './pages/BatchSetup';
+
+/** Heavy pages load on first visit: the chart pages carry recharts and html-to-image, and PieceDetail is the largest page. */
+const Reports = lazy(() => import('./pages/Reports'));
+const BugTrend = lazy(() => import('./pages/BugTrend'));
+const PieceDetail = lazy(() => import('./pages/PieceDetail'));
+
+/** Shows the pages' usual loading line while a lazy page's chunk downloads. */
+function LazyPage({ children }: { children: ReactNode }) {
+  return <Suspense fallback={<div className="text-gray-400">Loading…</div>}>{children}</Suspense>;
+}
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { retry: 1, refetchOnWindowFocus: false } },
@@ -43,13 +50,13 @@ export default function App() {
           <Route element={<Layout />}>
             <Route path="/" element={<Dashboard />} />
             <Route path="/pieces" element={<Navigate to="/schedules" replace />} />
-            <Route path="/pieces/:name" element={<PieceDetail />} />
+            <Route path="/pieces/:name" element={<LazyPage><PieceDetail /></LazyPage>} />
             <Route path="/connections" element={<Connections />} />
             <Route path="/test-runner" element={<TestRunner />} />
             <Route path="/history" element={<History />} />
             <Route path="/schedules" element={<Schedules />} />
-            <Route path="/reports" element={<Reports />} />
-            <Route path="/bug-trend" element={<BugTrend />} />
+            <Route path="/reports" element={<LazyPage><Reports /></LazyPage>} />
+            <Route path="/bug-trend" element={<LazyPage><BugTrend /></LazyPage>} />
             <Route path="/batch-setup" element={<BatchSetup />} />
             <Route path="/settings" element={<Settings />} />
           </Route>
