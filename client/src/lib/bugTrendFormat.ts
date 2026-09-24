@@ -54,6 +54,11 @@ export function topSourceOf(week: BugTrendWeek, sources: BugSource[]): BugSource
   return stacked.length ? stacked[stacked.length - 1] : null;
 }
 
+/** The week in progress is drawn lighter, so a partial week never reads as a drop. */
+export function weekBarOpacity(week: BugTrendWeek): number {
+  return week.inProgress ? 0.4 : 1;
+}
+
 export function formatDaysToFix(createdAt: string, completedAt: string | null): string {
   if (!completedAt) return '—';
   return (Math.round(((Date.parse(completedAt) - Date.parse(createdAt)) / DAY_MS) * 10) / 10).toString();

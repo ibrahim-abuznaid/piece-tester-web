@@ -1,7 +1,7 @@
-import { ComposedChart, Bar, Line, Cell, Rectangle, XAxis, YAxis, Tooltip, CartesianGrid, ReferenceLine, ResponsiveContainer } from 'recharts';
+import { ComposedChart, Bar, Line, Rectangle, XAxis, YAxis, Tooltip, CartesianGrid, ReferenceLine, ResponsiveContainer } from 'recharts';
 import type { BarShapeProps } from 'recharts';
 import type { BugSource, BugTrendWeek } from '../../lib/api';
-import { activeSources, formatDay, formatWeekRange, topSourceOf, weekStartOf } from '../../lib/bugTrendFormat';
+import { activeSources, formatDay, formatWeekRange, topSourceOf, weekBarOpacity, weekStartOf } from '../../lib/bugTrendFormat';
 import { CARD_BG, CHART_MARGIN, GRID, MARKER, NEUTRAL_LINE, SOURCE_META, TICK, TOOLTIP_STYLE, Y_AXIS_WIDTH } from './palette';
 
 /** Only the visible top segment of each week's stack is rounded. */
@@ -29,10 +29,10 @@ export default function OpenedPerWeekChart({ weeks, markerDate }: { weeks: BugTr
           )}
           {sources.map(s => (
             <Bar key={s} dataKey={s} stackId="opened" fill={SOURCE_META[s].color} stroke={CARD_BG} strokeWidth={2}
-              shape={(p: BarShapeProps) => <Rectangle {...p} radius={topSourceOf(p.payload, sources) === s ? TOP_RADIUS : 0} />}
-              isAnimationActive={false}>
-              {weeks.map(w => <Cell key={w.weekStart} fillOpacity={w.inProgress ? 0.4 : 1} />)}
-            </Bar>
+              shape={(p: BarShapeProps) => (
+                <Rectangle {...p} fillOpacity={weekBarOpacity(p.payload)} radius={topSourceOf(p.payload, sources) === s ? TOP_RADIUS : 0} />
+              )}
+              isAnimationActive={false} />
           ))}
           <Line dataKey="rolling4" stroke={NEUTRAL_LINE} strokeWidth={2} dot={false} isAnimationActive={false} />
         </ComposedChart>

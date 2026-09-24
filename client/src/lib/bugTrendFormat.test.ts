@@ -4,7 +4,7 @@ process.env.TZ = 'Asia/Riyadh';
 import { describe, it, expect } from 'vitest';
 import {
   formatDay, weekStartOf, formatWeekRange, formatDateRange, formatDelta,
-  activeSources, topSourceOf, formatDaysToFix, pngFileName,
+  activeSources, topSourceOf, weekBarOpacity, formatDaysToFix, pngFileName,
 } from './bugTrendFormat';
 import type { BugTrendWeek } from './api';
 
@@ -69,6 +69,13 @@ describe('topSourceOf', () => {
   });
   it('is null for an empty week', () => {
     expect(topSourceOf(week({}), [...all])).toBeNull();
+  });
+});
+
+describe('weekBarOpacity', () => {
+  it('draws the week in progress lighter and every full week solid', () => {
+    expect(weekBarOpacity(week({ support: 2, inProgress: true }))).toBe(0.4);
+    expect(weekBarOpacity(week({ support: 2, inProgress: false }))).toBe(1);
   });
 });
 
