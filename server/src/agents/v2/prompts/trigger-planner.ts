@@ -2,6 +2,7 @@ import type { PieceMetadataFull } from '../../../services/ap-client.js';
 import {
   buildTriggerContext, buildTriggerProperties, buildTriggersList, buildActionsList,
   buildLessonsBlock, buildMemoryBlock, RUNTIME_TOKENS_DOC, INPUT_MAPPING_DOC, NO_CUSTOM_HTTP_RULE,
+  NO_AUTH_HUMAN_INPUT_RULE,
 } from './shared.js';
 
 export const TRIGGER_PLANNER_SYSTEM_PROMPT = `You are a PLANNER agent for an Activepieces TRIGGER test planning system.
@@ -53,7 +54,9 @@ ${RUNTIME_TOKENS_DOC}
 
 ${INPUT_MAPPING_DOC}
 
-${NO_CUSTOM_HTTP_RULE}`;
+${NO_CUSTOM_HTTP_RULE}
+
+${NO_AUTH_HUMAN_INPUT_RULE}`;
 
 export function buildTriggerPlannerUserPrompt(
   piece: PieceMetadataFull,
