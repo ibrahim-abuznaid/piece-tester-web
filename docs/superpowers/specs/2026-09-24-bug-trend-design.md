@@ -296,8 +296,8 @@ never a series color.
 
 **Footnote** (inside the card, so it travels with the PNG): *Counts GIT bugs whose current
 assignee is on the Pieces team, plus bugs the Piece Tester filed on PIE. Support routes some piece
-bugs to other engineers, so routing changes move these numbers. Canceled and duplicate issues are
-left out. Weeks start Monday (UTC). Lighter bar = this week so far.*
+bugs to other engineers, so routing changes move these numbers. Canceled, duplicate and deleted
+issues are left out. Weeks start Monday (UTC). Lighter bar = this week so far.*
 
 **Download PNG.** New client dependency **`html-to-image`**. It captures the whole card (title,
 KPI tiles, both charts, footnote); plain SVG-to-canvas would capture one chart at a time.
