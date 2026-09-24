@@ -8,7 +8,7 @@ export const DEFAULT_FROM = '2026-06-01';
 
 export type BugSource = 'support' | 'internal' | 'tester';
 
-/** A Linear issue normalized for the trend. Canceled issues never become a TrackedBug. */
+/** A Linear issue normalized for the trend. Canceled and trashed issues never become a TrackedBug. */
 export interface TrackedBug {
   identifier: string;
   title: string;

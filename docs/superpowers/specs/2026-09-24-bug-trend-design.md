@@ -37,8 +37,8 @@ Non-goals are listed under [Out of scope](#out-of-scope).
 
 ### 1. What counts as a bug
 
-A **tracked bug** is a Linear issue that matches either query, and whose state type is not
-`canceled`:
+A **tracked bug** is a Linear issue that matches either query, whose state type is not
+`canceled`, and that is not in the trash:
 
 | Team | Filter | Assignee |
 |---|---|---|
@@ -47,6 +47,9 @@ A **tracked bug** is a Linear issue that matches either query, and whose state t
 
 - **Canceled and duplicate issues are excluded entirely** (Linear gives duplicates a
   `canceled`-type state). This drops the PIE junk tickets and "not a bug" closures.
+- **Deleted (trashed) issues are excluded too** (`trashed` is true). Deleting an issue in Linear
+  moves it to the trash, which archives it, so `includeArchived: true` would otherwise keep
+  returning it until Linear purges it. It is the same kind of junk as a canceled issue.
 - **PIE `🏢 customer` tickets are not counted.** PIE has no bug label, so those tickets mix
   features and bugs and would inflate the count.
 - **Source** is assigned by the first rule that matches:
@@ -69,8 +72,9 @@ prefix.
   following `pageInfo.endCursor` until `hasNextPage` is false, with **`includeArchived: true`**
   (Linear auto-archives closed issues after a team-set period; without this flag old fixed bugs
   silently vanish from the history).
-- Fields: `identifier title url createdAt completedAt state { type } team { key }
+- Fields: `identifier title url createdAt completedAt trashed state { type } team { key }
   assignee { id name } labels { nodes { name } }`. No date filter: the total is a few dozen issues.
+  `trashed` is selected only to drop deleted issues (§1).
 - `fetchViewer(apiKey)` runs `viewer { id name }`, used to validate a key on save.
 - `fetchActiveUsers(apiKey)` returns `{ id, name, displayName }` for active workspace users.
 - Errors: an HTTP 401/403 becomes `LinearError('Linear rejected the API key')`; a 200 response
@@ -80,12 +84,12 @@ prefix.
 **`bug-trend.ts`** holds the pure functions and their types. It does all the math; the client only
 formats. `classifySource(labelNames): BugSource` applies the source rules from §1;
 `linear-client.ts` calls it while normalizing each Linear issue into a `TrackedBug` (and drops
-`canceled`-type issues there).
+`canceled`-type and trashed issues there).
 
 ```ts
 type BugSource = 'support' | 'internal' | 'tester';
 
-interface TrackedBug {            // normalized from Linear, canceled already dropped
+interface TrackedBug {            // normalized from Linear, canceled and trashed already dropped
   identifier: string; title: string; url: string;
   team: 'GIT' | 'PIE'; source: BugSource;
   assigneeName: string | null;
@@ -327,8 +331,9 @@ the repo.
 - `issues` includes a bug created before `from` that is still open.
 
 **`linear-client.test.ts`** with a mocked axios: follows `endCursor` across pages; sends
-`includeArchived: true`; sends the key without `Bearer`; drops `canceled`-type issues; maps 401,
-GraphQL `errors` and network failures to `LinearError`, and no error message contains the key.
+`includeArchived: true`; sends the key without `Bearer`; drops `canceled`-type and trashed issues;
+maps 401, GraphQL `errors` and network failures to `LinearError`, and no error message contains
+the key.
 
 **`bug-trend-cache.test.ts`** with a fake clock and a stub fetcher: a hit inside 15 minutes, a
 miss after; `refresh` bypasses; `invalidate()` forces a fetch; a failure with a cached copy returns

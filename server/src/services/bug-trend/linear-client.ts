@@ -26,6 +26,7 @@ interface RawIssue {
   url: string;
   createdAt: string;
   completedAt: string | null;
+  trashed?: boolean | null;
   state: { type: string } | null;
   team: { key: string } | null;
   assignee: { id: string; name: string } | null;
@@ -35,7 +36,7 @@ interface RawIssue {
 const ISSUES_QUERY = `query TrackedBugs($filter: IssueFilter!, $after: String) {
   issues(filter: $filter, first: 100, after: $after, includeArchived: true) {
     nodes {
-      identifier title url createdAt completedAt
+      identifier title url createdAt completedAt trashed
       state { type }
       team { key }
       assignee { id name }
@@ -92,7 +93,7 @@ async function fetchAllPages<T>(
 }
 
 function normalizeIssue(n: RawIssue): TrackedBug | null {
-  if (n.state?.type === 'canceled') return null;
+  if (n.trashed || n.state?.type === 'canceled') return null;
   return {
     identifier: n.identifier,
     title: n.title,

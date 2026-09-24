@@ -81,6 +81,20 @@ describe('fetchTrackedBugs', () => {
     ]);
     expect(r.matched.GIT).toBe(3);
   });
+
+  it('drops trashed issues, and keeps them in the matched count', async () => {
+    post
+      .mockResolvedValueOnce(page([
+        issue({ identifier: 'GIT-1', trashed: false }),
+        issue({ identifier: 'GIT-2', trashed: true }),
+        issue({ identifier: 'GIT-3', trashed: null }),
+      ]))
+      .mockResolvedValueOnce(page([issue({ identifier: 'PIE-9', team: { key: 'PIE' }, trashed: true })]));
+    const r = await fetchTrackedBugs(KEY, ['u-kishan']);
+    expect((post.mock.calls[0][1] as any).query).toMatch(/\btrashed\b/);
+    expect(r.bugs.map(b => b.identifier)).toEqual(['GIT-1', 'GIT-3']);
+    expect(r.matched).toEqual({ GIT: 3, PIE: 1 });
+  });
 });
 
 describe('Linear errors', () => {
