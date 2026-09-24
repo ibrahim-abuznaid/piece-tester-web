@@ -46,13 +46,18 @@ export default function LinearBugTrendCard() {
     setResult(null);
     try {
       const r = await api.saveLinearKey(keyInput.trim());
-      applySettings(await api.getSettings());
       setKeyInput('');
       const parts = [`Linear key saved (signed in as ${r.viewer}).`];
       if (r.seeded.length) parts.push(`Roster seeded with ${r.seeded.length} people.`);
       if (r.notFound.length) parts.push(`Couldn't find: ${r.notFound.join(', ')}. Pick them below.`);
-      setResult({ success: true, message: parts.join(' ') });
-      await loadUsers();
+      const message = parts.join(' ');
+      setResult({ success: true, message });
+      try {
+        applySettings(await api.getSettings());
+        await loadUsers();
+      } catch (e: any) {
+        setResult({ success: true, message: `${message} Saved, but couldn't reload settings: ${e?.message || 'unknown error'}` });
+      }
     } catch (e: any) {
       setResult({ success: false, message: e?.message || 'Failed to save.' });
     } finally {
