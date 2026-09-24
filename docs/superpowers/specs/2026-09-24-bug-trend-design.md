@@ -114,7 +114,8 @@ interface BugTrendKpis {
 interface BugTrend {
   from: string; asOf: string; markerDate: string;
   weeks: BugTrendWeek[]; days: BugTrendDay[]; kpis: BugTrendKpis;
-  issues: TrackedBug[];           // createdAt >= from, plus any still open
+  issues: TrackedBug[];           // the bugs behind the charts and KPIs: createdAt >= the first
+                                  // bar's Monday, still open, or completedAt in [from, now]
 }
 
 function buildBugTrend(bugs: TrackedBug[], opts: { from: string; now: Date; markerDate: string }): BugTrend;
@@ -328,7 +329,8 @@ the repo.
 - Daily `open`: a bug open across `from` counts from day one; opened and fixed the same day → never
   open; the last day equals `kpis.openNow`.
 - KPI windows at the 28- and 56-day edges; median with an even count, an odd count and none.
-- `issues` includes a bug created before `from` that is still open.
+- `issues` includes a bug created before `from` that is still open, one created before `from` and
+  fixed inside the window, and a first-bar bug created before a non-Monday `from`.
 
 **`linear-client.test.ts`** with a mocked axios: follows `endCursor` across pages; sends
 `includeArchived: true`; sends the key without `Bearer`; drops `canceled`-type and trashed issues;

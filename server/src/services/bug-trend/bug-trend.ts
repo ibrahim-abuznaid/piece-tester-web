@@ -137,7 +137,7 @@ export function buildBugTrend(bugs: TrackedBug[], opts: { from: string; now: Dat
   };
 
   const issues = bugs
-    .filter(b => created(b) >= fromMs || completed(b) === null)
+    .filter(b => { const c = completed(b); return created(b) >= mondayOf(fromMs) || c === null || (c >= fromMs && c <= nowMs); })
     .sort((a, b) => created(b) - created(a));
 
   return { from: opts.from, asOf: opts.now.toISOString(), markerDate: opts.markerDate, weeks, days, kpis, issues };

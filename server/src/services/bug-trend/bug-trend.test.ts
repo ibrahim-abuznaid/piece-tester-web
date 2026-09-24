@@ -96,6 +96,7 @@ describe('buildBugTrend: open bugs per day', () => {
     expect(t.weeks.reduce((n, w) => n + w.total, 0)).toBe(0);
     expect(t.kpis.medianDaysToFix).toBe(6);
     expect(t.kpis.fixedCount).toBe(1);
+    expect(t.issues.map(b => b.identifier)).toEqual([early.identifier]);
   });
 });
 
@@ -140,6 +141,13 @@ describe('buildBugTrend: issues and passthrough', () => {
     const newer = bug({ createdAt: '2026-09-20T00:00:00Z', completedAt: '2026-09-21T00:00:00Z' });
     const t = buildBugTrend([oldOpen, oldFixed, recent, newer], OPTS);
     expect(t.issues.map(b => b.identifier)).toEqual([newer.identifier, recent.identifier, oldOpen.identifier]);
+  });
+
+  it('lists a first-bar bug created before a non-Monday `from`, even when fixed before `from`', () => {
+    const firstBar = bug({ createdAt: '2026-08-31T10:00:00Z', completedAt: '2026-08-31T15:00:00Z' });
+    const t = buildBugTrend([firstBar], OPTS);
+    expect(t.weeks[0].total).toBe(1);
+    expect(t.issues.map(b => b.identifier)).toEqual([firstBar.identifier]);
   });
 
   it('passes from, asOf and markerDate through', () => {
