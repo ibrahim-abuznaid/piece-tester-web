@@ -1,7 +1,7 @@
 import { LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid, ReferenceLine, ResponsiveContainer } from 'recharts';
 import type { BugTrendDay } from '../../lib/api';
 import { formatDay } from '../../lib/bugTrendFormat';
-import { GRID, MARKER, NEUTRAL_LINE, TICK, TOOLTIP_STYLE } from './palette';
+import { CHART_MARGIN, GRID, MARKER, NEUTRAL_LINE, TICK, TOOLTIP_STYLE, Y_AXIS_WIDTH } from './palette';
 
 export default function OpenBugsChart({ days, markerDate }: { days: BugTrendDay[]; markerDate: string }) {
   const showMarker = days.some(d => d.date === markerDate);
@@ -9,10 +9,10 @@ export default function OpenBugsChart({ days, markerDate }: { days: BugTrendDay[
     <div>
       <h3 className="mb-2 text-sm font-semibold text-gray-200">Open bugs at end of day</h3>
       <ResponsiveContainer width="100%" height={160}>
-        <LineChart data={days} margin={{ top: 16, right: 12, left: -20, bottom: 0 }}>
+        <LineChart data={days} margin={CHART_MARGIN}>
           <CartesianGrid stroke={GRID} strokeDasharray="3 3" vertical={false} />
           <XAxis dataKey="date" tickFormatter={formatDay} tick={{ fontSize: 10, fill: TICK }} axisLine={false} tickLine={false} minTickGap={24} />
-          <YAxis allowDecimals={false} tick={{ fontSize: 10, fill: TICK }} axisLine={false} tickLine={false} width={30} />
+          <YAxis allowDecimals={false} tick={{ fontSize: 10, fill: TICK }} axisLine={false} tickLine={false} width={Y_AXIS_WIDTH} />
           <Tooltip content={<DayTooltip />} />
           {showMarker && (
             <ReferenceLine x={markerDate} stroke={MARKER} strokeDasharray="4 4"

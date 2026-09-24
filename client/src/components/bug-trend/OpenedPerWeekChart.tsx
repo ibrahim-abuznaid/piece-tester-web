@@ -1,7 +1,11 @@
-import { ComposedChart, Bar, Line, Cell, XAxis, YAxis, Tooltip, CartesianGrid, ReferenceLine, ResponsiveContainer } from 'recharts';
+import { ComposedChart, Bar, Line, Cell, Rectangle, XAxis, YAxis, Tooltip, CartesianGrid, ReferenceLine, ResponsiveContainer } from 'recharts';
+import type { BarShapeProps } from 'recharts';
 import type { BugSource, BugTrendWeek } from '../../lib/api';
-import { activeSources, formatDay, formatWeekRange, weekStartOf } from '../../lib/bugTrendFormat';
-import { CARD_BG, GRID, MARKER, NEUTRAL_LINE, SOURCE_META, TICK, TOOLTIP_STYLE } from './palette';
+import { activeSources, formatDay, formatWeekRange, topSourceOf, weekStartOf } from '../../lib/bugTrendFormat';
+import { CARD_BG, CHART_MARGIN, GRID, MARKER, NEUTRAL_LINE, SOURCE_META, TICK, TOOLTIP_STYLE, Y_AXIS_WIDTH } from './palette';
+
+/** Only the visible top segment of each week's stack is rounded. */
+const TOP_RADIUS: [number, number, number, number] = [4, 4, 0, 0];
 
 export default function OpenedPerWeekChart({ weeks, markerDate }: { weeks: BugTrendWeek[]; markerDate: string }) {
   const sources = activeSources(weeks);
@@ -14,18 +18,19 @@ export default function OpenedPerWeekChart({ weeks, markerDate }: { weeks: BugTr
         <Legend sources={sources} />
       </div>
       <ResponsiveContainer width="100%" height={240}>
-        <ComposedChart data={weeks} margin={{ top: 16, right: 12, left: -20, bottom: 0 }}>
+        <ComposedChart data={weeks} margin={CHART_MARGIN}>
           <CartesianGrid stroke={GRID} strokeDasharray="3 3" vertical={false} />
           <XAxis dataKey="weekStart" tickFormatter={formatDay} tick={{ fontSize: 10, fill: TICK }} axisLine={false} tickLine={false} minTickGap={16} />
-          <YAxis allowDecimals={false} tick={{ fontSize: 10, fill: TICK }} axisLine={false} tickLine={false} width={30} />
+          <YAxis allowDecimals={false} tick={{ fontSize: 10, fill: TICK }} axisLine={false} tickLine={false} width={Y_AXIS_WIDTH} />
           <Tooltip content={<WeekTooltip sources={sources} />} cursor={{ fill: 'rgba(255,255,255,0.04)' }} />
           {showMarker && (
             <ReferenceLine x={markerWeek} stroke={MARKER} strokeDasharray="4 4"
               label={{ value: 'Tester at scale', position: 'insideTopLeft', fill: TICK, fontSize: 10 }} />
           )}
-          {sources.map((s, i) => (
+          {sources.map(s => (
             <Bar key={s} dataKey={s} stackId="opened" fill={SOURCE_META[s].color} stroke={CARD_BG} strokeWidth={2}
-              radius={i === sources.length - 1 ? [4, 4, 0, 0] : [0, 0, 0, 0]} isAnimationActive={false}>
+              shape={(p: BarShapeProps) => <Rectangle {...p} radius={topSourceOf(p.payload, sources) === s ? TOP_RADIUS : 0} />}
+              isAnimationActive={false}>
               {weeks.map(w => <Cell key={w.weekStart} fillOpacity={w.inProgress ? 0.4 : 1} />)}
             </Bar>
           ))}

@@ -48,6 +48,12 @@ export function activeSources(weeks: BugTrendWeek[]): BugSource[] {
   return SOURCE_ORDER.filter(s => weeks.some(w => w[s] > 0));
 }
 
+/** The visible top segment of a week's stack: its highest non-zero source among `sources`, or null. */
+export function topSourceOf(week: BugTrendWeek, sources: BugSource[]): BugSource | null {
+  const stacked = SOURCE_ORDER.filter(s => sources.includes(s) && week[s] > 0);
+  return stacked.length ? stacked[stacked.length - 1] : null;
+}
+
 export function formatDaysToFix(createdAt: string, completedAt: string | null): string {
   if (!completedAt) return '—';
   return (Math.round(((Date.parse(completedAt) - Date.parse(createdAt)) / DAY_MS) * 10) / 10).toString();

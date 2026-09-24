@@ -4,7 +4,7 @@ process.env.TZ = 'Asia/Riyadh';
 import { describe, it, expect } from 'vitest';
 import {
   formatDay, weekStartOf, formatWeekRange, formatDateRange, formatDelta,
-  activeSources, formatDaysToFix, pngFileName,
+  activeSources, topSourceOf, formatDaysToFix, pngFileName,
 } from './bugTrendFormat';
 import type { BugTrendWeek } from './api';
 
@@ -51,6 +51,24 @@ describe('activeSources', () => {
   it('keeps the fixed order and drops sources that are zero in every week', () => {
     expect(activeSources([week({ tester: 1 }), week({ support: 2 })])).toEqual(['support', 'tester']);
     expect(activeSources([week({})])).toEqual([]);
+  });
+});
+
+describe('topSourceOf', () => {
+  const all = ['support', 'internal', 'tester'] as const;
+  it('picks the highest non-zero source in stack order', () => {
+    expect(topSourceOf(week({ support: 2, internal: 1, tester: 3 }), [...all])).toBe('tester');
+    expect(topSourceOf(week({ support: 2, internal: 1 }), [...all])).toBe('internal');
+    expect(topSourceOf(week({ support: 4 }), [...all])).toBe('support');
+  });
+  it('skips a zero source in the middle of the stack', () => {
+    expect(topSourceOf(week({ support: 1, tester: 1 }), [...all])).toBe('tester');
+  });
+  it('ignores sources that are not active', () => {
+    expect(topSourceOf(week({ support: 1, tester: 2 }), ['support', 'internal'])).toBe('support');
+  });
+  it('is null for an empty week', () => {
+    expect(topSourceOf(week({}), [...all])).toBeNull();
   });
 });
 
