@@ -282,9 +282,11 @@ left out. Weeks start Monday (UTC). Lighter bar = this week so far.*
 **Download PNG.** New client dependency **`html-to-image`**. It captures the whole card (title,
 KPI tiles, both charts, footnote); plain SVG-to-canvas would capture one chart at a time.
 
-- `toPng(cardRef.current, { pixelRatio: 2, backgroundColor: '#111827' })`, saved as
-  `pieces-team-bugs-YYYY-MM-DD.png` (the `asOf` date). The fixed 960 px card width means every
-  export is 1920 px wide.
+- `toPng(cardRef.current, { pixelRatio: 2, backgroundColor: '#111827', style: { margin: '0' } })`,
+  saved as `pieces-team-bugs-YYYY-MM-DD.png` (the `asOf` date). The fixed 960 px card width means
+  every export is 1920 px wide. `margin: '0'` is required: html-to-image copies the card's computed
+  `mx-auto` margin onto the clone, which on wide screens shifts the capture right and cuts off the
+  card's right edge.
 - All chart series set `isAnimationActive={false}` so a capture never catches a half-drawn chart.
 - The button shows a spinner while capturing and an inline error if `toPng` throws.
 
