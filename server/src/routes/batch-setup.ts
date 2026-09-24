@@ -12,6 +12,7 @@ import { executePlan } from '../services/plan-executor.js';
 import { boundConcurrency } from '../services/concurrency.js';
 import { itemsForSelection } from '../services/batch-selection.js';
 import { extractAndStoreLessons } from '../services/lesson-extractor.js';
+import { checkPieceConnectionForPlanning } from '../services/plan-connection-gate.js';
 import { createSchedulesForRun } from '../services/setup-scheduler.js';
 import type { Cadence } from '../services/schedule-planner.js';
 import {
@@ -66,6 +67,16 @@ async function processBatchItem(
     const onLog = (log: AgentLogEntry) => {
       emitBatchEvent(queue, 'log', { index: i, pieceName: item.pieceName, actionName, log });
     };
+
+    const conn = await checkPieceConnectionForPlanning(client, item.pieceName, piece.displayName);
+    if (!conn.ok) {
+      item.status = 'error';
+      item.error = conn.reason;
+      if (item.setupItemId) updateSetupRunItem(item.setupItemId, { status: 'error', error: conn.reason });
+      onLog({ timestamp: Date.now(), type: 'error', message: conn.reason! });
+      emitBatchEvent(queue, 'item_update', { index: i, ...item });
+      return;
+    }
 
     if (item.targetType === 'trigger') {
       if (!piece.triggers?.[actionName]) {

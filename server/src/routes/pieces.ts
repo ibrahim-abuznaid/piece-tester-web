@@ -6,6 +6,7 @@ import { configureActionWithAi, fixActionWithAi, createTestPlanWithAi, fixTestPl
 import { createTestPlan, getTestPlanByAction, getTestPlanByTrigger, updateTestPlan, getLessonsForPiece, deleteLesson, addLesson } from '../db/queries.js';
 import { executePlan } from '../services/plan-executor.js';
 import { extractAndStoreLessons } from '../services/lesson-extractor.js';
+import { checkPieceConnectionForPlanning } from '../services/plan-connection-gate.js';
 import {
   getJob, createJob, emitJobEvent, completeJob, getActiveJobsForPiece, subscribeToJobWithCleanup,
   cancelPlanJob, cancelAllPlanJobs, type PlanJob,
@@ -466,6 +467,15 @@ function runPlanJobV2InBackground(job: PlanJob, pieceName: string, actionName: s
 
       const onLog = (log: V2LogEntry) => emitJobEvent(job, 'log', log);
 
+      const conn = await checkPieceConnectionForPlanning(client, pieceName, piece.displayName);
+      if (!conn.ok) {
+        onLog({ timestamp: Date.now(), type: 'error', role: 'coordinator', message: conn.reason! });
+        emitJobEvent(job, 'error', { message: conn.reason });
+        emitJobEvent(job, 'done', {});
+        completeJob(job, 'error');
+        return;
+      }
+
       const planResult = await createTestPlanV2({
         pieceMeta: piece,
         actionName,
@@ -644,6 +654,15 @@ function runTriggerPlanJobV2InBackground(job: PlanJob, pieceName: string, trigge
       }
 
       const onLog = (log: V2LogEntry) => emitJobEvent(job, 'log', log);
+
+      const conn = await checkPieceConnectionForPlanning(client, pieceName, piece.displayName);
+      if (!conn.ok) {
+        onLog({ timestamp: Date.now(), type: 'error', role: 'coordinator', message: conn.reason! });
+        emitJobEvent(job, 'error', { message: conn.reason });
+        emitJobEvent(job, 'done', {});
+        completeJob(job, 'error');
+        return;
+      }
 
       const planResult = await createTriggerTestPlanV2({
         pieceMeta: piece,
