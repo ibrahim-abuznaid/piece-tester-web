@@ -303,10 +303,13 @@ left out. Weeks start Monday (UTC). Lighter bar = this week so far.*
 KPI tiles, both charts, footnote); plain SVG-to-canvas would capture one chart at a time.
 
 - `toPng(cardRef.current, { pixelRatio: 2, backgroundColor: '#111827', cacheBust: true,
-  style: { margin: '0' } })`, saved as `pieces-team-bugs-YYYY-MM-DD.png` (the `asOf` date). The fixed 960 px card width means
+  style: { margin: '0' }, width: offsetWidth, height: offsetHeight })`, saved as
+  `pieces-team-bugs-YYYY-MM-DD.png` (the `asOf` date). The fixed 960 px card width means
   every export is 1920 px wide. `margin: '0'` is required: html-to-image copies the card's computed
   `mx-auto` margin onto the clone, which on wide screens shifts the capture right and cuts off the
-  card's right edge.
+  card's right edge. The explicit whole-pixel `width`/`height` are required too: by default
+  html-to-image sizes the image as `clientWidth` + the computed border widths, and under browser
+  zoom a 1 px border computes to a fraction (0.909 px at 110%), so the file came out 1919 px wide.
 - All chart series set `isAnimationActive={false}` so a capture never catches a half-drawn chart.
 - The button is disabled while the data is fetching, so an export never starts on data that is
   about to be replaced. It shows a spinner while capturing and an inline error if `toPng` fails.
