@@ -1,13 +1,14 @@
 import { useRef, useState } from 'react';
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
-import { Loader2, RefreshCw } from 'lucide-react';
+import { Download, Loader2, RefreshCw } from 'lucide-react';
 import { api } from '../lib/api';
-import { formatDateRange } from '../lib/bugTrendFormat';
+import { formatDateRange, pngFileName } from '../lib/bugTrendFormat';
 import KpiRow from '../components/bug-trend/KpiRow';
 import OpenedPerWeekChart from '../components/bug-trend/OpenedPerWeekChart';
 import OpenBugsChart from '../components/bug-trend/OpenBugsChart';
 import BugTable from '../components/bug-trend/BugTable';
+import { downloadCardPng } from '../components/bug-trend/exportPng';
 
 const DEFAULT_FROM = '2026-06-01';
 const FOOTNOTE =
@@ -26,6 +27,20 @@ export default function BugTrend() {
   });
   const data = query.data;
   const refresh = () => setRefreshNonce(n => n + 1);
+  const [exporting, setExporting] = useState(false);
+  const [exportError, setExportError] = useState('');
+  const handleDownload = async () => {
+    if (!cardRef.current || data?.state !== 'ok') return;
+    setExporting(true);
+    setExportError('');
+    try {
+      await downloadCardPng(cardRef.current, pngFileName(data.trend.asOf));
+    } catch (e: any) {
+      setExportError(`Couldn't create the PNG: ${e?.message || String(e)}`);
+    } finally {
+      setExporting(false);
+    }
+  };
 
   return (
     <div>
@@ -43,8 +58,14 @@ export default function BugTrend() {
             className="flex items-center gap-1.5 rounded border border-gray-700 px-3 py-1.5 text-gray-200 hover:bg-gray-800 disabled:opacity-50">
             <RefreshCw size={14} className={query.isFetching ? 'animate-spin' : ''} /> Refresh
           </button>
+          <button onClick={handleDownload} disabled={data?.state !== 'ok' || exporting}
+            className="flex items-center gap-1.5 rounded bg-primary-600 px-3 py-1.5 text-white hover:bg-primary-500 disabled:opacity-50">
+            {exporting ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />} Download PNG
+          </button>
         </div>
       </div>
+
+      {exportError && <p className="mb-3 text-[12px] text-red-400">{exportError}</p>}
 
       {query.isLoading && (
         <div className="flex items-center gap-2 text-gray-400"><Loader2 size={16} className="animate-spin" /> Loading bugs from Linear…</div>
