@@ -11,6 +11,7 @@ import TestRunner from './pages/TestRunner';
 import History from './pages/History';
 import Schedules from './pages/Schedules';
 import Reports from './pages/Reports';
+import BugTrend from './pages/BugTrend';
 import Settings from './pages/Settings';
 import BatchSetup from './pages/BatchSetup';
 
@@ -48,6 +49,7 @@ export default function App() {
             <Route path="/history" element={<History />} />
             <Route path="/schedules" element={<Schedules />} />
             <Route path="/reports" element={<Reports />} />
+            <Route path="/bug-trend" element={<BugTrend />} />
             <Route path="/batch-setup" element={<BatchSetup />} />
             <Route path="/settings" element={<Settings />} />
           </Route>
