@@ -164,6 +164,10 @@ New router `server/src/routes/bug-trend.ts`, mounted at `/api/bug-trend` **after
 | `from` missing | defaults to `2026-06-01` |
 | `from` malformed or in the future | `400 { error }` |
 
+`from` is checked against the request time, but the trend is built as of `fetchedAt`. When the
+cached data was fetched before UTC midnight and `from` is today, the trend starts on the fetch day
+instead (`trend.from` is that day), so `days` is never empty.
+
 `warnings` also carries a data-sanity note when a whole query comes back empty, e.g.
 `No GIT issues matched label "🐛 bug" for the roster. Check the label name and the roster.`
 This is the only guard against a label being renamed in Linear.

@@ -52,7 +52,9 @@ export async function resolveBugTrendRequest(
 
   try {
     const cached = await cache.get({ apiKey: req.apiKey, rosterIds: roster.map(m => m.id), refresh: req.refresh });
-    const trend = buildBugTrend(cached.bugs, { from, now: new Date(cached.fetchedAt), markerDate: TESTER_AT_SCALE_DATE });
+    const asOfDay = cached.fetchedAt.slice(0, 10);
+    const trendFrom = from > asOfDay ? asOfDay : from;
+    const trend = buildBugTrend(cached.bugs, { from: trendFrom, now: new Date(cached.fetchedAt), markerDate: TESTER_AT_SCALE_DATE });
     return {
       status: 200,
       body: { state: 'ok', fetchedAt: cached.fetchedAt, warnings: [...cached.warnings, ...emptyQueryWarnings(cached.matched)], trend },

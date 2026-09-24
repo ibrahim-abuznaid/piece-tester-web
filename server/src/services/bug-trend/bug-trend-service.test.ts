@@ -64,6 +64,15 @@ describe('resolveBugTrendRequest', () => {
     expect(get).toHaveBeenCalledWith({ apiKey: 'lin_api_x', rosterIds: ['u-kishan'], refresh: true });
   });
 
+  it('clamps `from` to the fetch day when cached data predates UTC midnight', async () => {
+    const { cache } = stubCache(async () => ({ ...CACHED, fetchedAt: '2026-09-23T23:55:00.000Z' }));
+    const r = await resolveBugTrendRequest(cache, req({ from: '2026-09-24', now: new Date('2026-09-24T00:05:00Z') }));
+    expect(r.status).toBe(200);
+    const body = r.body as any;
+    expect(body.trend.from).toBe('2026-09-23');
+    expect(body.trend.days.length).toBeGreaterThan(0);
+  });
+
   it('merges cache warnings with empty-query warnings', async () => {
     const { cache } = stubCache(async () => ({ ...CACHED, matched: { GIT: 0, PIE: 1 }, warnings: ['stale'] }));
     const body = (await resolveBugTrendRequest(cache, req())).body as any;
