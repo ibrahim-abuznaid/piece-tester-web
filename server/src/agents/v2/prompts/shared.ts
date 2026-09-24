@@ -186,6 +186,12 @@ NESTED FIELDS — use a dotted key to target a field INSIDE an object value:
   inputMapping { "variables.id": "\${steps.step_1.output.issue.id}" }
 - Mapping the whole object key (e.g. "variables") to a single scalar id is WRONG — it sets variables to a string and the inner field stays missing.`;
 
+/** Rule against asking the user for the connection/auth. */
+export const NO_AUTH_HUMAN_INPUT_RULE = `## CRITICAL: NEVER ask the user for the connection or auth
+The piece's connection is verified present and active BEFORE you run, and auth is injected AUTOMATICALLY at execution time. You do NOT need — and MUST NOT create — a \`human_input\` step to obtain a connection, API key, token, password, or any credential. Treat the connection as already configured.
+- A "Not connected" note in the context is NEVER a reason to add a human_input step for the connection. Build the plan as if the connection is active.
+- Steps that need auth just run as normal authenticated steps; the executor supplies auth. Do not ask the user for it.`;
+
 /** Rule against custom HTTP actions. */
 export const NO_CUSTOM_HTTP_RULE = `## CRITICAL: Never Use Custom HTTP/API Calls in Plans
 ABSOLUTELY NEVER create steps that use custom_api_call, http_request, send_http_request, custom_action, or ANY action that sends a raw/custom HTTP request.

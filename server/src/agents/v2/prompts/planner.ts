@@ -1,4 +1,4 @@
-import { RUNTIME_TOKENS_DOC, INPUT_MAPPING_DOC, NO_CUSTOM_HTTP_RULE, TARGET_ACTION_RULE } from './shared.js';
+import { RUNTIME_TOKENS_DOC, INPUT_MAPPING_DOC, NO_CUSTOM_HTTP_RULE, TARGET_ACTION_RULE, NO_AUTH_HUMAN_INPUT_RULE } from './shared.js';
 
 export const PLANNER_SYSTEM_PROMPT = `You are a PLANNER agent for an Activepieces test planning system.
 
@@ -40,7 +40,9 @@ ${INPUT_MAPPING_DOC}
 
 ${TARGET_ACTION_RULE}
 
-${NO_CUSTOM_HTTP_RULE}`;
+${NO_CUSTOM_HTTP_RULE}
+
+${NO_AUTH_HUMAN_INPUT_RULE}`;
 
 /**
  * MCP-augmented planner prompt.
@@ -100,7 +102,9 @@ Do NOT wrap it with {{connections.xxx}} -- pass the bare externalId.
 
 ${TARGET_ACTION_RULE}
 
-${NO_CUSTOM_HTTP_RULE}`;
+${NO_CUSTOM_HTTP_RULE}
+
+${NO_AUTH_HUMAN_INPUT_RULE}`;
 
 /**
  * Build the user prompt for the planner.

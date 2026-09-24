@@ -3,7 +3,7 @@ import type { TestPlanStep, VerificationResult } from '../types.js';
 import {
   buildPieceContext, buildActionsList, buildActionProperties,
   buildTriggerContext, buildTriggerProperties, buildTriggersList,
-  RUNTIME_TOKENS_DOC, INPUT_MAPPING_DOC, NO_CUSTOM_HTTP_RULE,
+  RUNTIME_TOKENS_DOC, INPUT_MAPPING_DOC, NO_CUSTOM_HTTP_RULE, NO_AUTH_HUMAN_INPUT_RULE,
 } from './shared.js';
 import { formatLessonsForPrompt } from '../../../services/lesson-extractor.js';
 import type { BrokenMapping } from '../tools/inspect-output.js';
@@ -46,7 +46,9 @@ ${INPUT_MAPPING_DOC}
 - ALWAYS call set_test_plan with the corrected steps
 - Do NOT use requiresApproval: true on cleanup steps
 
-${NO_CUSTOM_HTTP_RULE}`;
+${NO_CUSTOM_HTTP_RULE}
+
+${NO_AUTH_HUMAN_INPUT_RULE}`;
 
 /**
  * MCP-augmented fixer prompt.
@@ -97,7 +99,9 @@ For inspect_output: also pass "auth": "<externalId>" in the input object, otherw
 - ALWAYS call set_test_plan with the corrected steps
 - Do NOT use requiresApproval: true on cleanup steps
 
-${NO_CUSTOM_HTTP_RULE}`;
+${NO_CUSTOM_HTTP_RULE}
+
+${NO_AUTH_HUMAN_INPUT_RULE}`;
 
 export function buildFixerUserPrompt(params: {
   pieceMeta: PieceMetadataFull;
@@ -241,7 +245,9 @@ ${INPUT_MAPPING_DOC}
 - Include DETAILED agent_memory explaining what failed, why, and what you changed.
 - ALWAYS call set_test_plan with the corrected steps.
 
-${NO_CUSTOM_HTTP_RULE}`;
+${NO_CUSTOM_HTTP_RULE}
+
+${NO_AUTH_HUMAN_INPUT_RULE}`;
 
 export function buildTriggerFixerUserPrompt(params: {
   pieceMeta: PieceMetadataFull;
