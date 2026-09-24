@@ -28,7 +28,7 @@ export async function runResearchWorker(params: {
 
   const result = await runAgentLoop(registry, {
     role: 'research',
-    model: '',
+    model: 'claude-haiku-4-5',
     systemPrompt: mcpEnabled ? RESEARCH_SYSTEM_PROMPT_MCP : RESEARCH_SYSTEM_PROMPT,
     initialMessages: [
       { role: 'user', content: buildResearchUserPrompt(pieceMeta, actionName, previousMemory) },
