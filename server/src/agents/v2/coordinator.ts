@@ -22,6 +22,8 @@ import { runVerifierWorker } from './workers/verifier.js';
 import { runFixerWorker, runTriggerFixerWorker } from './workers/fixer.js';
 import { synthesizePlannerSpec, parseResearchFindings } from './prompts/coordinator.js';
 import { CostTracker } from './cost-tracker.js';
+import { planStepsUnchanged } from './plan-diff.js';
+import { findNonExecutableActionSteps } from './plan-validate.js';
 
 const MAX_FIX_ATTEMPTS = 2;
 const WRITE_HEAVY_ACTION_RE = /(^|_)(send|create|update|delete|archive|move|reply|post|insert|remove|upload|draft)(_|$)/i;
@@ -35,8 +37,12 @@ function checkAborted(signal?: AbortSignal) {
   if (signal?.aborted) throw new Error('Coordinator aborted: client disconnected');
 }
 
-function validatePlanDeterministically(actionName: string, steps: TestPlanStep[], targetEffect: 'read' | 'write' | 'unknown'): DeterministicPlanValidationResult {
+function validatePlanDeterministically(actionName: string, steps: TestPlanStep[], targetEffect: 'read' | 'write' | 'unknown', executableActionNames: string[]): DeterministicPlanValidationResult {
   const issues: string[] = [];
+
+  // Reject plans that use non-runnable actions before spending an LLM verify/fix round on them.
+  issues.push(...findNonExecutableActionSteps(steps, executableActionNames));
+
   const testSteps = steps.filter(step => step.type === 'test');
 
   if (testSteps.length !== 1) {
@@ -93,8 +99,10 @@ export async function createTestPlanV2(params: {
   previousMemory?: string;
   onLog: OnLogCallback;
   abortSignal?: AbortSignal;
+  /** Epoch-ms wall-clock deadline; fix attempts stop once it passes. */
+  deadlineAt?: number;
 }): Promise<TestPlanResult & { costSummary?: ReturnType<CostTracker['getTotals']> }> {
-  const { pieceMeta, actionName, previousMemory, onLog, abortSignal } = params;
+  const { pieceMeta, actionName, previousMemory, onLog, abortSignal, deadlineAt } = params;
 
   const costTracker = new CostTracker({
     pieceName: pieceMeta.name,
@@ -191,7 +199,7 @@ export async function createTestPlanV2(params: {
     return withCost(plan);
   }
 
-  const deterministicValidation = validatePlanDeterministically(actionName, plan.steps, effectiveTargetEffect);
+  const deterministicValidation = validatePlanDeterministically(actionName, plan.steps, effectiveTargetEffect, Object.keys(pieceMeta.actions));
 
   onLog({ timestamp: Date.now(), type: 'worker_complete', role: 'coordinator', message: `Planner created a ${plan.steps.length}-step plan.` });
   state.plan = plan;
@@ -249,6 +257,10 @@ export async function createTestPlanV2(params: {
   }
 
   while (state.fixAttempts < state.maxFixAttempts) {
+    if (deadlineAt && Date.now() >= deadlineAt) {
+      onLog({ timestamp: Date.now(), type: 'error', role: 'coordinator', message: 'Plan-generation time budget exceeded — returning the best plan so far instead of starting another fix attempt.' });
+      break;
+    }
     state.fixAttempts++;
     logPhase('fixing', `Phase 5: Fix attempt ${state.fixAttempts}/${state.maxFixAttempts}...`);
     state.phases.push({ name: 'fixing', startedAt: Date.now() });
@@ -285,6 +297,14 @@ export async function createTestPlanV2(params: {
     onLog({ timestamp: Date.now(), type: 'worker_complete', role: 'coordinator', message: `Fixer produced a ${fixedPlan.steps.length}-step plan.` });
     state.phases[state.phases.length - 1].completedAt = Date.now();
 
+    // The fixer returns the plan unchanged when it never called set_test_plan
+    // (e.g. it exhausted its iterations). Re-verifying a plan we already know
+    // fails is pure wasted latency — skip straight to the next fix attempt.
+    if (planStepsUnchanged(currentPlan.steps, fixedPlan.steps)) {
+      onLog({ timestamp: Date.now(), type: 'worker_complete', role: 'coordinator', message: 'Fixer did not change the plan — skipping re-verification of an identical plan.' });
+      continue;
+    }
+
     // Re-verify the fixed plan
     checkAborted(abortSignal);
     onLog({ timestamp: Date.now(), type: 'worker_spawn', role: 'coordinator', message: 'Re-verifying fixed plan...' });
@@ -305,7 +325,7 @@ export async function createTestPlanV2(params: {
         message: `Re-verification verdict: ${reVerification.verdict}`,
       });
 
-      const reValidation = validatePlanDeterministically(actionName, fixedPlan.steps, effectiveTargetEffect);
+      const reValidation = validatePlanDeterministically(actionName, fixedPlan.steps, effectiveTargetEffect, Object.keys(pieceMeta.actions));
       if (!reValidation.ok) {
         for (const issue of reValidation.issues) {
           onLog({ timestamp: Date.now(), type: 'error', role: 'coordinator', message: issue });
@@ -393,6 +413,14 @@ export async function fixTestPlanV2(params: {
   }
 
   onLog({ timestamp: Date.now(), type: 'worker_complete', role: 'coordinator', message: `Fixer produced a ${fixedPlan.steps.length}-step plan.` });
+
+  // Fixer handed back the plan unchanged (it never called set_test_plan) — there
+  // is nothing new to verify or re-fix, so return it instead of burning a
+  // verifier (and a possible second fixer) on an identical plan.
+  if (planStepsUnchanged(params.previousSteps, fixedPlan.steps)) {
+    onLog({ timestamp: Date.now(), type: 'done', role: 'coordinator', message: 'Fixer did not change the plan — skipping verification and returning it unchanged.' });
+    return withCost(fixedPlan);
+  }
 
   // Verify the fix
   onLog({ timestamp: Date.now(), type: 'worker_spawn', role: 'coordinator', message: 'Verifying fixed plan...' });
