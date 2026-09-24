@@ -1,3 +1,6 @@
+/** UTC+3, no DST: a local-time date bug fails here even when CI runs in UTC. */
+process.env.TZ = 'Asia/Riyadh';
+
 import { describe, it, expect } from 'vitest';
 import {
   formatDay, weekStartOf, formatWeekRange, formatDateRange, formatDelta,
@@ -21,6 +24,7 @@ describe('dates', () => {
     expect(formatWeekRange('2026-08-31')).toBe('Aug 31 – Sep 6');
   });
   it('formats the window on the UTC day, even late in the UTC day', () => {
+    expect(new Date('2026-09-24T23:30:00Z').getDate()).toBe(25);
     expect(formatDateRange('2026-06-01', '2026-09-24T23:30:00.000Z')).toBe('Jun 1 – Sep 24, 2026');
   });
   it('shows both years when the window crosses a year', () => {
