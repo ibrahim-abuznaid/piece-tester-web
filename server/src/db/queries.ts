@@ -32,6 +32,8 @@ export interface SettingsRow {
   notify_retest_count: number;
   notify_reauth_digest_time: string;
   batch_concurrency: number;
+  linear_api_key: string;
+  bug_trend_roster: string;    // JSON [{ id, name }], Linear user IDs
   updated_at: string;
 }
 
@@ -68,6 +70,8 @@ export function updateSettings(s: Partial<Omit<SettingsRow, 'id' | 'updated_at'>
       notify_retest_count = ?,
       notify_reauth_digest_time = ?,
       batch_concurrency = ?,
+      linear_api_key = ?,
+      bug_trend_roster = ?,
       updated_at = datetime('now')
     WHERE id = 1
   `, [
@@ -96,6 +100,8 @@ export function updateSettings(s: Partial<Omit<SettingsRow, 'id' | 'updated_at'>
     s.notify_retest_count ?? current.notify_retest_count,
     s.notify_reauth_digest_time ?? current.notify_reauth_digest_time,
     s.batch_concurrency ?? current.batch_concurrency,
+    s.linear_api_key ?? current.linear_api_key,
+    s.bug_trend_roster ?? current.bug_trend_roster,
   ]);
   return getSettings();
 }
