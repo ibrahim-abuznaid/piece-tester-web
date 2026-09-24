@@ -222,8 +222,10 @@ Linear report webhook card:
 
 **Navigation.** New sidebar entry **Bug Trend** (lucide `TrendingDown` icon) directly after
 Reports in `Layout.tsx`; route `/bug-trend` in `App.tsx`; page `client/src/pages/BugTrend.tsx`.
-Chart parts live in `client/src/components/bug-trend/` (`KpiRow`, `OpenedPerWeekChart`,
-`OpenBugsChart`, `BugTable`) so the page file stays small. Data comes through a new
+The page is lazy-loaded (`React.lazy` + `Suspense` with the pages' plain "Loading…" line), like
+Reports and PieceDetail, so recharts and html-to-image stay out of the main chunk and every
+chunk stays under Vite's 500 kB warning. Chart parts live in `client/src/components/bug-trend/`
+(`KpiRow`, `OpenedPerWeekChart`, `OpenBugsChart`, `BugTable`) so the page file stays small. Data comes through a new
 `api.getBugTrend({ from, refresh })` in `client/src/lib/api.ts`, called with React Query.
 
 **Layout.** Controls sit *outside* the exported card, so the PNG holds only the picture:
