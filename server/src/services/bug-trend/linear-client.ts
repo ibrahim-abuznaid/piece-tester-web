@@ -53,6 +53,11 @@ const USERS_QUERY = `query ActiveUsers($after: String) {
   }
 }`;
 
+/** Replaces every copy of the key in text that came from Linear or axios. */
+function redactKey(message: string, apiKey: string): string {
+  return apiKey ? message.replaceAll(apiKey, '[redacted]') : message;
+}
+
 /** Personal API keys go in Authorization as-is (no Bearer). Error messages never include the key. */
 async function linearQuery<T>(apiKey: string, query: string, variables: Record<string, unknown> = {}): Promise<T> {
   let res;
@@ -63,13 +68,13 @@ async function linearQuery<T>(apiKey: string, query: string, variables: Record<s
       validateStatus: () => true,
     });
   } catch (err: any) {
-    throw new LinearError(`Couldn't reach Linear: ${err?.code || err?.message || 'network error'}`);
+    throw new LinearError(redactKey(`Couldn't reach Linear: ${err?.code || err?.message || 'network error'}`, apiKey));
   }
   if (res.status === 401 || res.status === 403) throw new LinearError('Linear rejected the API key');
   const errors = res.data?.errors;
   if (Array.isArray(errors) && errors.length > 0) {
     if (errors[0]?.extensions?.code === 'AUTHENTICATION_ERROR') throw new LinearError('Linear rejected the API key');
-    throw new LinearError(String(errors[0]?.message || 'Linear returned an error'));
+    throw new LinearError(redactKey(String(errors[0]?.message || 'Linear returned an error'), apiKey));
   }
   if (res.status >= 400 || !res.data?.data) throw new LinearError(`Linear request failed (HTTP ${res.status})`);
   return res.data.data as T;

@@ -124,6 +124,21 @@ describe('Linear errors', () => {
     post.mockRejectedValueOnce(Object.assign(new Error('socket hang up'), { code: 'ECONNRESET' }));
     await expectLinearError(fetchViewer(KEY), "Couldn't reach Linear: ECONNRESET");
   });
+
+  it('redacts every copy of the key from a GraphQL error message', async () => {
+    post.mockResolvedValueOnce({ status: 200, data: { errors: [{ message: `Bad token ${KEY} (got ${KEY})` }] } });
+    await expectLinearError(fetchViewer(KEY), 'Bad token [redacted] (got [redacted])');
+  });
+
+  it('redacts the key from a network error message', async () => {
+    post.mockRejectedValueOnce(new Error(`Invalid header value ${KEY}`));
+    await expectLinearError(fetchViewer(KEY), "Couldn't reach Linear: Invalid header value [redacted]");
+  });
+
+  it('leaves the message alone when the key is empty', async () => {
+    post.mockResolvedValueOnce({ status: 200, data: { errors: [{ message: 'Query too complex' }] } });
+    await expectLinearError(fetchViewer(''), 'Query too complex');
+  });
 });
 
 describe('fetchViewer / fetchActiveUsers', () => {

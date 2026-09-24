@@ -77,9 +77,15 @@ prefix.
   `trashed` is selected only to drop deleted issues (§1).
 - `fetchViewer(apiKey)` runs `viewer { id name }`, used to validate a key on save.
 - `fetchActiveUsers(apiKey)` returns `{ id, name, displayName }` for active workspace users.
-- Errors: an HTTP 401/403 becomes `LinearError('Linear rejected the API key')`; a 200 response
-  with a GraphQL `errors` array becomes `LinearError(<first error message>)`; network errors keep
-  their message. Callers never see the key in any error text.
+- Errors are all `LinearError`:
+  - HTTP 401/403, or a GraphQL `AUTHENTICATION_ERROR`, → "Linear rejected the API key".
+  - Otherwise, a GraphQL `errors` array at any status → its first message, with the key redacted.
+  - A network failure → "Couldn't reach Linear: <code or message>", with the key redacted.
+  - Any other non-OK status, or a response with no `data` → "Linear request failed (HTTP n)".
+  - More than 50 pages → "Stopped after 50 pages of Linear results".
+
+  Every copy of the key in Linear's or axios's text becomes `[redacted]` (skipped when the key is
+  empty), so no error message contains the key.
 
 **`bug-trend.ts`** holds the pure functions and their types. It does all the math; the client only
 formats. `classifySource(labelNames): BugSource` applies the source rules from §1;
@@ -114,8 +120,9 @@ interface BugTrendKpis {
 interface BugTrend {
   from: string; asOf: string; markerDate: string;
   weeks: BugTrendWeek[]; days: BugTrendDay[]; kpis: BugTrendKpis;
-  issues: TrackedBug[];           // the bugs behind the charts and KPIs: createdAt >= the first
-                                  // bar's Monday, still open, or completedAt in [from, now]
+  issues: TrackedBug[];           // the bugs behind the weekly bars, the open line and the median:
+                                  // createdAt >= the first bar's Monday, still open, or
+                                  // completedAt in [from, now]
 }
 
 function buildBugTrend(bugs: TrackedBug[], opts: { from: string; now: Date; markerDate: string }): BugTrend;
@@ -295,8 +302,8 @@ left out. Weeks start Monday (UTC). Lighter bar = this week so far.*
 **Download PNG.** New client dependency **`html-to-image`**. It captures the whole card (title,
 KPI tiles, both charts, footnote); plain SVG-to-canvas would capture one chart at a time.
 
-- `toPng(cardRef.current, { pixelRatio: 2, backgroundColor: '#111827', style: { margin: '0' } })`,
-  saved as `pieces-team-bugs-YYYY-MM-DD.png` (the `asOf` date). The fixed 960 px card width means
+- `toPng(cardRef.current, { pixelRatio: 2, backgroundColor: '#111827', cacheBust: true,
+  style: { margin: '0' } })`, saved as `pieces-team-bugs-YYYY-MM-DD.png` (the `asOf` date). The fixed 960 px card width means
   every export is 1920 px wide. `margin: '0'` is required: html-to-image copies the card's computed
   `mx-auto` margin onto the clone, which on wide screens shifts the capture right and cuts off the
   card's right edge.
@@ -344,7 +351,7 @@ the repo.
 **`linear-client.test.ts`** with a mocked axios: follows `endCursor` across pages; sends
 `includeArchived: true`; sends the key without `Bearer`; drops `canceled`-type and trashed issues;
 maps 401, GraphQL `errors` and network failures to `LinearError`, and no error message contains
-the key.
+the key, even when Linear's or axios's own text includes it (it comes back as `[redacted]`).
 
 **`bug-trend-cache.test.ts`** with a fake clock and a stub fetcher: a hit inside 15 minutes, a
 miss after; `refresh` bypasses; `invalidate()` forces a fetch; a failure with a cached copy returns
