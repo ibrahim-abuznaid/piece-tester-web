@@ -1,8 +1,9 @@
 import { lazy, Suspense, useEffect, useState, type ReactNode } from 'react';
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { api } from './lib/api';
 import Layout from './components/Layout';
+import PageErrorBoundary from './components/PageErrorBoundary';
 import Login from './pages/Login';
 import Dashboard from './pages/Dashboard';
 import Connections from './pages/Connections';
@@ -17,9 +18,14 @@ const Reports = lazy(() => import('./pages/Reports'));
 const BugTrend = lazy(() => import('./pages/BugTrend'));
 const PieceDetail = lazy(() => import('./pages/PieceDetail'));
 
-/** Shows the pages' usual loading line while a lazy page's chunk downloads. */
+/** Shows the pages' usual loading line while a lazy page's chunk downloads, and a reload banner if it fails. */
 function LazyPage({ children }: { children: ReactNode }) {
-  return <Suspense fallback={<div className="text-gray-400">Loading…</div>}>{children}</Suspense>;
+  const { pathname } = useLocation();
+  return (
+    <PageErrorBoundary resetKey={pathname}>
+      <Suspense fallback={<div className="text-gray-400">Loading…</div>}>{children}</Suspense>
+    </PageErrorBoundary>
+  );
 }
 
 const queryClient = new QueryClient({
