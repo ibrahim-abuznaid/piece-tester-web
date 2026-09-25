@@ -224,7 +224,11 @@ Linear report webhook card:
 Reports in `Layout.tsx`; route `/bug-trend` in `App.tsx`; page `client/src/pages/BugTrend.tsx`.
 The page is lazy-loaded (`React.lazy` + `Suspense` with the pages' plain "Loading…" line), like
 Reports and PieceDetail, so recharts and html-to-image stay out of the main chunk and every
-chunk stays under Vite's 500 kB warning. Chart parts live in `client/src/components/bug-trend/`
+chunk stays under Vite's 500 kB warning. If a redeploy has removed the page's chunk, `main.tsx`
+reloads the tab once: it handles `vite:preloadError`, guarded by a per-tab 10 s sessionStorage
+timestamp. If the page still can't load, the error boundary in `LazyPage` shows "Couldn't load
+this page." with a Reload button inside the layout, so the sidebar stays usable, and clears it on
+the next navigation. Chart parts live in `client/src/components/bug-trend/`
 (`KpiRow`, `OpenedPerWeekChart`, `OpenBugsChart`, `BugTable`) so the page file stays small. Data comes through a new
 `api.getBugTrend({ from, refresh })` in `client/src/lib/api.ts`, called with React Query.
 
