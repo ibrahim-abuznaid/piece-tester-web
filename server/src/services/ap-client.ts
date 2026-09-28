@@ -192,8 +192,19 @@ export class ActivepiecesClient {
   }
 
   async listConnections(): Promise<AppConnection[]> {
-    const { data } = await this.http.get<SeekPage<AppConnection>>('/v1/app-connections', { params: { projectId: this.projectId, limit: 100 } });
-    return data.data;
+    const MAX_PAGES = 50;
+    const all: AppConnection[] = [];
+    let cursor: string | undefined;
+    for (let page = 0; page < MAX_PAGES; page++) {
+      const { data } = await this.http.get<SeekPage<AppConnection>>('/v1/app-connections', {
+        params: { projectId: this.projectId, limit: 100, cursor },
+      });
+      all.push(...data.data);
+      if (!data.next) return all;
+      cursor = data.next;
+    }
+    console.warn(`[ap-client] listConnections hit the ${MAX_PAGES}-page cap; some connections may be omitted.`);
+    return all;
   }
 
   // Flows
