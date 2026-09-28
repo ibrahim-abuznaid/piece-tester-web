@@ -65,3 +65,44 @@ describe('ActivepiecesClient retry', () => {
     expect(count()).toBe(1);
   });
 });
+
+const conn = (id: string): Record<string, unknown> => ({
+  id, pieceName: `@activepieces/piece-${id}`, displayName: id, projectId: 'proj', externalId: id, type: 'CUSTOM_AUTH', status: 'ACTIVE',
+});
+
+describe('ActivepiecesClient.listConnections pagination', () => {
+  it('follows next across every page and returns all connections', async () => {
+    const pages: Record<string, { data: unknown[]; next: string | null }> = {
+      '': { data: [conn('a'), conn('b')], next: 'c1' },
+      c1: { data: [conn('c'), conn('d')], next: 'c2' },
+      c2: { data: [conn('e')], next: null },
+    };
+    const seenCursors: string[] = [];
+    const { baseUrl, count } = await startServer((req, res) => {
+      const cursor = new URL(req.url ?? '', 'http://x').searchParams.get('cursor') ?? '';
+      seenCursors.push(cursor);
+      res.setHeader('Content-Type', 'application/json');
+      res.end(JSON.stringify({ ...pages[cursor], previous: null }));
+    });
+    const client = new ActivepiecesClient(baseUrl, 'key', 'proj', undefined, RETRY);
+
+    const all = await client.listConnections();
+
+    expect(all.map(c => c.id)).toEqual(['a', 'b', 'c', 'd', 'e']);
+    expect(count()).toBe(3);
+    expect(seenCursors).toEqual(['', 'c1', 'c2']);
+  });
+
+  it('stops at the page cap when next never becomes null', async () => {
+    const { baseUrl, count } = await startServer((_req, res) => {
+      res.setHeader('Content-Type', 'application/json');
+      res.end(JSON.stringify({ data: [conn('x')], next: 'always-more', previous: null }));
+    });
+    const client = new ActivepiecesClient(baseUrl, 'key', 'proj', undefined, RETRY);
+
+    const all = await client.listConnections();
+
+    expect(count()).toBe(50); // capped, does not loop forever
+    expect(all).toHaveLength(50);
+  });
+});
