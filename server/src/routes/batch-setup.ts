@@ -3,6 +3,7 @@ import { createClient } from '../services/test-engine.js';
 import { type AgentLogEntry } from '../services/ai-config-generator.js';
 import { createTestPlanV2, fixTestPlanV2, createTriggerTestPlanV2 } from '../agents/v2/index.js';
 import { detectBrokenInputMappings } from '../agents/v2/tools/inspect-output.js';
+import { resolvePlanGenBudgetMs } from '../agents/v2/plan-budget.js';
 import {
   createTestPlan, updateTestPlan, listTestPlans,
   createSetupRun, addSetupRunItems, updateSetupRunItem, finalizeSetupRun,
@@ -132,8 +133,12 @@ async function processBatchItem(
         return;
       }
 
+      // One wall-clock budget for this action, shared by the write phase and
+      // the auto-test loop below, so a single action can't crawl to the 600s cap.
+      const deadlineAt = Date.now() + resolvePlanGenBudgetMs(process.env.PLAN_GEN_BUDGET_MS);
+
       // Create the plan (v2 multi-agent planner — same as the per-piece flow)
-      const planResult = await createTestPlanV2({ pieceMeta: piece, actionName, onLog: (l: any) => onLog(l) });
+      const planResult = await createTestPlanV2({ pieceMeta: piece, actionName, onLog: (l: any) => onLog(l), deadlineAt });
 
       if (queue.cancelled) return;
 
@@ -166,6 +171,10 @@ async function processBatchItem(
 
         for (let attempt = 0; attempt <= MAX_FIX_ATTEMPTS; attempt++) {
           if (queue.cancelled) break;
+          if (Date.now() >= deadlineAt) {
+            onLog({ timestamp: Date.now(), type: 'error', message: 'Time budget exceeded — stopping auto-test and leaving the plan as-is.' });
+            break;
+          }
 
           onLog({ timestamp: Date.now(), type: 'thinking', message: `Auto-testing plan (attempt ${attempt + 1}/${MAX_FIX_ATTEMPTS + 1})...` });
 

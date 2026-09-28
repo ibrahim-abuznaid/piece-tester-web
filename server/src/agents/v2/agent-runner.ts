@@ -95,7 +95,9 @@ export async function runAgentLoop(
     throw new Error('Anthropic API key not configured. Go to Settings to add it.');
   }
 
-  const model = settings.ai_model || 'claude-sonnet-4-6';
+  // Per-worker model override (config.model) wins, else the configured default.
+  // Lets cheap, high-volume workers (research, verifier) run on a faster model.
+  const model = config.model || settings.ai_model || 'claude-sonnet-4-6';
   const client = new Anthropic(buildAnthropicClientOptions(settings.anthropic_api_key));
   const { role, systemPrompt, maxIterations, toolNames, abortSignal, onLog } = config;
 
@@ -186,6 +188,14 @@ export async function runAgentLoop(
       if (block.type === 'text' && block.text?.trim()) {
         log('thinking', block.text.trim());
       }
+    }
+
+    // A max_tokens stop means this turn was truncated mid-generation. Any tool
+    // call in it (including a terminal set_test_plan) may be cut off, so acting
+    // on it would silently accept a corrupt plan. Stop the worker instead.
+    if (response.stop_reason === 'max_tokens') {
+      log('error', `[${role}] Response truncated at max_tokens — stopping without acting on a possibly-incomplete tool call.`);
+      break;
     }
 
     const toolUseBlocks = assistantContent.filter(

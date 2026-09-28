@@ -57,10 +57,13 @@ export function buildActionProperties(action: PieceActionMeta, actionName: strin
 
 /** Build a compact action listing (name + display name). */
 export function buildActionsList(piece: PieceMetadataFull): string {
-  const lines = ['## All actions in this piece:'];
+  const lines = ['## Runnable actions in this piece (AUTHORITATIVE — the ONLY actions you may put in a step):'];
   for (const [n, act] of Object.entries(piece.actions)) {
     lines.push(`  - ${n}: "${act.displayName}"`);
   }
+  lines.push(
+    'Any action NOT in this list — including ones surfaced by MCP research (ap_research_pieces, ap_get_piece_props) or the piece source — is NOT runnable and WILL fail at execution with "Action not found". Never reference such an action in a step.',
+  );
   return lines.join('\n');
 }
 

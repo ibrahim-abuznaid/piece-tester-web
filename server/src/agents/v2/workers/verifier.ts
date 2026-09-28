@@ -143,7 +143,7 @@ export async function runVerifierWorker(params: {
 
   const result = await runAgentLoop(registry, {
     role: 'verifier',
-    model: '',
+    model: 'claude-haiku-4-5',
     systemPrompt: mcpEnabled ? VERIFIER_SYSTEM_PROMPT_MCP : VERIFIER_SYSTEM_PROMPT,
     initialMessages: [
       { role: 'user', content: buildVerifierUserPrompt(pieceMeta, actionName, steps, planNote) },
