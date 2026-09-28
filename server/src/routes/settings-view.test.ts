@@ -25,6 +25,8 @@ const raw = {
   notify_retest_count: 2,
   notify_reauth_digest_time: '09:00',
   batch_concurrency: 3,
+  linear_api_key: 'lin_api_SUPERSECRETLINEARKEY1234567890abcd',
+  bug_trend_roster: '[{"id":"u-kishan","name":"Kishan Parmar"}]',
 };
 
 describe('maskedSettings', () => {
@@ -81,5 +83,21 @@ describe('maskedSettings', () => {
     expect(out.api_key_masked).toBe('••••••');
     expect(out.api_key_masked).not.toContain('short');
     expect(out.anthropic_key_masked).toBe('••••••');
+  });
+  it('exposes the Linear API key as presence + mask, never raw', () => {
+    const out = maskedSettings(raw) as any;
+    expect(out.has_linear_api_key).toBe(true);
+    expect(out.linear_api_key).toBeUndefined();
+    expect(JSON.stringify(out)).not.toContain('SUPERSECRETLINEARKEY');
+    expect(out.linear_api_key_masked).toBe('lin_api_...abcd');
+  });
+  it('reports no Linear key when it is empty', () => {
+    const out = maskedSettings({ ...raw, linear_api_key: '' }) as any;
+    expect(out.has_linear_api_key).toBe(false);
+    expect(out.linear_api_key_masked).toBe('');
+  });
+  it('returns the bug trend roster parsed, and [] when the stored value is unreadable', () => {
+    expect((maskedSettings(raw) as any).bug_trend_roster).toEqual([{ id: 'u-kishan', name: 'Kishan Parmar' }]);
+    expect((maskedSettings({ ...raw, bug_trend_roster: 'oops' }) as any).bug_trend_roster).toEqual([]);
   });
 });

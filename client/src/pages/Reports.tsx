@@ -2,7 +2,7 @@ import { useState, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import {
-  PieChart, Pie, Cell, BarChart, Bar, AreaChart, Area,
+  PieChart, Pie, BarChart, Bar, AreaChart, Area,
   XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid,
 } from 'recharts';
 import { api } from '../lib/api';
@@ -312,9 +312,7 @@ function Donut({ data, center, sub }: { data: { name: string; value: number; fil
     <div className="relative" style={{ height: 160 }}>
       <ResponsiveContainer width="100%" height="100%">
         <PieChart>
-          <Pie data={shown} dataKey="value" nameKey="name" innerRadius={48} outerRadius={68} paddingAngle={2} stroke="none">
-            {shown.map((d, i) => <Cell key={i} fill={d.fill} />)}
-          </Pie>
+          <Pie data={shown} dataKey="value" nameKey="name" innerRadius={48} outerRadius={68} paddingAngle={2} stroke="none" />
           <Tooltip contentStyle={TOOLTIP_STYLE} />
         </PieChart>
       </ResponsiveContainer>

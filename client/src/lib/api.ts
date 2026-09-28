@@ -398,6 +398,57 @@ export interface ReportPreview {
   existing: { linear_url: string; linear_issue_id: string } | null;
 }
 
+export type BugSource = 'support' | 'internal' | 'tester';
+
+export interface TrackedBug {
+  identifier: string;
+  title: string;
+  url: string;
+  team: 'GIT' | 'PIE';
+  source: BugSource;
+  assigneeName: string | null;
+  createdAt: string;
+  completedAt: string | null;
+}
+
+export interface BugTrendWeek {
+  weekStart: string;
+  support: number;
+  internal: number;
+  tester: number;
+  total: number;
+  rolling4: number | null;
+  inProgress: boolean;
+}
+
+export interface BugTrendDay { date: string; open: number; openIds: string[] }
+
+export interface BugTrendKpis {
+  openNow: number;
+  openedLast28: number;
+  openedPrev28: number;
+  medianDaysToFix: number | null;
+  fixedCount: number;
+}
+
+export interface BugTrend {
+  from: string;
+  asOf: string;
+  markerDate: string;
+  weeks: BugTrendWeek[];
+  days: BugTrendDay[];
+  kpis: BugTrendKpis;
+  issues: TrackedBug[];
+}
+
+export type BugTrendResponse =
+  | { state: 'needs-setup'; missing: 'key' | 'roster' }
+  | { state: 'ok'; fetchedAt: string; warnings: string[]; trend: BugTrend };
+
+export interface RosterMember { id: string; name: string }
+export interface LinearUser { id: string; name: string; displayName: string }
+export interface SaveLinearKeyResult { success: boolean; viewer: string; seeded: string[]; notFound: string[] }
+
 /** One item in the Needs-Attention inbox — a failing (piece, action), classified into a lane. */
 export interface AttentionItem {
   plan_id: number;
@@ -1164,6 +1215,16 @@ export const api = {
   removeLinearWebhook: () => request<{ success: boolean }>('POST', '/settings/remove-linear-webhook'),
   removeNotifyWebhook: () => request<{ success: boolean }>('POST', '/settings/remove-notify-webhook'),
   testNotification: () => request<{ success: boolean; error?: string }>('POST', '/settings/test-notification'),
+  getBugTrend: (params: { from?: string; refresh?: boolean } = {}) => {
+    const q = new URLSearchParams();
+    if (params.from) q.set('from', params.from);
+    if (params.refresh) q.set('refresh', '1');
+    const qs = q.toString();
+    return request<BugTrendResponse>('GET', `/bug-trend${qs ? `?${qs}` : ''}`);
+  },
+  saveLinearKey: (api_key: string) => request<SaveLinearKeyResult>('POST', '/settings/save-linear-key', { api_key }),
+  removeLinearKey: () => request<{ success: boolean }>('POST', '/settings/remove-linear-key'),
+  getLinearUsers: () => request<LinearUser[]>('GET', '/settings/linear-users'),
   getReportPieceBreakdown: (dateFrom?: string, dateTo?: string) => {
     const p = new URLSearchParams();
     if (dateFrom) p.set('date_from', dateFrom);

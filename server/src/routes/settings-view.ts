@@ -1,3 +1,5 @@
+import { parseRoster } from '../services/bug-trend/roster.js';
+
 /** The full secret-bearing settings row this view reads from. */
 export interface SettingsForView {
   base_url: string;
@@ -26,6 +28,8 @@ export interface SettingsForView {
   ap_service_password: string;
   jwt_expiry: string;
   jwt_auth_status: string;
+  linear_api_key: string;
+  bug_trend_roster: string;
 }
 
 /** Mask a secret as head…tail, but only when it is long enough that the
@@ -76,5 +80,8 @@ export function maskedSettings(s: SettingsForView) {
     service_email_masked: maskEmail(s.ap_service_email),
     jwt_expires_at: s.jwt_expiry || '',
     jwt_status: s.jwt_auth_status || '',
+    has_linear_api_key: !!s.linear_api_key,
+    linear_api_key_masked: maskLong(s.linear_api_key, 8, 16),
+    bug_trend_roster: parseRoster(s.bug_trend_roster),
   };
 }

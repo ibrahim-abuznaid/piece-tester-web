@@ -21,6 +21,7 @@
     "cors": "^2.8.5",
     "dotenv": "^16.6.1",
     "express": "^4.21.0",
+    "html-to-image": "^1.11.13",
     "lucide-react": "^0.468.0",
     "node-cron": "^3.0.3",
     "react": "^18.3.0",

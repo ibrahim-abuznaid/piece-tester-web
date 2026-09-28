@@ -124,6 +124,15 @@ function initTables(db: DatabaseAdapter): void {
     if (!c.some(x => x.name === col)) db.exec(ddl);
   }
 
+  // Migration: Bug Trend page (Linear read access)
+  for (const [col, ddl] of [
+    ['linear_api_key',   `ALTER TABLE settings ADD COLUMN linear_api_key TEXT NOT NULL DEFAULT ''`],
+    ['bug_trend_roster', `ALTER TABLE settings ADD COLUMN bug_trend_roster TEXT NOT NULL DEFAULT '[]'`],
+  ] as const) {
+    const c = db.pragma(`table_info(settings)`) as { name: string }[];
+    if (!c.some(x => x.name === col)) db.exec(ddl);
+  }
+
   // Migration: add ai_config_meta column to piece_connections if missing
   const connCols = db.pragma(`table_info(piece_connections)`) as { name: string }[];
   // (table may not exist yet — the CREATE TABLE below creates it; run migration only if table exists)

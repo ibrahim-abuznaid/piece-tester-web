@@ -8,6 +8,9 @@ import { encryptSecret, hasEncryptionKey } from '../services/crypto-vault.js';
 import { decodeJwtExp } from '../services/jwt-util.js';
 import { postDiscordMessage } from '../services/notifier.js';
 import { buildAnthropicClientOptions } from '../services/anthropic-client.js';
+import { fetchActiveUsers, fetchViewer } from '../services/bug-trend/linear-client.js';
+import { invalidateBugTrendCache } from '../services/bug-trend/bug-trend-service.js';
+import { seedRosterIfEmpty, validateRoster } from '../services/bug-trend/roster.js';
 
 // ── MCP OAuth constants ──
 const MCP_OAUTH_AUTHORIZE_URL = 'https://mcp.activepieces.com/authorize';
@@ -90,7 +93,14 @@ router.put('/', (req, res) => {
     if (typeof b.notify_retest_count === 'number' && Number.isFinite(b.notify_retest_count)) updates.notify_retest_count = Math.max(0, Math.min(5, Math.floor(b.notify_retest_count)));
     if (typeof b.notify_reauth_digest_time === 'string' && /^\d{2}:\d{2}$/.test(b.notify_reauth_digest_time)) updates.notify_reauth_digest_time = b.notify_reauth_digest_time;
     if (typeof b.batch_concurrency === 'number' && Number.isFinite(b.batch_concurrency)) updates.batch_concurrency = boundConcurrency(b.batch_concurrency);
-    res.json(maskedSettings(updateSettings(updates)));
+    if (b.bug_trend_roster !== undefined) {
+      const roster = validateRoster(b.bug_trend_roster);
+      if (!roster) return res.status(400).json({ error: 'bug_trend_roster must be a list of { id, name }' });
+      updates.bug_trend_roster = JSON.stringify(roster);
+    }
+    const saved = updateSettings(updates);
+    if (updates.bug_trend_roster !== undefined) invalidateBugTrendCache();
+    res.json(maskedSettings(saved));
   } catch (err: any) {
     res.status(400).json({ error: err.message });
   }
@@ -240,6 +250,41 @@ router.post('/save-anthropic-key', async (req, res) => {
 router.post('/remove-anthropic-key', (_req, res) => {
   updateSettings({ anthropic_api_key: '' });
   res.json({ success: true });
+});
+
+/** Save the Linear API key for the Bug Trend page. Validated against Linear before saving; seeds an empty roster. */
+router.post('/save-linear-key', async (req, res) => {
+  const apiKey = typeof req.body?.api_key === 'string' ? req.body.api_key.trim() : '';
+  if (!apiKey) return res.status(400).json({ error: 'API key is required' });
+  let viewer: { id: string; name: string };
+  try {
+    viewer = await fetchViewer(apiKey);
+  } catch (err: any) {
+    return res.status(400).json({ error: err?.message || String(err) });
+  }
+  updateSettings({ linear_api_key: apiKey });
+  const seed = await seedRosterIfEmpty(getSettings().bug_trend_roster, () => fetchActiveUsers(apiKey));
+  if (seed.roster) updateSettings({ bug_trend_roster: JSON.stringify(seed.roster) });
+  invalidateBugTrendCache();
+  res.json({ success: true, viewer: viewer.name, seeded: seed.seeded, notFound: seed.notFound });
+});
+
+/** Remove the Linear API key. The roster is kept. */
+router.post('/remove-linear-key', (_req, res) => {
+  updateSettings({ linear_api_key: '' });
+  invalidateBugTrendCache();
+  res.json({ success: true });
+});
+
+/** Active Linear users, for the Bug Trend roster picker. */
+router.get('/linear-users', async (_req, res) => {
+  const { linear_api_key } = getSettings();
+  if (!linear_api_key) return res.status(409).json({ error: 'Save a Linear API key first' });
+  try {
+    res.json(await fetchActiveUsers(linear_api_key));
+  } catch (err: any) {
+    res.status(502).json({ error: err?.message || String(err) });
+  }
 });
 
 /** Clear the Linear reporting webhook URL */
