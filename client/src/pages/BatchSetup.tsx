@@ -93,6 +93,7 @@ export default function BatchSetup() {
   const [expandedPiece, setExpandedPiece] = useState<string | null>(null);
   const [expandedItemLog, setExpandedItemLog] = useState<number | null>(null);
   const [starting, setStarting] = useState(false);
+  const [cancelling, setCancelling] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [skippedNotice, setSkippedNotice] = useState<string | null>(null);
   const subControllerRef = useRef<AbortController | null>(null);
@@ -156,6 +157,11 @@ export default function BatchSetup() {
   useEffect(() => {
     return () => { subControllerRef.current?.abort(); };
   }, []);
+
+  // Once the batch actually stops (cancelled/done), leave the "Cancelling…" state.
+  useEffect(() => {
+    if (batchStatus && batchStatus.status !== 'running') setCancelling(false);
+  }, [batchStatus?.status]);
 
   async function refreshStatus(id: string) {
     try {
@@ -302,12 +308,16 @@ export default function BatchSetup() {
   }
 
   async function handleCancel() {
-    if (!activeBatchId) return;
+    if (!activeBatchId || cancelling) return;
+    // Cancellation is cooperative — the in-flight plan must finish before the batch stops.
+    // Keep the button in a "Cancelling…" state until the status actually flips (cleared by effect).
+    setCancelling(true);
     try {
       await api.cancelBatchSetup(activeBatchId);
       setTimeout(() => refreshStatus(activeBatchId), 1000);
     } catch (err: any) {
       setError(err.message);
+      setCancelling(false);
     }
   }
 
@@ -318,6 +328,7 @@ export default function BatchSetup() {
     setBatchItems([]);
     setBatchLogs({});
     setSelected(new Set());
+    setCancelling(false);
     setError(null);
     setSkippedNotice(null);
     setSchedulesCreated(null);
@@ -331,6 +342,7 @@ export default function BatchSetup() {
     setBatchStatus(null);
     setBatchItems([]);
     setBatchLogs({});
+    setCancelling(false);
     setError(null);
     setSkippedNotice(null);
     setWizardActive(false);
@@ -613,11 +625,18 @@ export default function BatchSetup() {
             <>
               <div className="flex items-center justify-between mb-4">
                 <p className="text-gray-400 text-sm">
-                  {isRunning ? 'Creating plans…' : `Batch ${batchStatus.status}`} — {batchItems.length} targets total
+                  {cancelling ? 'Cancelling — finishing the current step…' : isRunning ? 'Creating plans…' : `Batch ${batchStatus.status}`} — {batchItems.length} targets total
                 </p>
                 {isRunning && (
-                  <button onClick={handleCancel} className="flex items-center gap-2 px-4 py-2 bg-red-600 hover:bg-red-700 rounded-lg text-sm font-medium transition-colors">
-                    <StopCircle size={16} /> Cancel
+                  <button
+                    onClick={handleCancel}
+                    disabled={cancelling}
+                    title={cancelling ? 'Finishing the current step before stopping…' : undefined}
+                    className="flex items-center gap-2 px-4 py-2 bg-red-600 hover:bg-red-700 disabled:opacity-60 disabled:cursor-not-allowed rounded-lg text-sm font-medium transition-colors"
+                  >
+                    {cancelling
+                      ? <><Loader2 size={16} className="animate-spin" /> Cancelling…</>
+                      : <><StopCircle size={16} /> Cancel</>}
                   </button>
                 )}
               </div>
