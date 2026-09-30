@@ -228,6 +228,15 @@ async function processBatchItem(
 
           currentSteps = fixResult.steps;
           currentMemory = fixResult.agentMemory || currentMemory;
+
+          if (fixResult.steps.some((s: any) => s.type === 'human_input')) {
+            onLog({ timestamp: Date.now(), type: 'error', message: 'Fixer added a human step (account/setup needed, not a plan bug) — left as draft for a person to finish.' });
+            item.status = 'error';
+            item.error = 'Blocked: needs a person — fixer added a human_input step';
+            if (item.setupItemId) updateSetupRunItem(item.setupItemId, { status: 'error', error: item.error });
+            emitBatchEvent(queue, 'item_update', { index: i, ...item });
+            return;
+          }
         }
       }
     }

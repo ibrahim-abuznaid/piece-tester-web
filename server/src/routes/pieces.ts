@@ -596,6 +596,11 @@ function runPlanJobV2InBackground(job: PlanJob, pieceName: string, actionName: s
             status: 'draft',
             version: 'v2',
           });
+
+          if (fixResult.steps.some((s: any) => s.type === 'human_input')) {
+            onLog({ timestamp: Date.now(), type: 'error', role: 'coordinator', message: 'Fixer added a human step — leaving as draft for a person to finish.' });
+            break;
+          }
         }
       } else if (hasHumanInputSteps) {
         onLog({ timestamp: Date.now(), type: 'thinking', role: 'coordinator', message: 'Plan has human_input steps — skipping auto-test.' });

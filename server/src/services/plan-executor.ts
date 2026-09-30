@@ -389,6 +389,28 @@ export async function executePlan(
     return getPlanRun(runId)!;
   }
 
+  // Gate 3 — unattended human input: auto-test and scheduled runs have no one to answer a
+  // human_input step, so parking on waitForResume would hang forever. Block up front (before any
+  // AP call) and surface the prompt as the reason. A step with a saved response replays instead.
+  const isUnattended = triggerType === 'scheduled' || triggerType === 'auto_test';
+  if (isUnattended) {
+    const humanStep = steps.find(s => s.type === 'human_input' && !s.savedHumanResponse);
+    if (humanStep) {
+      const blockedStep: StepResult = {
+        stepId: 'human_input', label: humanStep.label, status: 'skipped',
+        output: null, error: humanStep.humanPrompt || humanStep.label, duration_ms: 0,
+      };
+      updatePlanRun(runId, {
+        status: 'blocked',
+        completed_at: new Date().toISOString(),
+        step_results: JSON.stringify([blockedStep]),
+      });
+      onProgress({ type: 'plan_blocked', runId, message: blockedStep.error!, stepResults: [blockedStep] });
+      cleanupEmitter(runId);
+      return getPlanRun(runId)!;
+    }
+  }
+
   // Piece metadata is only needed to actually run steps — fetch after the gates so a blocked
   // run makes zero ActivePieces calls.
   const client = createClient();
@@ -557,8 +579,8 @@ export async function executePlan(
       }
 
       // ── Approval pause ──
-      // Scheduled and auto-test runs bypass approval automatically — no one is watching.
-      const isUnattended = triggerType === 'scheduled' || triggerType === 'auto_test';
+      // Scheduled and auto-test runs bypass approval automatically — no one is watching (see the
+      // unattended gate above; isUnattended is computed once there).
       if (step.requiresApproval && !isUnattended) {
         sr.status = 'waiting';
         saveResults();
