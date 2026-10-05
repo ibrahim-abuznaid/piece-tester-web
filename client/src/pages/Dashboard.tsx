@@ -32,7 +32,7 @@ export default function Dashboard() {
   const rows = health ?? [];
   const stats = useMemo(() => {
     const failing = rows.filter(r => r.status === 'failing').length;
-    const healthy = rows.filter(r => r.status === 'healthy').length;
+    const healthy = rows.filter(r => r.status === 'healthy' && !r.flaky).length;
     const lastWave = rows.reduce<string | null>((max, r) =>
       r.last_run_at && (!max || r.last_run_at > max) ? r.last_run_at : max, null);
     return { tracked: rows.length, failing, healthy, lastWave };
