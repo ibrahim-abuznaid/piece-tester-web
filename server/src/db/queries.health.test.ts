@@ -16,6 +16,14 @@ function seedScheduledRun(planId: number, status: string, stepResults = '[]'): n
   ).lastId;
 }
 
+function seedRetestRun(planId: number, status: string, stepResults = '[]'): number {
+  return getDb().run(
+    `INSERT INTO test_plan_runs (plan_id, status, trigger_type, step_results, started_at)
+     VALUES (?,?,?,?,?)`,
+    [planId, status, 'retest', stepResults, '2026-08-14 11:00:00'],
+  ).lastId;
+}
+
 describe('getPieceHealth — blocked connection', () => {
   beforeEach(() => getDb().exec('DELETE FROM test_plan_runs; DELETE FROM test_plans;'));
 
@@ -38,5 +46,32 @@ describe('getPieceHealth — blocked connection', () => {
     const plan = seedPlan('slack', 'send_message');
     seedScheduledRun(plan, 'completed');
     expect(getPieceHealth().find(r => r.piece_name === 'slack')!.status).toBe('healthy');
+  });
+});
+
+describe('getPieceHealth — retest', () => {
+  beforeEach(() => getDb().exec('DELETE FROM test_plan_runs; DELETE FROM test_plans;'));
+
+  it('a passing retest after a scheduled failure makes the piece healthy', () => {
+    const plan = seedPlan('gmail', 'send_email');
+    seedScheduledRun(plan, 'failed');
+    seedRetestRun(plan, 'completed');
+    const gmail = getPieceHealth().find(r => r.piece_name === 'gmail')!;
+    expect(gmail.status).toBe('healthy');
+    expect(gmail.actions_failing).toBe(0);
+  });
+
+  it('a still-running retest does not hide the scheduled failure', () => {
+    const plan = seedPlan('gmail', 'send_email');
+    seedScheduledRun(plan, 'failed');
+    seedRetestRun(plan, 'running');
+    expect(getPieceHealth().find(r => r.piece_name === 'gmail')!.status).toBe('failing');
+  });
+
+  it('retests stay out of the scheduled sparkline', () => {
+    const plan = seedPlan('gmail', 'send_email');
+    seedScheduledRun(plan, 'failed');
+    seedRetestRun(plan, 'completed');
+    expect(getPieceHealth().find(r => r.piece_name === 'gmail')!.recent).toEqual(['failed']);
   });
 });

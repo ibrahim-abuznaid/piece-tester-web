@@ -139,7 +139,11 @@ function AttentionRow({ item, reportUrl }: { item: AttentionItem; reportUrl?: st
     queryFn: async () => {
       if (!retestRunId) return null;
       const r = await api.getPlanRun(retestRunId);
-      if (r?.status === 'completed') { setRetest('passed'); qc.invalidateQueries({ queryKey: ['attention'] }); }
+      if (r?.status === 'completed') {
+        setRetest('passed');
+        qc.invalidateQueries({ queryKey: ['attention'] });
+        qc.invalidateQueries({ queryKey: ['piece-health'] });
+      }
       else if (r?.status === 'failed') setRetest('failed');
       else if (r?.status === 'blocked') { setRetest('blocked'); qc.invalidateQueries({ queryKey: ['attention'] }); }
       return r;

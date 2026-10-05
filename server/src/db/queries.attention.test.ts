@@ -16,6 +16,14 @@ function seedScheduledRun(planId: number, status: string, stepResults = '[]'): n
   ).lastId;
 }
 
+function seedRetestRun(planId: number, status: string, stepResults = '[]'): number {
+  return getDb().run(
+    `INSERT INTO test_plan_runs (plan_id, status, trigger_type, step_results, started_at)
+     VALUES (?,?,?,?,?)`,
+    [planId, status, 'retest', stepResults, '2026-08-14 11:00:00'],
+  ).lastId;
+}
+
 describe('getAttentionItems — blocked connection', () => {
   beforeEach(() => getDb().exec('DELETE FROM test_plan_runs; DELETE FROM test_plans;'));
 
@@ -30,5 +38,41 @@ describe('getAttentionItems — blocked connection', () => {
     expect(item.category).toBe('connection_broken');
     expect(item.error).toContain('deleted');
     expect(item.backlinks?.reimport).toBe('/connections?piece=hubspot');
+  });
+});
+
+describe('getAttentionItems — retest', () => {
+  beforeEach(() => getDb().exec('DELETE FROM test_plan_runs; DELETE FROM test_plans;'));
+
+  it('a passing retest closes the item', () => {
+    const plan = seedPlan('gmail', 'send_email');
+    seedScheduledRun(plan, 'failed');
+    seedRetestRun(plan, 'completed');
+    expect(getAttentionItems().find(i => i.piece_name === 'gmail')).toBeUndefined();
+  });
+
+  it('a still-running retest keeps the item open', () => {
+    const plan = seedPlan('gmail', 'send_email');
+    seedScheduledRun(plan, 'failed');
+    seedRetestRun(plan, 'running');
+    expect(getAttentionItems().find(i => i.piece_name === 'gmail')).toBeDefined();
+  });
+
+  it('a manual run does not close the item', () => {
+    const plan = seedPlan('gmail', 'send_email');
+    seedScheduledRun(plan, 'failed');
+    getDb().run(
+      `INSERT INTO test_plan_runs (plan_id, status, trigger_type, step_results) VALUES (?,?,?,?)`,
+      [plan, 'completed', 'manual', '[]'],
+    );
+    expect(getAttentionItems().find(i => i.piece_name === 'gmail')).toBeDefined();
+  });
+
+  it('a scheduled pass after a failed retest still closes the item', () => {
+    const plan = seedPlan('gmail', 'send_email');
+    seedScheduledRun(plan, 'failed');
+    seedRetestRun(plan, 'failed');
+    seedScheduledRun(plan, 'completed');
+    expect(getAttentionItems().find(i => i.piece_name === 'gmail')).toBeUndefined();
   });
 });

@@ -776,17 +776,22 @@ function firstStepId(stepResultsJson: string): string | null {
   } catch { return null; }
 }
 
+// A finished retest counts toward a plan's current status, so a passing retest closes the issue.
+// Sparklines, streaks and trends stay scheduled-only.
+const CURRENT_STATUS_RUN =
+  `(r2.trigger_type = 'scheduled' OR (r2.trigger_type = 'retest' AND r2.status IN ('completed', 'failed', 'blocked')))`;
+
 export function getPieceHealth(): PieceHealthRow[] {
   const db = getDb();
 
-  // Latest scheduled run per plan (= per piece+action): its current status + error.
+  // Latest scheduled-or-retest run per plan (= per piece+action): its current status + error.
   const latest = db.all<{ plan_id: number; piece_name: string; target_action: string; last_status: string; last_run_at: string | null; step_results: string; run_id: number }>(`
     SELECT p.id AS plan_id, p.piece_name, p.target_action,
            r.id AS run_id, r.status AS last_status, r.started_at AS last_run_at, r.step_results
     FROM test_plans p
     JOIN test_plan_runs r ON r.id = (
       SELECT r2.id FROM test_plan_runs r2
-      WHERE r2.plan_id = p.id AND r2.trigger_type = 'scheduled'
+      WHERE r2.plan_id = p.id AND ${CURRENT_STATUS_RUN}
       ORDER BY r2.id DESC LIMIT 1
     )
   `);
@@ -995,14 +1000,14 @@ function analyzeFailedRun(stepResultsJson: string): { category: string; error: s
 export function getAttentionItems(): AttentionItem[] {
   const db = getDb();
 
-  // Plans whose LATEST scheduled run failed or was blocked = candidate attention items.
+  // Plans whose latest scheduled-or-retest run failed or was blocked = candidate attention items.
   const latest = db.all<{ plan_id: number; piece_name: string; target_action: string; run_id: number; last_run_at: string | null; step_results: string; last_status: string }>(`
     SELECT p.id AS plan_id, p.piece_name, p.target_action,
            r.id AS run_id, r.started_at AS last_run_at, r.step_results, r.status AS last_status
     FROM test_plans p
     JOIN test_plan_runs r ON r.id = (
       SELECT r2.id FROM test_plan_runs r2
-      WHERE r2.plan_id = p.id AND r2.trigger_type = 'scheduled'
+      WHERE r2.plan_id = p.id AND ${CURRENT_STATUS_RUN}
       ORDER BY r2.id DESC LIMIT 1
     )
     WHERE r.status IN ('failed', 'blocked')
