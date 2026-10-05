@@ -417,7 +417,10 @@ export default function BatchSetup() {
                         {pieceNames.slice(0, 4).join(', ')}
                         {pieceNames.length > 4 && ` +${pieceNames.length - 4} more`}
                       </div>
-                      <div className="text-xs text-gray-500">{done} of {b.totalItems} targets done</div>
+                      <div className="text-xs text-gray-500">
+                        {done} of {b.totalItems} targets done
+                        {b.resumed && <span className="ml-2 text-amber-400">· resumed after restart</span>}
+                      </div>
                     </div>
                     <button onClick={() => openBatch(b.id)} className="flex items-center gap-1.5 px-3 py-1.5 text-sm bg-primary-600 hover:bg-primary-700 rounded-lg font-medium transition-colors shrink-0">
                       Open <ArrowRight size={14} />
