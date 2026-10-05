@@ -75,3 +75,55 @@ describe('getPieceHealth — retest', () => {
     expect(getPieceHealth().find(r => r.piece_name === 'gmail')!.recent).toEqual(['failed']);
   });
 });
+
+describe('getPieceHealth — flaky', () => {
+  beforeEach(() => getDb().exec('DELETE FROM test_plan_runs; DELETE FROM test_plans;'));
+
+  it('a healthy piece with a recent scheduled failure is flaky', () => {
+    const plan = seedPlan('gmail', 'send_email');
+    seedScheduledRun(plan, 'failed');
+    seedScheduledRun(plan, 'completed');
+    const gmail = getPieceHealth().find(r => r.piece_name === 'gmail')!;
+    expect(gmail.status).toBe('healthy');
+    expect(gmail.flaky).toBe(true);
+    expect(gmail.flap_count).toBe(1);
+  });
+
+  it('recovering on retest marks the piece flaky', () => {
+    const plan = seedPlan('gmail', 'send_email');
+    seedScheduledRun(plan, 'failed');
+    seedRetestRun(plan, 'completed');
+    expect(getPieceHealth().find(r => r.piece_name === 'gmail')!.flaky).toBe(true);
+  });
+
+  it('a clean history is not flaky', () => {
+    const plan = seedPlan('slack', 'send_message');
+    seedScheduledRun(plan, 'completed');
+    seedScheduledRun(plan, 'completed');
+    const slack = getPieceHealth().find(r => r.piece_name === 'slack')!;
+    expect(slack.flaky).toBe(false);
+    expect(slack.flap_count).toBe(0);
+  });
+
+  it('a failing piece is not flaky', () => {
+    const plan = seedPlan('gmail', 'send_email');
+    seedScheduledRun(plan, 'completed');
+    seedScheduledRun(plan, 'failed');
+    expect(getPieceHealth().find(r => r.piece_name === 'gmail')!.flaky).toBe(false);
+  });
+
+  it('a failure older than the 12-run window no longer counts', () => {
+    const plan = seedPlan('gmail', 'send_email');
+    seedScheduledRun(plan, 'failed');
+    for (let i = 0; i < 12; i++) seedScheduledRun(plan, 'completed');
+    expect(getPieceHealth().find(r => r.piece_name === 'gmail')!.flaky).toBe(false);
+  });
+
+  it('sorts failing, blocked, flaky, then clean', () => {
+    const failing = seedPlan('a-failing', 'x'); seedScheduledRun(failing, 'failed');
+    const clean = seedPlan('b-clean', 'x'); seedScheduledRun(clean, 'completed');
+    const flaky = seedPlan('c-flaky', 'x'); seedScheduledRun(flaky, 'failed'); seedScheduledRun(flaky, 'completed');
+    const blocked = seedPlan('d-blocked', 'x'); seedScheduledRun(blocked, 'blocked');
+    expect(getPieceHealth().map(r => r.piece_name)).toEqual(['a-failing', 'd-blocked', 'c-flaky', 'b-clean']);
+  });
+});

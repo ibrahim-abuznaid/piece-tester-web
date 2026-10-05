@@ -481,6 +481,8 @@ export interface PieceHealthRow {
   blocked_reason: string | null;
   backlinks: ConnectionBacklinks | null;
   recent: string[]; // last ~12 run statuses, oldest→newest
+  flap_count: number;
+  flaky: boolean;
 }
 
 export interface CadencePayload {

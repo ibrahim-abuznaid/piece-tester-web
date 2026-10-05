@@ -4,7 +4,7 @@ import { api } from '../lib/api';
 import PieceCard from './PieceCard';
 import PieceDrawer from './PieceDrawer';
 import { COLUMNS, groupPiecesByColumn, type ColumnKey } from '../lib/healthBoard';
-import { CheckCircle2, HelpCircle } from 'lucide-react';
+import { CheckCircle2, HelpCircle, RotateCcw } from 'lucide-react';
 
 const COLUMN_DOT: Record<ColumnKey, string> = {
   errors: 'bg-red-500',
@@ -33,12 +33,13 @@ export default function HealthBoard() {
     ? Object.values(grouped).flat().find(g => g.piece_name === selectedPiece) ?? null
     : null;
 
-  const healthy = health.filter(h => h.status === 'healthy');
+  const flaky = health.filter(h => h.flaky);
+  const healthy = health.filter(h => h.status === 'healthy' && !h.flaky);
   const unknown = health.filter(h => h.status === 'unknown');
 
   return (
     <section>
-      {items.length === 0 ? (
+      {items.length === 0 ? (flaky.length === 0 &&
         <div className="bg-gray-900 border border-gray-800 rounded-lg p-4 text-sm text-gray-400 flex items-center gap-2 mb-4">
           <CheckCircle2 size={15} className="text-green-400" /> Everything is passing — nothing needs attention.
         </div>
@@ -80,6 +81,32 @@ export default function HealthBoard() {
                 </div>
               );
             })}
+          </div>
+        </div>
+      )}
+
+      {flaky.length > 0 && (
+        <div className="mt-4 rounded-lg border border-amber-500/30 bg-amber-500/5 px-3.5 py-2.5">
+          <div className="flex items-center gap-2">
+            <RotateCcw size={13} className="text-amber-400" />
+            <span className="text-sm font-semibold text-amber-200">Recently recovered</span>
+            <span className="text-[11px] font-medium text-amber-300 bg-amber-500/10 rounded-full px-2 py-0.5">{flaky.length}</span>
+          </div>
+          <p className="text-[11px] text-gray-500 mt-1">
+            Passing now, but failed in the last 12 scheduled runs — may be intermittent. Clears after 12 clean runs.
+          </p>
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            {flaky.map(h => (
+              <span key={h.piece_name} title={`Failed ${h.flap_count}× in the last ${h.recent.length} scheduled runs`}
+                className="flex items-center gap-1.5 text-[11px] text-gray-300 bg-gray-900 border border-amber-500/20 rounded px-1.5 py-0.5">
+                {h.piece_name.replace('@activepieces/piece-', '')}
+                <span className="flex gap-px">
+                  {h.recent.map((r, i) => (
+                    <span key={i} className={`w-1 h-2.5 rounded-sm ${r === 'failed' ? 'bg-red-500' : r === 'completed' ? 'bg-green-500/70' : 'bg-gray-600'}`} />
+                  ))}
+                </span>
+              </span>
+            ))}
           </div>
         </div>
       )}
