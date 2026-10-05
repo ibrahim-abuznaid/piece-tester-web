@@ -290,6 +290,11 @@ function initTables(db: DatabaseAdapter): void {
     );
   `);
 
+  const setupItemCols = db.pragma(`table_info(setup_run_items)`) as { name: string }[];
+  if (!setupItemCols.some(c => c.name === 'interruptions')) {
+    db.exec(`ALTER TABLE setup_run_items ADD COLUMN interruptions INTEGER NOT NULL DEFAULT 0`);
+  }
+
   db.exec(`
     CREATE TABLE IF NOT EXISTS report_analyses (
       id INTEGER PRIMARY KEY AUTOINCREMENT,

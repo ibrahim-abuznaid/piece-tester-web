@@ -42,6 +42,7 @@ export interface BatchQueue {
   events: PlanJobEvent[];
   cancelled: boolean;
   setupRunId?: number;
+  resumed?: boolean;              // rebuilt from the DB after a server restart
 }
 
 const activeJobs = new Map<string, PlanJob>();
@@ -259,7 +260,7 @@ export function getBatchStatus(id: string) {
   for (const it of q.items) stats[it.status]++;
   return {
     id: q.id, status: q.status, startedAt: q.startedAt, completedAt: q.completedAt,
-    currentIndex: q.currentIndex, totalItems: q.items.length,
+    currentIndex: q.currentIndex, totalItems: q.items.length, resumed: !!q.resumed,
     items: q.items.map(i => ({ pieceName: i.pieceName, pieceDisplayName: i.pieceDisplayName, actionName: i.actionName, actionDisplayName: i.actionDisplayName, targetType: i.targetType, status: i.status })),
     stats,
   };

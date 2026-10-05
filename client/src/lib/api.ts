@@ -997,6 +997,7 @@ export interface BatchStatus {
   completedAt?: number;
   currentIndex: number;
   totalItems: number;
+  resumed?: boolean;
   items: BatchQueueItemStatus[];
   stats: { pending: number; running: number; done: number; error: number; skipped: number };
 }

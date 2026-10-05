@@ -7,7 +7,7 @@ import { resolvePlanGenBudgetMs } from '../agents/v2/plan-budget.js';
 import {
   createTestPlan, updateTestPlan, listTestPlans,
   createSetupRun, addSetupRunItems, updateSetupRunItem, finalizeSetupRun,
-  getSetupRun, listSetupRuns, listSetupRunItems, getSettings,
+  getSetupRun, listSetupRuns, listSetupRunItems, getSettings, reclaimInterruptedSetupRuns,
 } from '../db/queries.js';
 import { executePlan } from '../services/plan-executor.js';
 import { boundConcurrency } from '../services/concurrency.js';
@@ -48,6 +48,7 @@ async function processBatchItem(
   i: number,
 ): Promise<void> {
   if (queue.cancelled) return;
+  if (item.status === 'done' || item.status === 'error') return;
   queue.currentIndex = i;
 
   if (item.status === 'skipped') {
@@ -105,6 +106,7 @@ async function processBatchItem(
         agent_memory: planResult.agentMemory || '',
       });
       planId = saved.id;
+      if (item.setupItemId) updateSetupRunItem(item.setupItemId, { plan_id: planId });
 
       emitBatchEvent(queue, 'plan_created', {
         index: i, pieceName: item.pieceName, actionName, planId: saved.id, steps: planResult.steps, status: 'draft',
@@ -150,6 +152,7 @@ async function processBatchItem(
         agent_memory: planResult.agentMemory || '',
       });
       planId = saved.id;
+      if (item.setupItemId) updateSetupRunItem(item.setupItemId, { plan_id: planId });
 
       emitBatchEvent(queue, 'plan_created', {
         index: i,
@@ -256,7 +259,19 @@ async function processBatchItem(
 }
 
 async function runBatchInBackground(queue: BatchQueue) {
-  const client = createClient();
+  let client: ReturnType<typeof createClient>;
+  try {
+    client = createClient();
+  } catch (err: any) {
+    // e.g. a batch resumed at boot before AP settings exist — fail its items, don't hang.
+    queue.items.forEach((item, index) => {
+      if (item.status !== 'pending') return;
+      item.status = 'error';
+      item.error = err?.message ?? 'Could not create Activepieces client';
+      if (item.setupItemId) updateSetupRunItem(item.setupItemId, { status: 'error', error: item.error });
+      emitBatchEvent(queue, 'item_update', { index, ...item });
+    });
+  }
   const groups = groupByPiece(queue.items);
 
   // Each piece is one unit submitted to the global scheduler (a single cap across all batches).
@@ -266,7 +281,7 @@ async function runBatchInBackground(queue: BatchQueue) {
     for (const { item, index } of group) {
       if (queue.cancelled) break;
       try {
-        await processBatchItem(queue, client, item, index);
+        await processBatchItem(queue, client!, item, index);
       } catch (err: any) {
         // processBatchItem catches its own errors; this guard just ensures one unexpected
         // failure can't reject the pool and skip finalization / abandon the other items.
@@ -318,6 +333,27 @@ async function runBatchInBackground(queue: BatchQueue) {
     completeBatchQueue(queue, finalStatus);
     emitBatchEvent(queue, 'batch_done', { status: queue.status, setupRunId: queue.setupRunId, schedulesCreated: scheduleIds.length });
   }
+}
+
+/** Pick up batches a restart (deploy, crash, PM2 memory limit) cut off mid-run. */
+export function resumeInterruptedBatches(): number {
+  const reclaimed = reclaimInterruptedSetupRuns();
+  for (const { run, items } of reclaimed) {
+    const queue = createBatchQueue(items.map(it => ({
+      pieceName: it.piece_name,
+      pieceDisplayName: it.piece_display_name,
+      actionName: it.target_name,
+      actionDisplayName: it.target_display_name,
+      targetType: it.target_type,
+      status: it.status,
+      error: it.error ?? undefined,
+      setupItemId: it.id,
+    })));
+    queue.setupRunId = run.id;
+    queue.resumed = true;
+    runBatchInBackground(queue).catch(err => console.error('[batch-setup] resumed run error:', err?.message));
+  }
+  return reclaimed.length;
 }
 
 // ── Start batch setup ──

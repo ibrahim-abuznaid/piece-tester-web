@@ -12,7 +12,7 @@ import connectionsRoutes from './routes/connections.js';
 import schedulesRoutes from './routes/schedules.js';
 import testPlansRoutes from './routes/test-plans.js';
 import reportsRoutes from './routes/reports.js';
-import batchSetupRoutes from './routes/batch-setup.js';
+import batchSetupRoutes, { resumeInterruptedBatches } from './routes/batch-setup.js';
 import coverageRoutes from './routes/coverage.js';
 import authRoutes from './routes/auth.js';
 import alertsRoutes from './routes/alerts.js';
@@ -88,6 +88,9 @@ function startBackgroundWork() {
   const reconciled = reconcileOrphanedRuns();
   if (reconciled > 0) console.log(`[server] Reconciled ${reconciled} orphaned run(s) → interrupted`);
 
+  const resumed = resumeInterruptedBatches();
+  if (resumed > 0) console.log(`[server] Resumed ${resumed} interrupted batch setup run(s)`);
+
   initScheduler();
   initFlowReaper();
 }
@@ -117,10 +120,12 @@ function startServer(port: number, retries = 3) {
       console.log('[server] Closed.');
       process.exit(0);
     });
+    // Open SSE streams would otherwise hold close() until PM2's kill_timeout SIGKILLs us.
+    server.closeAllConnections();
     setTimeout(() => {
       console.error('[server] Forceful shutdown after timeout');
       process.exit(1);
-    }, 10_000);
+    }, 5_000);
   }
 
   process.on('SIGTERM', () => shutdown('SIGTERM'));

@@ -1898,6 +1898,7 @@ export interface SetupRunItemRow {
   status: 'pending' | 'running' | 'done' | 'skipped' | 'error';
   plan_id: number | null;
   error: string | null;
+  interruptions: number;
 }
 
 export function createSetupRun(p: { cadence: string; cron_template: string; config: string }): SetupRunRow {
@@ -1918,7 +1919,7 @@ export function listSetupRuns(limit = 50): SetupRunRow[] {
 
 export function addSetupRunItems(
   setupRunId: number,
-  items: Omit<SetupRunItemRow, 'id' | 'setup_run_id' | 'plan_id' | 'error'>[],
+  items: Omit<SetupRunItemRow, 'id' | 'setup_run_id' | 'plan_id' | 'error' | 'interruptions'>[],
 ): SetupRunItemRow[] {
   const db = getDb();
   return db.transaction(() => {
@@ -2002,6 +2003,46 @@ export function finalizeSetupRun(
       ],
     );
     return getSetupRun(id);
+  });
+}
+
+// An item that dies with the server this many times is assumed to be the cause (e.g. OOM).
+export const MAX_SETUP_ITEM_INTERRUPTIONS = 3;
+
+/**
+ * Setup runs still 'running' at boot belong to a dead process. Re-open their unfinished
+ * items so the batch can be resumed, and return what's left to run.
+ */
+export function reclaimInterruptedSetupRuns(): { run: SetupRunRow; items: SetupRunItemRow[] }[] {
+  const db = getDb();
+  return db.transaction(() => {
+    const runs = db.all<SetupRunRow>(`SELECT * FROM setup_runs WHERE status = 'running' ORDER BY id`);
+    for (const run of runs) {
+      for (const it of listSetupRunItems(run.id)) {
+        if (it.status !== 'running' && it.status !== 'pending') continue;
+
+        const plan = getTestPlanByTarget(it.piece_name, it.target_name, it.target_type);
+        if (plan?.status === 'approved') {
+          const ours = plan.id === it.plan_id;
+          updateSetupRunItem(it.id, { status: ours ? 'done' : 'skipped' });
+          continue;
+        }
+        if (it.status === 'pending') continue;
+
+        const interruptions = it.interruptions + 1;
+        const gaveUp = interruptions >= MAX_SETUP_ITEM_INTERRUPTIONS;
+        db.run(
+          `UPDATE setup_run_items SET status = ?, error = ?, interruptions = ? WHERE id = ?`,
+          [
+            gaveUp ? 'error' : 'pending',
+            gaveUp ? `Interrupted by a server restart ${interruptions} times — giving up` : null,
+            interruptions,
+            it.id,
+          ],
+        );
+      }
+    }
+    return runs.map(run => ({ run, items: listSetupRunItems(run.id) }));
   });
 }
 
