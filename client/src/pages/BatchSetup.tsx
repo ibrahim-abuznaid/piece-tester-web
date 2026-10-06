@@ -243,7 +243,7 @@ export default function BatchSetup() {
   }
 
   function getConnectedPieces() {
-    return (pieces || []).filter((p: any) => connectedPieces.has(p.name));
+    return (pieces || []).filter((p: any) => !p.auth || connectedPieces.has(p.name));
   }
 
   async function openBatch(id: string) {
@@ -362,6 +362,7 @@ export default function BatchSetup() {
   }, {});
 
   const connectedList = getConnectedPieces();
+  const noAuthCount = connectedList.filter((p: any) => !p.auth).length;
   const coverageByName = new Map<string, PieceCoverage>(
     connectedList.map((p: any) => [p.name, pieceCoverage(p, allPlans)]),
   );
@@ -487,12 +488,14 @@ export default function BatchSetup() {
         <div>
           <p className="text-gray-400 text-sm mb-4">
             Only pieces with an active connection can be set up. Import the connections already
-            configured in Activepieces for each piece.
+            configured in Activepieces for each piece. Pieces that need no authentication are included automatically.
           </p>
           <div className="bg-gray-900 border border-gray-800 rounded-lg p-6 mb-6 flex items-center justify-between">
             <div>
-              <div className="text-lg font-medium">{connectedList.length} connected piece{connectedList.length !== 1 ? 's' : ''}</div>
-              <div className="text-sm text-gray-500">Ready to generate plans for.</div>
+              <div className="text-lg font-medium">{connectedList.length} piece{connectedList.length !== 1 ? 's' : ''} ready</div>
+              <div className="text-sm text-gray-500">
+                {connectedList.length - noAuthCount} connected · {noAuthCount} no auth needed
+              </div>
             </div>
             <button onClick={() => sweepMut.mutate()} disabled={sweepMut.isPending}
               className="flex items-center gap-2 px-4 py-2 text-sm bg-primary-600 hover:bg-primary-700 rounded-lg font-medium disabled:opacity-50">
@@ -566,7 +569,7 @@ export default function BatchSetup() {
                 {filtered.length === 0 ? (
                   <div className="px-4 py-10 text-center text-sm text-gray-500">
                     {coverageFilter === 'needs'
-                      ? 'All connected pieces are fully set up 🎉 — switch to All to review.'
+                      ? 'All ready pieces are fully set up 🎉 — switch to All to review.'
                       : coverageFilter === 'partial'
                       ? 'No pieces are partially set up.'
                       : 'No pieces match.'}
@@ -754,7 +757,10 @@ function SelectPieceRow({
           </div>
         )}
         <div className="flex-1 min-w-0">
-          <div className="font-medium text-sm">{piece.displayName}</div>
+          <div className="font-medium text-sm flex items-center gap-2">
+            {piece.displayName}
+            {!piece.auth && <span className="px-1.5 py-0.5 rounded text-[10px] font-normal bg-gray-800 text-gray-400">No auth</span>}
+          </div>
           <div className="text-xs text-gray-500">
             {meta
               ? `${includedCount} of ${metaTotal} selected`

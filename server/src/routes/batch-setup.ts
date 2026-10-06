@@ -70,7 +70,7 @@ async function processBatchItem(
       emitBatchEvent(queue, 'log', { index: i, pieceName: item.pieceName, actionName, log });
     };
 
-    const conn = await checkPieceConnectionForPlanning(client, item.pieceName, piece.displayName);
+    const conn = await checkPieceConnectionForPlanning(client, item.pieceName, piece);
     if (!conn.ok) {
       item.status = 'error';
       item.error = conn.reason;

@@ -55,15 +55,16 @@ export function evaluateConnectionForPlanning(
 
 /**
  * Async wrapper: look up the local connection, fetch AP's connection list once, and
- * evaluate. A manual local row short-circuits without an AP call. An AP fetch failure
+ * evaluate. A no-auth piece or a manual local row short-circuits without an AP call. An AP fetch failure
  * fails OPEN (proceed) — a transient blip must not halt a whole batch; the executor's
  * own connection gate will catch a genuine problem at run time.
  */
 export async function checkPieceConnectionForPlanning(
   client: ActivepiecesClient,
   pieceName: string,
-  displayName: string,
+  piece: { displayName: string; auth?: unknown },
 ): Promise<ConnectionGateResult> {
+  if (!piece.auth) return { ok: true };
   const localRow = getConnectionByPiece(pieceName);
   if (localRow && !parseImported(localRow)) return { ok: true };
 
@@ -73,5 +74,5 @@ export async function checkPieceConnectionForPlanning(
   } catch {
     return { ok: true };
   }
-  return evaluateConnectionForPlanning(pieceName, displayName, localRow, remoteList);
+  return evaluateConnectionForPlanning(pieceName, piece.displayName, localRow, remoteList);
 }
