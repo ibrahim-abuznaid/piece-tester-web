@@ -292,7 +292,7 @@ filer are injected for tests):
        `vendor_dead` finding (critical, `['*']`). On the source's very first check (baseline), one
        "host gone" failure is enough. That one is a baseline finding, so it lands in the inbox; this
        is how generating a watcher for a Zagomail-style piece shows the problem at once.
-     - Other kinds: after 5 failures the source shows as broken in the UI. No finding.
+     - Other kinds: the source shows as failing in the UI (red dot + last error) from the first failure. No finding.
    - **Fetch succeeds:** reset `consecutive_failures`, then normalize → hash.
    - **No snapshot:** run the **baseline** (below), then store the snapshot.
    - **Same hash:** set `last_ok_at` only.
