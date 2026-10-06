@@ -525,8 +525,10 @@ CI already runs `tsc --noEmit` and `npm test` on every PR.
 
 ### 10. Rollout
 
-1. **Before merge:** Ibrahim creates the `vendor-watch` label on the PIE team, and confirms web
-   search is enabled for the Anthropic org whose key the tester uses.
+1. **Before merge (done 2026-10-06):** the `vendor-watch` label exists on PIE
+   (`bd51fcc1-88fb-4747-baeb-bb54b9f980d6`, created with the tester's stored Linear key, which is
+   Ibrahim's and can write). Web search works with the tester's Anthropic key: a live
+   `web_search_20250305` call on `claude-sonnet-4-6` returned 9 results.
 2. Merge; the existing deploy workflow ships it. Cron and auto-file both start **off**.
 3. **Pilot (1 week):** generate watchers for ~10 high-usage pieces, chosen for vendors with good
    changelogs (e.g. Slack, Stripe, HubSpot, Notion, Gmail, Google Sheets, Airtable, Shopify,
