@@ -92,6 +92,7 @@ CREATE TABLE IF NOT EXISTS watch_plans (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   piece_name TEXT NOT NULL UNIQUE,
   piece_version TEXT NOT NULL DEFAULT '',        -- version the inventory was read from
+  piece_display_name TEXT NOT NULL DEFAULT '',   -- for ticket titles, so filing needs no catalog call
   vendor_name TEXT NOT NULL DEFAULT '',
   api_base_urls TEXT NOT NULL DEFAULT '[]',      -- JSON string[]
   api_version TEXT NOT NULL DEFAULT '',
@@ -178,7 +179,8 @@ CREATE TABLE IF NOT EXISTS vendor_findings (
 `path` keeps path templates (`/v3/customers/{id}`); SDK-based pieces use `method: 'SDK'` and `path: 'sdk:<package>#<method>'`.
 
 **Boot reconcile** (next to `reconcileOrphanedRuns` in `startBackgroundWork`): `watch_runs` still
-`running` → `failed` ("interrupted by restart"); `watch_plans` still `generating` → `failed`.
+`running` → `failed` ("interrupted by restart"); `watch_plans` still `generating` → `failed` if the
+plan was never generated, else `stale` (its previous inventory and sources keep running).
 
 ### 2. Generate watcher (the watch-planner agent)
 
@@ -223,8 +225,9 @@ non-null result is returned as an `is_error` tool result and the loop continues.
 progress and a restart can mark it `failed`). On success: inventory and metadata are stored,
 `piece_version` is set from `getPieceMetadata`, sources are replaced, a `liveness` source is added
 for the host of `api_base_urls[0]`, status → `active`, and a **baseline run** starts right away.
-On failure (no terminal call, validation never passed, error): status → `failed`, reason in
-`generation_note`.
+On failure (no terminal call, validation never passed, error): a first generation → `failed`; a
+regeneration → `stale`, so the previous inventory and sources keep running. Either way the reason
+goes in `generation_note`.
 
 **Regenerate** keeps the plan id and findings, replaces inventory and sources, and drops the
 snapshots of removed sources. A source whose URL is unchanged keeps its snapshot, so no new
@@ -280,11 +283,15 @@ filer are injected for tests):
 
 1. Insert a `watch_runs` row.
 2. For each enabled source, one at a time:
-   - **Fetch fails:** `consecutive_failures += 1`, `last_error`, `sources_failed += 1`.
-     - For `liveness`: when failures reach `dead_after_failures` (default 3, so 3 days) **and the
-       last failure was DNS-not-found, connection-refused or a TLS error**, create a `vendor_dead`
-       finding (critical, `['*']`).
-     - Timeouts and 5xx never count toward dead: that is an outage.
+   - **Fetch fails:** `last_error`, `sources_failed += 1`, and `consecutive_failures += 1`, with one
+     exception for `liveness` below.
+     - For `liveness`, only "host gone" failures increment `consecutive_failures`: DNS-not-found,
+       connection-refused or a TLS error. Timeouts are an outage and only set `last_error`. Any HTTP
+       response, 4xx/5xx included, counts as alive.
+     - When `consecutive_failures` reaches `dead_after_failures` (default 3, so 3 days), create a
+       `vendor_dead` finding (critical, `['*']`). On the source's very first check (baseline), one
+       "host gone" failure is enough. That one is a baseline finding, so it lands in the inbox; this
+       is how generating a watcher for a Zagomail-style piece shows the problem at once.
      - Other kinds: after 5 failures the source shows as broken in the UI. No finding.
    - **Fetch succeeds:** reset `consecutive_failures`, then normalize → hash.
    - **No snapshot:** run the **baseline** (below), then store the snapshot.
@@ -365,7 +372,7 @@ Everything else stays `new` in the inbox.
 
 **Merge into an existing ticket.** Before creating anything, `findMergeTarget` looks for a
 `filed` finding for the same piece, of the same kind, created in the last 60 days, whose targets
-overlap (or both are `*`). If one exists, the new finding is posted as a **comment** on that issue
+overlap. `*` overlaps any non-empty target list, and an empty list overlaps nothing. If one exists, the new finding is posted as a **comment** on that issue
 and copies its Linear ids. This catches the same deprecation showing up in a second source with
 different wording.
 
@@ -445,7 +452,7 @@ enabled.
 | POST | `/config/test-linear` | resolve team/state/label with the stored key; read-only |
 | GET | `/plans` | list plans with source health counts, last run, open finding count |
 | GET | `/plans/:id` | plan + sources (no snapshot content) + last 20 runs |
-| GET | `/plans/by-piece/:pieceName` | the plan for a piece, or 404 |
+| GET | `/plans/by-piece/:pieceName` | the plan for a piece plus its `open_findings` count, or `null` |
 | POST | `/plans/generate` | `{ piece_name }` → 202 `{ plan_id }` |
 | POST | `/plans/generate-batch` | `{ piece_names[] }` → 202 `{ plan_ids[] }` |
 | POST | `/plans/:id/run` | manual run, background → 202 `{ run_id }` |
@@ -485,16 +492,15 @@ enabled.
 | Anthropic key missing | generate/classify refuse with the existing "Anthropic API key not configured" message |
 | `web_search` not enabled for the org | generation fails; `generation_note` carries the API error |
 | Linear key missing / label missing / API error | finding stays `new`, `file_error` set, visible in the inbox; next cycle does **not** retry automatically (avoid ticket storms); File… retries by hand |
-| Source unreadable (SPA, 403, too large) | counted as a fetch failure; never a finding unless it is the liveness source |
+| Source unreadable (SPA, 403, too large), or a feed/page that suddenly parses to zero entries/blocks | counted as a fetch failure and the snapshot is left alone (so a temporarily broken feed doesn't replay its whole history as "new" when it comes back); never a finding unless it is the liveness source |
 | Classifier returns malformed output | the source's snapshot is **not** advanced, so the change is retried next cycle; run `error` notes it |
 | Server restart mid-run / mid-generation | boot reconcile marks them `failed` |
 | Overlapping cycle | second call returns immediately ("cycle already running") |
 
 ### 9. Testing
 
-All new tests use vitest, colocated `*.test.ts`, with no live network. Fixtures live in
-`server/src/services/vendor-watch/__fixtures__/` (an RSS 2.0 file, an Atom file, an OpenAPI JSON
-and YAML pair, and an HTML changelog before/after).
+All new tests use vitest, colocated `*.test.ts`, with no live network. Fixtures are small inline
+strings in the tests: RSS 2.0, Atom, OpenAPI JSON and YAML, and an HTML changelog before and after.
 
 - `safe-fetch`: refuses private, link-local, loopback and metadata IPs (injected lookup); re-checks redirects; caps body size
 - `normalize` / `diff`: feed new entries (RSS + Atom), html added blocks (ignores reordering and short blocks), the openapi diff table above
