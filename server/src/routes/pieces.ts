@@ -468,7 +468,7 @@ function runPlanJobV2InBackground(job: PlanJob, pieceName: string, actionName: s
 
       const onLog = (log: V2LogEntry) => emitJobEvent(job, 'log', log);
 
-      const conn = await checkPieceConnectionForPlanning(client, pieceName, piece.displayName);
+      const conn = await checkPieceConnectionForPlanning(client, pieceName, piece);
       if (!conn.ok) {
         onLog({ timestamp: Date.now(), type: 'error', role: 'coordinator', message: conn.reason! });
         emitJobEvent(job, 'error', { message: conn.reason });
@@ -670,7 +670,7 @@ function runTriggerPlanJobV2InBackground(job: PlanJob, pieceName: string, trigge
 
       const onLog = (log: V2LogEntry) => emitJobEvent(job, 'log', log);
 
-      const conn = await checkPieceConnectionForPlanning(client, pieceName, piece.displayName);
+      const conn = await checkPieceConnectionForPlanning(client, pieceName, piece);
       if (!conn.ok) {
         onLog({ timestamp: Date.now(), type: 'error', role: 'coordinator', message: conn.reason! });
         emitJobEvent(job, 'error', { message: conn.reason });
