@@ -1165,6 +1165,9 @@ export type VwFindingListRow = VwFinding & VwImportanceFields;
 export interface VwFindingList {
   findings: VwFindingListRow[];
   counts: Record<VwImportanceFilter, number>;
+  total: number;
+  limit: number;
+  offset: number;
 }
 
 export interface VwUsageRefresh {
@@ -1479,8 +1482,8 @@ export const api = {
   vwDeletePlan: (id: number) => request<{ ok: true }>('DELETE', `/vendor-watch/plans/${id}`),
   vwSetSourceEnabled: (id: number, enabled: boolean) => request<VwSource>('PATCH', `/vendor-watch/sources/${id}`, { enabled }),
   vwRunCycle: () => request<{ started: boolean }>('POST', '/vendor-watch/run-cycle'),
-  vwFindings: (status: VwFindingStatus, piece?: string, importance: VwImportanceFilter[] = []) =>
-    request<VwFindingList>('GET', `/vendor-watch/findings?status=${status}${piece ? `&piece=${encodeURIComponent(piece)}` : ''}${importance.length ? `&importance=${importance.join(',')}` : ''}`),
+  vwFindings: (status: VwFindingStatus, piece?: string, importance: VwImportanceFilter[] = [], page = { limit: 100, offset: 0 }) =>
+    request<VwFindingList>('GET', `/vendor-watch/findings?status=${status}${piece ? `&piece=${encodeURIComponent(piece)}` : ''}${importance.length ? `&importance=${importance.join(',')}` : ''}&limit=${page.limit}&offset=${page.offset}`),
   vwFindingDraft: (id: number) => request<VwDraft>('GET', `/vendor-watch/findings/${id}/draft`),
   vwFileFinding: (id: number, body: { title: string; description: string; priority: number }) =>
     request<VwFinding>('POST', `/vendor-watch/findings/${id}/file`, body),

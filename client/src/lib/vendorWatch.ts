@@ -132,3 +132,18 @@ export function changedFields<T extends object>(base: T, next: T): Partial<T> {
   ) as Partial<T>;
 }
 
+/** Where a page of `count` rows sits in the list: the 1-based range shown and the Previous / Next offsets (null at the ends). */
+export function pageInfo(page: { offset: number; limit: number; total: number }, count: number) {
+  return {
+    from: count ? page.offset + 1 : 0,
+    to: page.offset + count,
+    prevOffset: page.offset > 0 ? Math.max(0, page.offset - page.limit) : null,
+    nextOffset: page.offset + page.limit < page.total ? page.offset + page.limit : null,
+  };
+}
+
+/** An offset at or past the end (its last rows were dismissed or filed) → the last page that still has rows. */
+export function clampOffset(offset: number, total: number, limit: number): number {
+  if (offset < total) return offset;
+  return total > 0 ? Math.floor((total - 1) / limit) * limit : 0;
+}
