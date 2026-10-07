@@ -6,6 +6,8 @@ import { getDb } from './db/schema.js';
 import { initScheduler } from './services/scheduler.js';
 import { initFlowReaper } from './services/flow-reaper.js';
 import { reconcileOrphanedRuns } from './db/queries.js';
+import { reconcileVendorWatch } from './db/vendor-watch-queries.js';
+import { initVendorWatch } from './services/vendor-watch/cron.js';
 import settingsRoutes from './routes/settings.js';
 import piecesRoutes from './routes/pieces.js';
 import connectionsRoutes from './routes/connections.js';
@@ -91,8 +93,12 @@ function startBackgroundWork() {
   const resumed = resumeInterruptedBatches();
   if (resumed > 0) console.log(`[server] Resumed ${resumed} interrupted batch setup run(s)`);
 
+  const vw = reconcileVendorWatch();
+  if (vw.runs + vw.plans > 0) console.log(`[server] Vendor watch: closed ${vw.runs} interrupted run(s), ${vw.plans} interrupted generation(s)`);
+
   initScheduler();
   initFlowReaper();
+  initVendorWatch();
 }
 
 function startServer(port: number, retries = 3) {
