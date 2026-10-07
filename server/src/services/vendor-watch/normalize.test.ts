@@ -94,6 +94,44 @@ describe('htmlBlocks', () => {
   it('htmlToText keeps a space between block elements', () => {
     expect(htmlToText('<p>One</p><p>Two</p>')).toBe('One Two');
   });
+
+  it('keeps long headings as blocks, and as context for the blocks under them', () => {
+    const onlyHeadings = '<html><body><main><h3>2026-09-01: the legacy widgets endpoint is deprecated</h3><h3>2026-08-01: search rate limit raised to 200 per minute</h3></main></body></html>';
+    expect(htmlBlocks(onlyHeadings)).toEqual([
+      { text: '2026-09-01: the legacy widgets endpoint is deprecated', heading: null },
+      { text: '2026-08-01: search rate limit raised to 200 per minute', heading: null },
+    ]);
+
+    const nested = '<main><h2>September 2026</h2><h3>The legacy widgets endpoint is deprecated</h3><p>Move to /v2/widgets before 2027-01-31 to keep working.</p>'
+      + '<h2>August 2026</h2><h4>Search rate limit raised to 200 per minute</h4></main>';
+    expect(htmlBlocks(nested)).toEqual([
+      { text: 'The legacy widgets endpoint is deprecated', heading: 'September 2026' },
+      { text: 'Move to /v2/widgets before 2027-01-31 to keep working.', heading: 'The legacy widgets endpoint is deprecated' },
+      { text: 'Search rate limit raised to 200 per minute', heading: 'August 2026' },
+    ]);
+  });
+
+  it('reads every <article> when there is no <main> and several articles', () => {
+    const page = `<html><body>
+<article><h2>2026-09-01</h2><p>The legacy /v1/widgets endpoint is deprecated and will be removed.</p></article>
+<article><h2>2026-08-01</h2><p>Rate limits for the search endpoint went from 100 to 200 per minute.</p></article>
+</body></html>`;
+    expect(htmlBlocks(page)).toEqual([
+      { text: 'The legacy /v1/widgets endpoint is deprecated and will be removed.', heading: '2026-09-01' },
+      { text: 'Rate limits for the search endpoint went from 100 to 200 per minute.', heading: '2026-08-01' },
+    ]);
+
+    const single = '<html><body><article><h2>2026-09-01</h2><p>The legacy /v1/widgets endpoint is deprecated and will be removed.</p></article><div><p>Subscribe to our newsletter for product news and updates.</p></div></body></html>';
+    expect(htmlBlocks(single)).toEqual([
+      { text: 'The legacy /v1/widgets endpoint is deprecated and will be removed.', heading: '2026-09-01' },
+    ]);
+  });
+
+  it('reads <pre> code as text, not markup', () => {
+    const page = '<main><pre><code class="language-js"><span class="hl-k">const</span> client = new Acme({ apiVersion: "2026-09-01" });</code></pre></main>';
+    expect(htmlBlocks(page)).toEqual([{ text: 'const client = new Acme({ apiVersion: "2026-09-01" });', heading: null }]);
+    expect(htmlToText('<p>Migrate:</p><pre><code>npm install acme-sdk@2</code></pre>')).toBe('Migrate: npm install acme-sdk@2');
+  });
 });
 
 describe('html snapshots', () => {

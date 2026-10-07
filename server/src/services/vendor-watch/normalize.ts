@@ -17,7 +17,10 @@ export interface FeedEntry {
 
 export interface HtmlBlock {
   text: string;
-  /** The nearest heading above the block (often a release date), kept as context for the classifier. */
+  /**
+   * The nearest heading above the block (often a release date), kept as context for the classifier.
+   * For a heading block, the nearest heading of a higher level.
+   */
   heading: string | null;
 }
 
@@ -38,8 +41,11 @@ function spaceBlocks(html: string): string {
   return html.replace(BLOCK_TAG, '\n<$1$2').replace(/<br\s*\/?>/gi, '\n');
 }
 
+/** The parser's default also keeps `<pre>` raw, which leaks highlighter markup into the text. */
+const HTML_OPTIONS = { blockTextElements: { script: true, noscript: true, style: true } };
+
 export function htmlToText(fragment: string): string {
-  return collapseWhitespace(parseHtml(`<div>${spaceBlocks(fragment)}</div>`).text);
+  return collapseWhitespace(parseHtml(`<div>${spaceBlocks(fragment)}</div>`, HTML_OPTIONS).text);
 }
 
 function safeJsonArray(s: string): string[] {
@@ -128,23 +134,37 @@ function hasBlockAncestor(el: HTMLElement, stop: HTMLElement): boolean {
   return false;
 }
 
-/** The readable blocks of a docs/changelog page, each with the heading above it. */
+/** `<main>`, else the page's only `<article>`, else `<body>`. A page with one article per entry is read whole. */
+function contentRoot(root: HTMLElement): HTMLElement {
+  const main = root.querySelector('main');
+  if (main) return main;
+  const articles = root.querySelectorAll('article');
+  return articles.length === 1 ? articles[0] : root.querySelector('body') ?? root;
+}
+
+/** The readable blocks of a docs/changelog page, each with the heading above it. Long headings are blocks too. */
 export function htmlBlocks(html: string): HtmlBlock[] {
-  const root = parseHtml(spaceBlocks(html));
+  const root = parseHtml(spaceBlocks(html), HTML_OPTIONS);
   for (const n of root.querySelectorAll(DROP_SELECTORS)) n.remove();
-  const main = root.querySelector('main') ?? root.querySelector('article') ?? root.querySelector('body') ?? root;
+  const main = contentRoot(root);
   const out: HtmlBlock[] = [];
   const seen = new Set<string>();
+  // headings[n] is the latest <hn> still in scope.
+  const headings: string[] = [];
   let heading: string | null = null;
   for (const el of main.querySelectorAll(BLOCK_SELECTORS)) {
     const text = collapseWhitespace(el.text);
+    let above = heading;
     if (HEADING_TAGS.has(el.tagName)) {
-      if (text) heading = text.slice(0, 200);
-      continue;
+      if (!text) continue;
+      const level = Number(el.tagName[1]);
+      above = headings.slice(0, level).filter(Boolean).pop() ?? null;
+      headings.length = level;
+      heading = headings[level] = text.slice(0, 200);
     }
     if (hasBlockAncestor(el, main) || text.length < MIN_BLOCK_CHARS || seen.has(text)) continue;
     seen.add(text);
-    out.push({ text, heading });
+    out.push({ text, heading: above });
   }
   return out;
 }
