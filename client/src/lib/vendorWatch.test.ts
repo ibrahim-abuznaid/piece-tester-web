@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   compareImportance, countByImportance, describeTargets, effectiveLabel, importanceTitle, matchesImportance,
   changedFields, parseImportanceParam, parseJsonArray, shortPieceName, sourceHealth, toPieceName, toggleImportance,
-  addUpTo, generationEstimate, parsePieceList, pickEnterprise, pickTopByUsage, watchedPieceNames, clampOffset, pageInfo,
+  addUpTo, findPiece, generationEstimate, parsePieceList, pickEnterprise, pickTopByUsage, watchedPieceNames, clampOffset, pageInfo,
 } from './vendorWatch';
 
 describe('vendorWatch helpers', () => {
@@ -114,7 +114,6 @@ describe('changedFields', () => {
   });
 });
 
-
 describe('bulk selection helpers', () => {
   const piece = (name: string, usage_projects: number | null, over: Partial<{ categories: string[]; enterprise: number }> = {}) => ({
     name: `@activepieces/piece-${name}`, usage_projects, enterprise: 0, ...over,
@@ -131,7 +130,7 @@ describe('bulk selection helpers', () => {
     expect([...watched].sort()).toEqual(['a', 'b', 'd', 'e']);
   });
 
-  it('picks the top N by Cloud usage, skipping core, unrated and watched pieces, ties by name', () => {
+  describe('pickTopByUsage', () => {
     const pieces = [
       piece('webhook', 9000, { categories: ['CORE'] }),
       piece('slack', 500),
@@ -141,11 +140,24 @@ describe('bulk selection helpers', () => {
       piece('hubspot', 700),
       piece('linear', 10, { categories: ['PRODUCTIVITY'] }),
     ];
-    expect(pickTopByUsage(pieces, 3, new Set(['@activepieces/piece-hubspot']))).toEqual([
-      '@activepieces/piece-gmail', '@activepieces/piece-asana', '@activepieces/piece-slack',
-    ]);
-    expect(pickTopByUsage(pieces, 50, new Set())).toHaveLength(5);
-    expect(pickTopByUsage(pieces, 0, new Set())).toEqual([]);
+
+    it('takes the top N rated non-core pieces by Cloud usage, ties by name', () => {
+      expect(pickTopByUsage(pieces, 3, new Set())).toEqual([
+        '@activepieces/piece-gmail', '@activepieces/piece-hubspot', '@activepieces/piece-asana',
+      ]);
+      expect(pickTopByUsage(pieces, 50, new Set())).toHaveLength(5);
+      expect(pickTopByUsage(pieces, 0, new Set())).toEqual([]);
+    });
+
+    it('drops watched pieces after taking the top N, so it never reaches past rank N', () => {
+      expect(pickTopByUsage(pieces, 3, new Set(['@activepieces/piece-hubspot']))).toEqual([
+        '@activepieces/piece-gmail', '@activepieces/piece-asana',
+      ]);
+      expect(pickTopByUsage(pieces, 2, new Set(['@activepieces/piece-gmail', '@activepieces/piece-hubspot']))).toEqual([]);
+      expect(pickTopByUsage(pieces, 5, new Set(['@activepieces/piece-linear']))).toEqual([
+        '@activepieces/piece-gmail', '@activepieces/piece-hubspot', '@activepieces/piece-asana', '@activepieces/piece-slack',
+      ]);
+    });
   });
 
   it('picks Enterprise pieces that are not watched yet, in list order', () => {
@@ -172,38 +184,78 @@ describe('bulk selection helpers', () => {
   });
 });
 
+describe('findPiece', () => {
+  const catalog = [
+    { name: '@activepieces/piece-monday', displayName: 'Monday.com' },
+    { name: '@acme/piece-internal', displayName: 'Internal' },
+  ];
+
+  it('matches the package, display or short name, any case', () => {
+    for (const text of ['@activepieces/piece-monday', 'monday.com', ' MONDAY.COM ', 'Monday']) {
+      expect(findPiece(catalog, text)?.name).toBe('@activepieces/piece-monday');
+    }
+    expect(findPiece(catalog, '@ACME/Piece-Internal')?.name).toBe('@acme/piece-internal');
+  });
+
+  it('finds nothing for blank or unknown text', () => {
+    expect(findPiece(catalog, '  ')).toBeUndefined();
+    expect(findPiece(catalog, 'monday-com')).toBeUndefined();
+  });
+});
+
 describe('parsePieceList', () => {
-  const known = new Set([
-    '@activepieces/piece-salesforce', '@activepieces/piece-google-sheets', '@activepieces/piece-zoho-crm', '@acme/piece-internal',
-  ]);
+  const catalog = [
+    { name: '@activepieces/piece-salesforce', displayName: 'Salesforce' },
+    { name: '@activepieces/piece-google-sheets', displayName: 'Google Sheets' },
+    { name: '@activepieces/piece-zoho-crm', displayName: 'Zoho CRM' },
+    { name: '@activepieces/piece-monday', displayName: 'Monday.com' },
+    { name: '@activepieces/piece-twitter', displayName: 'X (Twitter)' },
+    { name: '@acme/piece-internal', displayName: 'Internal' },
+  ];
 
   it('splits on newlines, commas and semicolons, maps short names and keeps scoped names', () => {
-    expect(parsePieceList('Salesforce\n Google Sheets ,zoho-crm;@acme/piece-internal', known)).toEqual({
+    expect(parsePieceList('Salesforce\n Google Sheets ,zoho-crm;@acme/piece-internal', catalog)).toEqual({
       names: ['@activepieces/piece-salesforce', '@activepieces/piece-google-sheets', '@activepieces/piece-zoho-crm', '@acme/piece-internal'],
       unknown: [],
     });
   });
 
+  it('matches display names the slug rule cannot reach, any case', () => {
+    expect(parsePieceList('Monday.com\nX (Twitter)', catalog)).toEqual({
+      names: ['@activepieces/piece-monday', '@activepieces/piece-twitter'],
+      unknown: [],
+    });
+    expect(parsePieceList('MONDAY.COM; x (twitter); zoho crm', catalog)).toEqual({
+      names: ['@activepieces/piece-monday', '@activepieces/piece-twitter', '@activepieces/piece-zoho-crm'],
+      unknown: [],
+    });
+  });
+
   it('strips a leading "piece-" from a short name', () => {
-    expect(parsePieceList('piece-salesforce\nPiece-Zoho CRM', known)).toEqual({
+    expect(parsePieceList('piece-salesforce\nPiece-Zoho CRM', catalog)).toEqual({
       names: ['@activepieces/piece-salesforce', '@activepieces/piece-zoho-crm'],
       unknown: [],
     });
   });
 
-  it('drops empty entries and duplicates', () => {
-    expect(parsePieceList('salesforce\r\n\n , ;SALESFORCE\n@activepieces/piece-salesforce', known)).toEqual({
+  it('drops empty entries and duplicates, however they were written', () => {
+    expect(parsePieceList('salesforce\r\n\n , ;SALESFORCE\n@activepieces/piece-salesforce', catalog)).toEqual({
       names: ['@activepieces/piece-salesforce'],
+      unknown: [],
+    });
+    expect(parsePieceList('Monday.com\nmonday\n@activepieces/piece-monday', catalog)).toEqual({
+      names: ['@activepieces/piece-monday'],
       unknown: [],
     });
   });
 
   it('lists entries that are not in the catalog as typed, once each', () => {
-    expect(parsePieceList('Monday.com, salesforce, Monday.com, @acme/piece-gone', known)).toEqual({
+    expect(parsePieceList('Workday Pro, salesforce, Workday Pro, @acme/piece-gone', catalog)).toEqual({
       names: ['@activepieces/piece-salesforce'],
-      unknown: ['Monday.com', '@acme/piece-gone'],
+      unknown: ['Workday Pro', '@acme/piece-gone'],
     });
-    expect(parsePieceList('   \n', known)).toEqual({ names: [], unknown: [] });
+    expect(parsePieceList('Monday.com', [])).toEqual({ names: [], unknown: ['Monday.com'] });
+    expect(parsePieceList('   \n', catalog)).toEqual({ names: [], unknown: [] });
   });
 });
 

@@ -114,7 +114,7 @@ export default function GenerateWatchersModal({ onClose }: { onClose: () => void
             by usage
           </label>
           <button disabled={!ready || !topValid} className={bulkButton}
-            onClick={() => select(pickTopByUsage(rated, top, watched), 'No unwatched pieces with Cloud usage left to add.')}>
+            onClick={() => select(pickTopByUsage(rated, top, watched), `No unwatched pieces in the top ${top} by usage.`)}>
             Select
           </button>
           <button disabled={!ready} className={bulkButton}

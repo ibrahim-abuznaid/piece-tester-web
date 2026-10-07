@@ -24,7 +24,7 @@ export default function WatchersTab({ piece, importance, onImportanceChange }: {
   const plans = useQuery({
     queryKey: ['vw-plans'],
     queryFn: api.vwPlans,
-    refetchInterval: (query) => (query.state.data?.some(p => p.status === 'generating') ? 3000 : 30_000),
+    refetchInterval: (query) => (query.state.data?.some(p => p.status === 'generating') ? 10_000 : 30_000),
   });
   const queue = useQuery({ queryKey: ['vw-generation-queue'], queryFn: api.vwGenerationQueue, refetchInterval: 30_000 });
 

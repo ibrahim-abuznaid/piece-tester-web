@@ -133,24 +133,32 @@ export function changedFields<T extends object>(base: T, next: T): Partial<T> {
   ) as Partial<T>;
 }
 
+/** The catalog piece a typed name means: its package, display or short name, any case. */
+export function findPiece<T extends { name: string; displayName: string }>(pieces: T[], text: string): T | undefined {
+  const t = text.trim().toLowerCase();
+  return t ? pieces.find(p => [p.name, p.displayName, shortPieceName(p.name)].some(x => x.toLowerCase() === t)) : undefined;
+}
 
 /** A failed plan doesn't count, so its piece can be picked again. */
 export function watchedPieceNames(plans: Array<Pick<VwPlan, 'piece_name' | 'status'>>): Set<string> {
   return new Set(plans.filter(p => p.status !== 'failed').map(p => p.piece_name));
 }
 
-/** The `n` most used pieces on Cloud that aren't watched yet. Core pieces (Webhook, HTTP, Code…) have no vendor to watch. */
+/**
+ * The `n` most used pieces on Cloud (ties by name), minus the ones already watched: so selecting the same top N again
+ * after a restart picks only the pieces that didn't finish. Core pieces (Webhook, HTTP, Code…) have no vendor to watch.
+ */
 export function pickTopByUsage(
   pieces: Array<{ name: string; categories?: string[]; usage_projects: number | null }>,
   n: number,
   watched: Set<string>,
 ): string[] {
   return pieces
-    .filter((p): p is typeof p & { usage_projects: number } =>
-      p.usage_projects !== null && !p.categories?.includes('CORE') && !watched.has(p.name))
+    .filter((p): p is typeof p & { usage_projects: number } => p.usage_projects !== null && !p.categories?.includes('CORE'))
     .sort((a, b) => b.usage_projects - a.usage_projects || a.name.localeCompare(b.name))
     .slice(0, Math.max(0, n))
-    .map(p => p.name);
+    .map(p => p.name)
+    .filter(name => !watched.has(name));
 }
 
 export function pickEnterprise(pieces: Array<{ name: string; enterprise: number }>, watched: Set<string>): string[] {
@@ -180,18 +188,26 @@ export function generationEstimate(n: number): string {
   return `${n} selected · about $${usd.toFixed(usd < 10 ? 2 : 0)} · runs one at a time, about ${time}`;
 }
 
-/** A pasted list (one per line, or comma/semicolon separated) → catalog names, plus the entries the catalog doesn't have, as typed. */
-export function parsePieceList(text: string, knownNames: Set<string>): { names: string[]; unknown: string[] } {
+/**
+ * A pasted list (one per line, or comma/semicolon separated) → catalog names, plus the entries the catalog doesn't have, as typed.
+ * Each entry matches like the chip input (findPiece), else as a slug: "zoho crm" or "piece-zoho-crm" → @activepieces/piece-zoho-crm.
+ */
+export function parsePieceList(
+  text: string,
+  catalog: Array<{ name: string; displayName: string }>,
+): { names: string[]; unknown: string[] } {
+  const known = new Set(catalog.map(p => p.name));
   const names: string[] = [];
   const unknown: string[] = [];
   const seen = new Set<string>();
   for (const entry of text.split(/[\n,;]/).map(s => s.trim()).filter(Boolean)) {
-    const name = entry.startsWith('@') || entry.includes('/')
+    const slug = entry.startsWith('@') || entry.includes('/')
       ? entry
       : `@activepieces/piece-${entry.toLowerCase().replace(/\s+/g, '-').replace(/^piece-/, '')}`;
+    const name = findPiece(catalog, entry)?.name ?? slug;
     if (seen.has(name)) continue;
     seen.add(name);
-    if (knownNames.has(name)) names.push(name);
+    if (known.has(name)) names.push(name);
     else unknown.push(entry);
   }
   return { names, unknown };

@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Building2, CheckCircle, ChevronDown, ChevronRight, Loader2, RefreshCw, X, XCircle } from 'lucide-react';
 import { api, type VwConfig } from '../../lib/api';
-import { addUpTo, changedFields, parseJsonArray, parsePieceList, shortPieceName, toPieceName } from '../../lib/vendorWatch';
+import { addUpTo, changedFields, findPiece, parseJsonArray, parsePieceList, shortPieceName, toPieceName } from '../../lib/vendorWatch';
 
 const INPUT = 'w-full rounded border border-gray-700 bg-gray-950 px-2 py-1.5 text-sm text-gray-200';
 /** The server's limit for the Enterprise list. */
@@ -149,13 +149,9 @@ function ImportanceSettings({ high, medium, enterprise, onHigh, onMedium, onEnte
   const pieces = catalog.data ?? [];
   const displayName = (name: string) => pieces.find(p => p.name === name)?.displayName ?? shortPieceName(name);
 
-  const find = (text: string) => {
-    const t = text.trim().toLowerCase();
-    return t ? pieces.find(p => [p.name, p.displayName, shortPieceName(p.name)].some(x => x.toLowerCase() === t)) : undefined;
-  };
   const add = (text: string, fromEnter: boolean) => {
     const guess = fromEnter && pieces.length === 0 ? toPieceName(text) : null;
-    const name = find(text)?.name ?? guess;
+    const name = findPiece(pieces, text)?.name ?? guess;
     if (!name) {
       if (fromEnter && text.trim()) {
         setHint(pieces.length ? 'Pick a piece from the list.' : 'Not a piece name. Type its package name, e.g. @activepieces/piece-salesforce.');
@@ -236,7 +232,7 @@ function PasteEnterpriseList({ enterprise, onEnterprise, catalog, catalogError }
   const [result, setResult] = useState<{ added: number; capped: number; unknown: string[] } | null>(null);
 
   const add = () => {
-    const { names, unknown } = parsePieceList(text, new Set((catalog ?? []).map(p => p.name)));
+    const { names, unknown } = parsePieceList(text, catalog ?? []);
     const next = addUpTo(enterprise, names, MAX_ENTERPRISE_PIECES);
     const added = next.length - enterprise.length;
     if (added > 0) onEnterprise(next);
