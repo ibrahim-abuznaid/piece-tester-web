@@ -9,6 +9,8 @@ export interface SafeFetchOptions {
   timeoutMs?: number;
   maxBytes?: number;
   maxRedirects?: number;
+  /** false returns a 3xx as the result instead of following it. Default true. */
+  followRedirects?: boolean;
 }
 
 export interface SafeFetchResult {
@@ -110,6 +112,7 @@ export async function safeFetch(rawUrl: string, opts: SafeFetchOptions = {}): Pr
   const fetchImpl = opts.fetchImpl ?? fetch;
   const maxBytes = opts.maxBytes ?? 5 * 1024 * 1024;
   const maxRedirects = opts.maxRedirects ?? 5;
+  const followRedirects = opts.followRedirects ?? true;
   const signal = AbortSignal.timeout(opts.timeoutMs ?? 20_000);
 
   let url: URL;
@@ -131,7 +134,7 @@ export async function safeFetch(rawUrl: string, opts: SafeFetchOptions = {}): Pr
       throw classifyNetworkError(err);
     }
     const location = res.headers.get('location');
-    if (res.status >= 300 && res.status < 400 && location) {
+    if (followRedirects && res.status >= 300 && res.status < 400 && location) {
       url = new URL(location, url);
       continue;
     }

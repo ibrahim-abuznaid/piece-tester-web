@@ -14,6 +14,21 @@ describe('checkLiveness', () => {
     expect(asked).toBe('https://api.acme.dev/');
   });
 
+  it('treats a redirect as alive without following it, even when the target host is gone', async () => {
+    const asked: string[] = [];
+    const partial: LookupFn = async (host) => {
+      if (host === 'api.acme.dev') return [{ address: '93.184.216.34', family: 4 }];
+      throw Object.assign(new Error('x'), { code: 'ENOTFOUND' });
+    };
+    const f = ((url: string) => {
+      asked.push(url);
+      return Promise.resolve(new Response(null, { status: 302, headers: { location: 'https://www.gone.example/' } }));
+    }) as unknown as typeof fetch;
+    const r = await checkLiveness('https://api.acme.dev/v1', { lookup: partial, fetchImpl: f });
+    expect(r).toEqual({ alive: true, detail: 'HTTP 302' });
+    expect(asked).toEqual(['https://api.acme.dev/']);
+  });
+
   it('reports DNS not-found as a dead-type failure', async () => {
     const gone: LookupFn = async () => { throw Object.assign(new Error('x'), { code: 'ENOTFOUND' }); };
     const r = await checkLiveness('https://api.gone.example', { lookup: gone, fetchImpl: asFetch(async () => new Response('')) });

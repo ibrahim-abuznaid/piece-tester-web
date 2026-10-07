@@ -55,6 +55,13 @@ describe('safeFetch', () => {
     expect(r.body).toBe('moved');
   });
 
+  it('returns a redirect as the result when followRedirects is false', async () => {
+    const f = vi.fn(async () => new Response(null, { status: 301, headers: { location: 'http://internal.example/' } }));
+    const r = await safeFetch('https://acme.dev/old', { lookup: publicLookup, fetchImpl: asFetch(f), followRedirects: false });
+    expect(r).toMatchObject({ status: 301, finalUrl: 'https://acme.dev/old' });
+    expect(f).toHaveBeenCalledTimes(1);
+  });
+
   it('stops after too many redirects', async () => {
     const f = asFetch(async () => new Response(null, { status: 302, headers: { location: '/loop' } }));
     await expect(safeFetch('https://acme.dev/loop', { lookup: publicLookup, fetchImpl: f, maxRedirects: 2 })).rejects.toMatchObject({ code: 'too_many_redirects' });

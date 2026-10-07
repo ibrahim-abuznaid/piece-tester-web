@@ -21,7 +21,10 @@ export function hostOf(url: string): string {
   }
 }
 
-/** Does the vendor's API host still exist? Any HTTP response, 4xx and 5xx included, counts as alive. */
+/**
+ * Does the vendor's API host still exist? Any HTTP response from the host itself, 3xx/4xx/5xx
+ * included, counts as alive. Redirects are not followed.
+ */
 export async function checkLiveness(baseUrl: string, opts: SafeFetchOptions = {}): Promise<LivenessResult> {
   let root: string;
   try {
@@ -30,7 +33,7 @@ export async function checkLiveness(baseUrl: string, opts: SafeFetchOptions = {}
     return { alive: false, failure: 'bad_url', detail: `Not a URL: ${baseUrl}` };
   }
   try {
-    const r = await safeFetch(root, { maxBytes: 256 * 1024, timeoutMs: 15_000, ...opts });
+    const r = await safeFetch(root, { maxBytes: 256 * 1024, timeoutMs: 15_000, ...opts, followRedirects: false });
     return { alive: true, detail: `HTTP ${r.status}` };
   } catch (err) {
     if (err instanceof SafeFetchError) {
