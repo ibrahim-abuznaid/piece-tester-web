@@ -99,7 +99,7 @@ export function buildClassifierPrompt(input: ClassifyInput): string {
     'Endpoint inventory:',
     inventory,
     '',
-    `Source: ${input.source.label || input.source.kind} — ${input.source.url}`,
+    `Source: ${input.source.label ? `${input.source.label} (${input.source.kind})` : input.source.kind} — ${input.source.url}`,
     input.mode === 'baseline' ? BASELINE_NOTE : 'This text is NEW since the last check.',
     '',
     '<text>',
@@ -109,7 +109,19 @@ export function buildClassifierPrompt(input: ClassifyInput): string {
   ].join('\n');
 }
 
-/** One Claude call over the new text of one source. Throws on a missing/truncated tool call so the caller keeps the old snapshot. */
+/** The tool's `findings` as an array, accepting one JSON-encoded string; null when it is anything else. */
+function findingsList(value: unknown): unknown[] | null {
+  if (typeof value === 'string') {
+    try {
+      value = JSON.parse(value);
+    } catch {
+      return null;
+    }
+  }
+  return Array.isArray(value) ? value : null;
+}
+
+/** One Claude call over the new text of one source. Throws on a missing, truncated or malformed tool call so the caller keeps the old snapshot. */
 export async function classifyChange(
   input: ClassifyInput,
   deps: { client?: MessagesClient; model?: string; costTracker?: CostTracker } = {},
@@ -135,8 +147,10 @@ export async function classifyChange(
     (b): b is Anthropic.ToolUseBlock => b?.type === 'tool_use' && b?.name === REPORT_TOOL.name,
   );
   if (!call) throw new Error('Classifier returned no report_findings call');
+  const raw = findingsList((call.input as { findings?: unknown } | null)?.findings);
+  if (!raw) throw new Error('Classifier returned malformed report_findings input');
 
-  const findings = validateClassifierFindings((call.input as { findings?: unknown } | null)?.findings, {
+  const findings = validateClassifierFindings(raw, {
     sourceText: capText(input.text).text,
     inventoryTargets: input.inventory.map(e => e.target),
     evidenceUrl: input.source.url,

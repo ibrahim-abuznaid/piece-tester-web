@@ -1,7 +1,8 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import type Anthropic from '@anthropic-ai/sdk';
 import { classifyChange, buildClassifierPrompt, MAX_CLASSIFIER_CHARS, type ClassifyInput } from './classifier.js';
 import type { MessagesClient } from '../anthropic-client.js';
+import type { CostTracker } from '../../agents/v2/cost-tracker.js';
 
 const input = (over: Partial<ClassifyInput> = {}): ClassifyInput => ({
   pieceName: '@activepieces/piece-acme', pieceDisplayName: 'Acme', vendorName: 'Acme', apiVersion: 'v1', authType: 'API key',
@@ -48,6 +49,22 @@ describe('classifyChange', () => {
   it('throws when the model does not call the tool or is cut off', async () => {
     await expect(classifyChange(input(), { client: fake({ stop_reason: 'end_turn', content: [{ type: 'text', text: 'hi' }] }).client })).rejects.toThrow(/report_findings/);
     await expect(classifyChange(input(), { client: fake({ ...reply([]), stop_reason: 'max_tokens' }).client })).rejects.toThrow(/truncated/);
+  });
+
+  it('throws on malformed report_findings input instead of reporting no findings, and still tracks the cost', async () => {
+    const withInput = (toolInput: unknown) => fake({ ...reply([]), content: [{ type: 'tool_use', id: 't1', name: 'report_findings', input: toolInput }] }).client;
+    const trackResponse = vi.fn();
+    const costTracker = { trackResponse } as unknown as CostTracker;
+    await expect(classifyChange(input(), { client: withInput({}), costTracker })).rejects.toThrow(/malformed report_findings input/);
+    await expect(classifyChange(input(), { client: withInput({ findings: 'oops' }), costTracker })).rejects.toThrow(/malformed report_findings input/);
+    expect(trackResponse).toHaveBeenCalledTimes(2);
+    expect((await classifyChange(input(), { client: withInput({ findings: '[]' }) })).findings).toEqual([]);
+    expect((await classifyChange(input(), { client: withInput({ findings: JSON.stringify([finding]) }) })).findings).toHaveLength(1);
+  });
+
+  it('always states the source kind, even when the source has a label', () => {
+    const prompt = buildClassifierPrompt(input({ source: { label: 'Acme changelog', url: 'https://acme.dev/changelog', kind: 'html' } }));
+    expect(prompt).toContain('Source: Acme changelog (html) — https://acme.dev/changelog');
   });
 
   it('caps oversized text and only verifies evidence inside what the model saw', async () => {
