@@ -9,6 +9,8 @@ import { listActionsTool } from './list-actions.js';
 import { listTriggersTool } from './list-triggers.js';
 import { inspectOutputTool } from './inspect-output.js';
 import { cleanupFlowTool } from './cleanup-flow.js';
+import { probeSourceTool } from './probe-source.js';
+import { setWatchPlanTool } from './set-watch-plan.js';
 
 /** Tool name constants for easy reference. */
 export const TOOL_NAMES = {
@@ -125,6 +127,17 @@ export const FIXER_TOOLS_MCP = [
   TOOL_NAMES.CLEANUP_FLOW,
 ] as const;
 
+/** Tools for the vendor watch planner. web_search is an Anthropic server tool, passed separately. */
+export const WATCH_PLANNER_TOOLS = [
+  TOOL_NAMES.FETCH_PIECE_SOURCE,
+  TOOL_NAMES.FETCH_ACTION_SOURCE,
+  TOOL_NAMES.FETCH_TRIGGER_SOURCE,
+  TOOL_NAMES.LIST_ACTIONS,
+  TOOL_NAMES.LIST_TRIGGERS,
+  TOOL_NAMES.PROBE_SOURCE,
+  TOOL_NAMES.SET_WATCH_PLAN,
+] as const;
+
 /** Terminal tools that stop the agent loop when called. */
 export const TERMINAL_TOOLS = new Set<string>([TOOL_NAMES.SET_TEST_PLAN, TOOL_NAMES.SET_WATCH_PLAN]);
 
@@ -142,5 +155,7 @@ export function createToolRegistry(): ToolRegistry {
   registry.register(listTriggersTool);
   registry.register(inspectOutputTool);
   registry.register(cleanupFlowTool);
+  registry.register(probeSourceTool);
+  registry.register(setWatchPlanTool);
   return registry;
 }
