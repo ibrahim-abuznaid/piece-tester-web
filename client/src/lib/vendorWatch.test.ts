@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   compareImportance, countByImportance, describeTargets, effectiveLabel, importanceTitle, matchesImportance,
   changedFields, parseImportanceParam, parseJsonArray, shortPieceName, sourceHealth, toPieceName, toggleImportance,
+  addUpTo, generationEstimate, parsePieceList, pickEnterprise, pickTopByUsage, watchedPieceNames,
 } from './vendorWatch';
 
 describe('vendorWatch helpers', () => {
@@ -113,3 +114,85 @@ describe('changedFields', () => {
   });
 });
 
+
+describe('bulk selection helpers', () => {
+  const piece = (name: string, usage_projects: number | null, over: Partial<{ categories: string[]; enterprise: number }> = {}) => ({
+    name: `@activepieces/piece-${name}`, usage_projects, enterprise: 0, ...over,
+  });
+
+  it('treats every plan except a failed one as watched', () => {
+    const watched = watchedPieceNames([
+      { piece_name: 'a', status: 'active' },
+      { piece_name: 'b', status: 'queued' },
+      { piece_name: 'c', status: 'failed' },
+      { piece_name: 'd', status: 'paused' },
+      { piece_name: 'e', status: 'generating' },
+    ]);
+    expect([...watched].sort()).toEqual(['a', 'b', 'd', 'e']);
+  });
+
+  it('picks the top N by Cloud usage, skipping core, unrated and watched pieces, ties by name', () => {
+    const pieces = [
+      piece('webhook', 9000, { categories: ['CORE'] }),
+      piece('slack', 500),
+      piece('gmail', 800),
+      piece('notion', null),
+      piece('asana', 500),
+      piece('hubspot', 700),
+      piece('linear', 10, { categories: ['PRODUCTIVITY'] }),
+    ];
+    expect(pickTopByUsage(pieces, 3, new Set(['@activepieces/piece-hubspot']))).toEqual([
+      '@activepieces/piece-gmail', '@activepieces/piece-asana', '@activepieces/piece-slack',
+    ]);
+    expect(pickTopByUsage(pieces, 50, new Set())).toHaveLength(5);
+    expect(pickTopByUsage(pieces, 0, new Set())).toEqual([]);
+  });
+
+  it('picks Enterprise pieces that are not watched yet, in list order', () => {
+    const pieces = [piece('sap', null, { enterprise: 1 }), piece('slack', 500), piece('netsuite', 3, { enterprise: 1 }), piece('oracle', 1, { enterprise: 1 })];
+    expect(pickEnterprise(pieces, new Set(['@activepieces/piece-oracle']))).toEqual(['@activepieces/piece-sap', '@activepieces/piece-netsuite']);
+  });
+
+  it('adds names up to a cap, keeping the current ones and skipping duplicates', () => {
+    expect(addUpTo(['a', 'b'], ['b', 'c', 'd'], 10)).toEqual(['a', 'b', 'c', 'd']);
+    expect(addUpTo(['a', 'b'], ['c', 'd', 'e'], 3)).toEqual(['a', 'b', 'c']);
+    expect(addUpTo(['a', 'b', 'c'], ['d'], 2)).toEqual(['a', 'b', 'c']);
+  });
+
+  it('estimates cost and time for a batch, in minutes under an hour', () => {
+    expect(generationEstimate(0)).toBe('0 selected');
+    expect(generationEstimate(1)).toBe('1 selected · about $0 · runs one at a time, about 2 min');
+    expect(generationEstimate(39)).toBe('39 selected · about $14 · runs one at a time, about 59 min');
+    expect(generationEstimate(40)).toBe('40 selected · about $14 · runs one at a time, about 1 h');
+    expect(generationEstimate(230)).toBe('230 selected · about $81 · runs one at a time, about 6 h');
+    expect(generationEstimate(300)).toBe('300 selected · about $105 · runs one at a time, about 8 h');
+  });
+});
+
+describe('parsePieceList', () => {
+  const known = new Set([
+    '@activepieces/piece-salesforce', '@activepieces/piece-google-sheets', '@activepieces/piece-zoho-crm', '@acme/piece-internal',
+  ]);
+
+  it('splits on newlines, commas and semicolons, maps short names and keeps scoped names', () => {
+    expect(parsePieceList('Salesforce\n Google Sheets ,zoho-crm;@acme/piece-internal', known)).toEqual({
+      names: ['@activepieces/piece-salesforce', '@activepieces/piece-google-sheets', '@activepieces/piece-zoho-crm', '@acme/piece-internal'],
+      unknown: [],
+    });
+  });
+
+  it('drops empty entries and duplicates', () => {
+    expect(parsePieceList('salesforce\r\n\n , ;SALESFORCE\n@activepieces/piece-salesforce', known)).toEqual({
+      names: ['@activepieces/piece-salesforce'],
+      unknown: [],
+    });
+  });
+
+  it('lists entries that are not in the catalog as typed, once each', () => {
+    expect(parsePieceList('Monday.com, salesforce, Monday.com, @acme/piece-gone', known)).toEqual({
+      names: ['@activepieces/piece-salesforce'],
+      unknown: ['Monday.com', '@acme/piece-gone'],
+    });
+    expect(parsePieceList('   \n', known)).toEqual({ names: [], unknown: [] });
+  });
+});
