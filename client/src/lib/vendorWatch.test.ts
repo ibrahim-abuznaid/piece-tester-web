@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   compareImportance, countByImportance, describeTargets, effectiveLabel, importanceTitle, matchesImportance,
   changedFields, parseImportanceParam, parseJsonArray, shortPieceName, sourceHealth, toPieceName, toggleImportance,
-  addUpTo, generationEstimate, parsePieceList, pickEnterprise, pickTopByUsage, watchedPieceNames,
+  addUpTo, generationEstimate, parsePieceList, pickEnterprise, pickTopByUsage, watchedPieceNames, clampOffset, pageInfo,
 } from './vendorWatch';
 
 describe('vendorWatch helpers', () => {
@@ -204,5 +204,27 @@ describe('parsePieceList', () => {
       unknown: ['Monday.com', '@acme/piece-gone'],
     });
     expect(parsePieceList('   \n', known)).toEqual({ names: [], unknown: [] });
+  });
+});
+
+describe('findings paging', () => {
+  it('describes the page range and the neighbouring offsets', () => {
+    expect(pageInfo({ offset: 0, limit: 100, total: 340 }, 100)).toEqual({ from: 1, to: 100, prevOffset: null, nextOffset: 100 });
+    expect(pageInfo({ offset: 100, limit: 100, total: 340 }, 100)).toEqual({ from: 101, to: 200, prevOffset: 0, nextOffset: 200 });
+    expect(pageInfo({ offset: 300, limit: 100, total: 340 }, 40)).toEqual({ from: 301, to: 340, prevOffset: 200, nextOffset: null });
+  });
+
+  it('has no neighbours for a single full page or an empty list', () => {
+    expect(pageInfo({ offset: 0, limit: 100, total: 100 }, 100)).toEqual({ from: 1, to: 100, prevOffset: null, nextOffset: null });
+    expect(pageInfo({ offset: 0, limit: 100, total: 0 }, 0)).toEqual({ from: 0, to: 0, prevOffset: null, nextOffset: null });
+  });
+
+  it('moves an offset past the last row back to the last page', () => {
+    expect(clampOffset(200, 340, 100)).toBe(200);
+    expect(clampOffset(300, 300, 100)).toBe(200);
+    expect(clampOffset(100, 100, 100)).toBe(0);
+    expect(clampOffset(400, 250, 100)).toBe(200);
+    expect(clampOffset(100, 0, 100)).toBe(0);
+    expect(clampOffset(0, 0, 100)).toBe(0);
   });
 });
