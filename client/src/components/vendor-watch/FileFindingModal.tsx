@@ -15,6 +15,7 @@ export default function FileFindingModal({ finding, onClose }: { finding: VwFind
     queryKey: ['vw-draft', finding.id],
     queryFn: () => api.vwFindingDraft(finding.id),
     staleTime: Infinity,
+    gcTime: 0,
   });
 
   // Seed the editable fields once, so a background refetch never clobbers the user's edits.
