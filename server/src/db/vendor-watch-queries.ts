@@ -525,7 +525,8 @@ export function reconcileVendorWatch(): { runs: number; plans: number } {
 
 // ── Piece importance ──
 
-const IMPORTANCE_RANK = `CASE importance WHEN 'high' THEN 0 WHEN 'medium' THEN 1 WHEN 'low' THEN 2 ELSE 3 END`;
+/** Unrated sorts above Low: no usage data yet doesn't mean the piece is unimportant. */
+const IMPORTANCE_RANK = `CASE importance WHEN 'high' THEN 0 WHEN 'medium' THEN 1 WHEN 'low' THEN 3 ELSE 2 END`;
 const SEVERITY_RANK = `CASE severity WHEN 'critical' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 ELSE 3 END`;
 
 /**
@@ -534,6 +535,7 @@ const SEVERITY_RANK = `CASE severity WHEN 'critical' THEN 0 WHEN 'high' THEN 1 W
  */
 function importanceSelect(nameColumn: string): { sql: string; params: unknown[] } {
   const c = getWatchConfig();
+  const enterprise = JSON.stringify(enterpriseList(c.enterprise_pieces));
   return {
     sql: `CASE
         WHEN ${nameColumn} IN (SELECT value FROM json_each(?)) THEN 'high'
@@ -545,8 +547,18 @@ function importanceSelect(nameColumn: string): { sql: string; params: unknown[] 
       (${nameColumn} IN (SELECT value FROM json_each(?))) AS enterprise,
       u.projects AS usage_projects,
       u.fetched_at AS usage_fetched_at`,
-    params: [c.enterprise_pieces, c.importance_high_min, c.importance_medium_min, c.enterprise_pieces],
+    params: [enterprise, c.importance_high_min, c.importance_medium_min, enterprise],
   };
+}
+
+/** The stored Enterprise list as names. A hand-edited, malformed value reads as empty rather than breaking queries. */
+function enterpriseList(json: string): string[] {
+  try {
+    const v = JSON.parse(json);
+    return Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : [];
+  } catch {
+    return [];
+  }
 }
 
 export interface PieceUsageInput {
@@ -556,6 +568,7 @@ export interface PieceUsageInput {
   versions_failed: number;
 }
 
+/** Store refreshed usage. A partial result (some versions failed) never replaces a complete row with a higher count. */
 export function upsertPieceUsage(rows: PieceUsageInput[], fetchedAt?: string): void {
   const db = getDb();
   db.transaction(() => {
@@ -564,7 +577,9 @@ export function upsertPieceUsage(rows: PieceUsageInput[], fetchedAt?: string): v
         `INSERT INTO piece_usage (piece_name, projects, versions, versions_failed, fetched_at)
          VALUES (?, ?, ?, ?, COALESCE(?, datetime('now')))
          ON CONFLICT(piece_name) DO UPDATE SET projects = excluded.projects, versions = excluded.versions,
-           versions_failed = excluded.versions_failed, fetched_at = excluded.fetched_at`,
+           versions_failed = excluded.versions_failed, fetched_at = excluded.fetched_at
+         WHERE NOT (excluded.versions_failed > 0 AND piece_usage.versions_failed = 0
+           AND piece_usage.projects > excluded.projects)`,
         [r.piece_name, r.projects, r.versions, r.versions_failed, fetchedAt ?? null],
       );
     }
@@ -589,15 +604,16 @@ export function listPieceUsage(): PieceImportanceRow[] {
      FROM (SELECT piece_name FROM piece_usage UNION SELECT value FROM json_each(?)) n
      LEFT JOIN piece_usage u ON u.piece_name = n.piece_name
      ORDER BY u.projects DESC, n.piece_name`,
-    [...imp.params, getWatchConfig().enterprise_pieces],
+    [...imp.params, JSON.stringify(enterpriseList(getWatchConfig().enterprise_pieces))],
   );
 }
 
-/** The names with no usage row, a row older than `maxAgeDays`, or a row where some versions failed. */
+/** The names with no usage row, a row older than `maxAgeDays`, or a partial row (some versions failed) older than a day. */
 export function stalePieces(names: string[], maxAgeDays: number): string[] {
   if (names.length === 0) return [];
   const fresh = new Set(getDb().all<{ piece_name: string }>(
-    `SELECT piece_name FROM piece_usage WHERE fetched_at >= datetime('now', ?) AND versions_failed = 0`,
+    `SELECT piece_name FROM piece_usage
+     WHERE fetched_at >= datetime('now', CASE WHEN versions_failed = 0 THEN ? ELSE '-1 days' END)`,
     [`-${maxAgeDays} days`],
   ).map(r => r.piece_name));
   return names.filter(n => !fresh.has(n));

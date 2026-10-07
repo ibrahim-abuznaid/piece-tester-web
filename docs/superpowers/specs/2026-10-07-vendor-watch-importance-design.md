@@ -39,6 +39,7 @@ so the next pilot pieces can be picked by importance.
 | Otherwise (including pieces not on Cloud: 0) | Low |
 
 The defaults come from the 2026-09-19 all-versions usage table (766 pieces): about 52 High, 79 Medium and 635 Low.
+A live whole-catalog refresh on 2026-10-07 gave 53 High, 80 Medium and 637 Low (770 pieces).
 Stripe (491) and HubSpot (492) land in High. Salesforce (93) lands in Medium unless it is put on the Enterprise list,
 and that is the job of the list. Both thresholds can be changed in Config.
 
@@ -56,28 +57,32 @@ The rule lives in **one place**, an SQL `CASE` built by `importanceSelect()` in 
 
 - `piece-usage.ts` holds `refreshPieceUsage(scope)`. It makes one registry call, then fetches every version of every
   piece in scope, 8 at a time, with a 20 s timeout per request. Failed versions are counted in `versions_failed`
-  and left out of the sum. A piece whose versions **all** failed keeps its old row. If the registry call fails, the
-  refresh fails and no rows change.
+  and left out of the sum. A piece whose versions **all** failed keeps its old row, and a partial result never
+  replaces a complete row with a higher count. If the flags or registry call fails, or the registry comes back
+  empty, the refresh fails and no rows change.
 - **Single-flight.** Only one refresh runs at a time. Progress (`scope`, `done`, `total`, `error`, timestamps) is kept
   in memory for the Config card.
 - **Scopes.** `watched` (pieces with a watch plan, usually a few hundred requests) and `catalog` (every Cloud piece,
-  ~13k requests, 5–10 min). `catalog` runs only by hand, from Config.
+  13,169 versions in 4 min 35 s on 2026-10-07, 0 failures). `catalog` runs only by hand, from Config.
 - **Lazy freshness.** `GET /plans` and `GET /findings` call `ensureWatchedUsage()`. It starts a background `watched`
-  refresh for pieces with no row or a row older than 7 days, and does not retry a piece within 1 hour of a failed
-  attempt. This covers first deploy, newly generated watchers and weekly freshness with no new cron. When nothing is
+  refresh for pieces with no row, a row older than 7 days, or a partial row older than 1 day. It does not try a
+  piece again within 1 hour of the last attempt. This covers first deploy, newly generated watchers and weekly freshness with no new cron. When nothing is
   stale it costs one query.
 
 ## API (`/api/vendor-watch`)
 
 - `GET /findings?status=&piece=&importance=high,medium,low,unrated` → `{ findings, counts }`. Each row gains
   `importance`, `enterprise`, `usage_projects` and `usage_fetched_at`. `counts` holds per-tier totals for the same
-  status/piece, ignoring the importance filter, for the chips. The Inbox (`status=new`) sorts by importance, then
-  severity, then newest. Filed keeps newest first. The filter runs in SQL, before the existing 500-row cap.
+  status/piece, ignoring the importance filter, for the chips. The Inbox (`status=new`) sorts by importance (High,
+  Medium, Unrated, Low: no data yet is not the same as unimportant), then severity, then newest. Filed keeps newest first. The filter runs in SQL, before the existing 500-row cap.
 - `GET /plans`: rows gain the same four fields and are ordered by importance, then piece name.
-- `GET /usage` → `{ pieces: [{ piece_name, projects, importance, enterprise }], refresh }` for the Generate picker.
+- `GET /usage` → `{ pieces: [{ piece_name, importance, enterprise, usage_projects, usage_fetched_at }], summary,
+  refresh }` for the Generate picker and the Config status line.
 - `POST /usage/refresh { scope: 'watched' | 'catalog' }` → 202, or 409 while a refresh runs.
 - `PUT /config` accepts `importance_high_min`, `importance_medium_min` (whole numbers, high > medium ≥ 1) and
-  `enterprise_pieces` (array of piece names, max 200).
+  `enterprise_pieces` (array of piece names, max 200). Only fields edited since the form loaded are sent, so two
+  people saving different fields don't undo each other. A malformed stored list reads as empty, so it can't break the
+  queries.
 
 ## UI
 
@@ -91,15 +96,16 @@ The rule lives in **one place**, an SQL `CASE` built by `importanceSelect()` in 
   Filed and Watchers.
 - **Inbox / Filed:** a new Importance column after Piece, plus the filter row.
 - **Watchers:** the Importance column, the filter, and ordering by importance.
-- **Generate watchers picker:** a badge per piece where usage is known, sorted by Cloud projects (most used first),
-  with the same chips. Because "pilot the 10 most important pieces" is the next rollout step.
+- **Generate watchers picker:** a badge per piece (a dash where usage is unknown), sorted by tier then Cloud
+  projects (most used first), with the same chips. Because "pilot the 10 most important pieces" is the next rollout step.
 - **Config:** a new Importance section with the two thresholds, the Enterprise list (chips with ×, plus an input with
   catalog type-ahead), the usage status ("N pieces rated · oldest from …") and two buttons: Refresh watched pieces /
   Refresh whole catalog. Each button shows progress.
 
 ## Ticket text
 
-Filed tickets get one extra line: `**Importance:** High (491 Cloud projects · Enterprise list)`. Priority still comes
+Filed tickets get one extra line: `**Importance:** High (491 Cloud projects across all versions · on the Enterprise
+list)`. Priority still comes
 from severity. Mapping importance onto priority is a follow-up, to decide once real tickets exist.
 
 ## Out of scope / follow-ups

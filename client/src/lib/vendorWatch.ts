@@ -1,5 +1,5 @@
 import type {
-  VwFindingKind, VwImportance, VwImportanceFields, VwImportanceFilter, VwPlanStatus, VwSeverity, VwSource,
+  VwFindingKind, VwImportanceFields, VwImportanceFilter, VwPlanStatus, VwSeverity, VwSource,
 } from './api';
 
 export const KIND_LABEL: Record<VwFindingKind, string> = {
@@ -98,11 +98,11 @@ export function countByImportance(rows: Array<Pick<VwImportanceFields, 'importan
   return counts;
 }
 
-const TIER_RANK: Record<VwImportance, number> = { high: 0, medium: 1, low: 2 };
+const TIER_RANK: Record<VwImportanceFilter, number> = { high: 0, medium: 1, unrated: 2, low: 3 };
 
-/** Sort comparator: tier, then Cloud projects (most first), unrated last. */
+/** Sort comparator: tier (unrated above low, like the server), then Cloud projects, most first. */
 export function compareImportance(a: VwImportanceFields, b: VwImportanceFields): number {
-  const tier = (a.importance ? TIER_RANK[a.importance] : 3) - (b.importance ? TIER_RANK[b.importance] : 3);
+  const tier = TIER_RANK[a.importance ?? 'unrated'] - TIER_RANK[b.importance ?? 'unrated'];
   return tier || (b.usage_projects ?? -1) - (a.usage_projects ?? -1);
 }
 
@@ -123,5 +123,12 @@ export function toPieceName(text: string): string | null {
   if (/^@[a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._-]*$/.test(t)) return t;
   const slug = t.replace(/\s+/g, '-').replace(/^piece-/, '');
   return /^[a-z0-9][a-z0-9._-]*$/.test(slug) ? `@activepieces/piece-${slug}` : null;
+}
+
+/** The keys of `next` whose values differ from `base`: save only what the user edited. */
+export function changedFields<T extends object>(base: T, next: T): Partial<T> {
+  return Object.fromEntries(
+    (Object.keys(next) as Array<keyof T>).filter(k => next[k] !== base[k]).map(k => [k, next[k]]),
+  ) as Partial<T>;
 }
 

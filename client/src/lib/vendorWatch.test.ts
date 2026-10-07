@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   compareImportance, countByImportance, describeTargets, effectiveLabel, importanceTitle, matchesImportance,
-  parseImportanceParam, parseJsonArray, shortPieceName, sourceHealth, toPieceName, toggleImportance,
+  changedFields, parseImportanceParam, parseJsonArray, shortPieceName, sourceHealth, toPieceName, toggleImportance,
 } from './vendorWatch';
 
 describe('vendorWatch helpers', () => {
@@ -77,7 +77,7 @@ describe('importance helpers', () => {
       .toBe('Not rated yet: Cloud usage for this piece has not been fetched');
   });
 
-  it('orders rows by tier, then Cloud projects, unrated last', () => {
+  it('orders rows by tier, then Cloud projects, with unrated between medium and low', () => {
     const rows = [
       { n: 'a', ...rated('low', { usage_projects: 3 }) },
       { n: 'b', ...rated(null, { usage_projects: null }) },
@@ -85,7 +85,7 @@ describe('importance helpers', () => {
       { n: 'd', ...rated('high', { usage_projects: 9000 }) },
       { n: 'e', ...rated('high', { enterprise: 1, usage_projects: null }) },
     ];
-    expect([...rows].sort(compareImportance).map(r => r.n)).toEqual(['d', 'c', 'e', 'a', 'b']);
+    expect([...rows].sort(compareImportance).map(r => r.n)).toEqual(['d', 'c', 'e', 'b', 'a']);
   });
 });
 
@@ -105,3 +105,11 @@ describe('toPieceName', () => {
     expect(toPieceName(text)).toBeNull();
   });
 });
+
+describe('changedFields', () => {
+  it('keeps only the keys whose value differs from the base', () => {
+    expect(changedFields({ a: 1, b: 'x', c: '[]' }, { a: 1, b: 'y', c: '["s"]' })).toEqual({ b: 'y', c: '["s"]' });
+    expect(changedFields({ a: 1 }, { a: 1 })).toEqual({});
+  });
+});
+

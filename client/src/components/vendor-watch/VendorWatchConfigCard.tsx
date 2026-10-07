@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Building2, CheckCircle, Loader2, RefreshCw, X, XCircle } from 'lucide-react';
 import { api, type VwConfig } from '../../lib/api';
-import { parseJsonArray, shortPieceName, toPieceName } from '../../lib/vendorWatch';
+import { changedFields, parseJsonArray, shortPieceName, toPieceName } from '../../lib/vendorWatch';
 
 const INPUT = 'w-full rounded border border-gray-700 bg-gray-950 px-2 py-1.5 text-sm text-gray-200';
 
@@ -10,28 +10,25 @@ export default function VendorWatchConfigCard() {
   const qc = useQueryClient();
   const config = useQuery({ queryKey: ['vw-config'], queryFn: api.vwConfig });
   const [form, setForm] = useState<VwConfig | null>(null);
+  const [base, setBase] = useState<VwConfig | null>(null);
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
 
   useEffect(() => {
-    if (config.data && !form) setForm(config.data);
+    if (config.data && !form) { setForm(config.data); setBase(config.data); }
   }, [config.data, form]);
 
+  // Only the fields edited since the form loaded, so a save doesn't undo someone else's change to another field.
   const save = useMutation({
-    mutationFn: (f: VwConfig) => api.vwUpdateConfig({
-      enabled: f.enabled,
-      cron_expression: f.cron_expression,
-      timezone: f.timezone,
-      auto_file_enabled: f.auto_file_enabled,
-      linear_team_key: f.linear_team_key,
-      linear_label: f.linear_label,
-      classifier_model: f.classifier_model,
-      dead_after_failures: f.dead_after_failures,
-      importance_high_min: f.importance_high_min,
-      importance_medium_min: f.importance_medium_min,
-      enterprise_pieces: parseJsonArray(f.enterprise_pieces),
-    }),
+    mutationFn: (f: VwConfig) => {
+      const { enterprise_pieces, updated_at: _loadedAt, ...edited } = changedFields(base ?? f, f);
+      return api.vwUpdateConfig({
+        ...edited,
+        ...(enterprise_pieces !== undefined ? { enterprise_pieces: parseJsonArray(enterprise_pieces) } : {}),
+      });
+    },
     onSuccess: (row) => {
       setForm(row);
+      setBase(row);
       qc.setQueryData(['vw-config'], row);
       for (const key of ['vw-findings', 'vw-plans', 'vw-usage']) qc.invalidateQueries({ queryKey: [key] });
       setMsg({ ok: true, text: 'Saved.' });
@@ -155,9 +152,12 @@ function ImportanceSettings({ high, medium, enterprise, onHigh, onMedium, onEnte
     return t ? pieces.find(p => [p.name, p.displayName, shortPieceName(p.name)].some(x => x.toLowerCase() === t)) : undefined;
   };
   const add = (text: string, fromEnter: boolean) => {
-    const name = find(text)?.name ?? (fromEnter ? toPieceName(text) : null);
+    const guess = fromEnter && pieces.length === 0 ? toPieceName(text) : null;
+    const name = find(text)?.name ?? guess;
     if (!name) {
-      if (fromEnter && text.trim()) setHint('Not a piece name. Pick one from the list or type its package name.');
+      if (fromEnter && text.trim()) {
+        setHint(pieces.length ? 'Pick a piece from the list.' : 'Not a piece name. Type its package name, e.g. @activepieces/piece-salesforce.');
+      }
       return;
     }
     if (!enterprise.includes(name)) onEnterprise([...enterprise, name]);
@@ -242,8 +242,9 @@ function UsageStatus() {
 
   const refresh = useMutation({
     mutationFn: api.vwRefreshUsage,
-    onSuccess: () => { setErr(''); qc.invalidateQueries({ queryKey: ['vw-usage'] }); },
+    onSuccess: () => setErr(''),
     onError: (e: Error) => setErr(e.message),
+    onSettled: () => qc.invalidateQueries({ queryKey: ['vw-usage'] }),
   });
 
   const s = usage.data?.summary;
@@ -269,7 +270,7 @@ function UsageStatus() {
         </button>
         <button disabled={running || refresh.isPending} className={button}
           onClick={() => {
-            if (window.confirm('Fetch Cloud usage for every piece in the catalog? About 13,000 requests to cloud.activepieces.com, 5–10 minutes.')) {
+            if (window.confirm('Fetch Cloud usage for every piece in the catalog? About 13,000 requests to cloud.activepieces.com, roughly 5 minutes.')) {
               refresh.mutate('catalog');
             }
           }}>

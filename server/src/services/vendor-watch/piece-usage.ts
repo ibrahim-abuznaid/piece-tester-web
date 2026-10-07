@@ -61,6 +61,7 @@ async function cloudVersions(fetchJson: FetchJson): Promise<Map<string, string[]
   if (typeof release !== 'string' || !release) throw new Error('Cloud flags have no CURRENT_VERSION');
   const registry = await fetchJson(`${CLOUD_API}/pieces/registry?release=${encodeURIComponent(release)}&edition=cloud`);
   if (!Array.isArray(registry)) throw new Error('Cloud piece registry did not return a list');
+  if (registry.length === 0) throw new Error(`Cloud piece registry is empty for release ${release}`);
   const byName = new Map<string, string[]>();
   for (const row of registry as Array<{ name?: unknown; version?: unknown }>) {
     if (typeof row?.name !== 'string' || typeof row.version !== 'string') continue;
@@ -146,7 +147,7 @@ export async function refreshPieceUsage(scope: UsageScope, deps: UsageDeps = {})
 }
 
 /**
- * Start a background refresh for watched pieces whose usage is missing, older than a week or partial.
+ * Start a background refresh for watched pieces whose usage is missing, older than a week, or partial and a day old.
  * A piece is not retried within an hour of the last attempt. Returns whether a refresh started.
  */
 export function ensureWatchedUsage(deps: UsageDeps = {}): boolean {

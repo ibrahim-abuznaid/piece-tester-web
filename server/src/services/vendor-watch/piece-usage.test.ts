@@ -96,6 +96,8 @@ describe('fetchCloudUsage', () => {
     await expect(fetchCloudUsage([P('slack')], { fetchJson: async (u) => (u.endsWith('/flags') ? { CURRENT_VERSION: '0.92.0' } : { oops: 1 }) }))
       .rejects.toThrow(/registry/i);
     await expect(fetchCloudUsage([P('slack')], { fetchJson: async () => ({}) })).rejects.toThrow(/CURRENT_VERSION/);
+    await expect(fetchCloudUsage([P('slack')], { fetchJson: async (u) => (u.endsWith('/flags') ? { CURRENT_VERSION: '0.92.0' } : []) }))
+      .rejects.toThrow(/empty/i);
   });
 });
 
@@ -152,10 +154,10 @@ describe('refreshPieceUsage', () => {
 describe('ensureWatchedUsage', () => {
   beforeEach(() => { resetVendorWatch(); _resetUsageRefresh(); });
 
-  it('refreshes only watched pieces that have no row, an old row, or a partial row', async () => {
+  it('refreshes only watched pieces that have no row, an old row, or a day-old partial row', async () => {
     for (const n of ['slack', 'stripe', 'zagomail']) beginPlanGeneration(P(n));
     upsertPieceUsage([{ piece_name: P('stripe'), projects: 491, versions: 2, versions_failed: 0 }]);
-    upsertPieceUsage([{ piece_name: P('zagomail'), projects: 0, versions: 1, versions_failed: 1 }]);
+    upsertPieceUsage([{ piece_name: P('zagomail'), projects: 0, versions: 1, versions_failed: 1 }], '2026-01-01 00:00:00');
     const cloud = fakeCloud(CLOUD);
     const started = ensureWatchedUsage({ fetchJson: cloud.fetchJson });
     expect(started).toBe(true);
