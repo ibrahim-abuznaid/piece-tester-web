@@ -23,6 +23,8 @@ export const TOOL_NAMES = {
   LIST_TRIGGERS: 'list_triggers',
   INSPECT_OUTPUT: 'inspect_output',
   CLEANUP_FLOW: 'cleanup_flow',
+  PROBE_SOURCE: 'probe_source',
+  SET_WATCH_PLAN: 'set_watch_plan',
 } as const;
 
 /** Read-only tools safe for research workers. */
@@ -124,7 +126,7 @@ export const FIXER_TOOLS_MCP = [
 ] as const;
 
 /** Terminal tools that stop the agent loop when called. */
-export const TERMINAL_TOOLS = new Set([TOOL_NAMES.SET_TEST_PLAN]);
+export const TERMINAL_TOOLS = new Set<string>([TOOL_NAMES.SET_TEST_PLAN, TOOL_NAMES.SET_WATCH_PLAN]);
 
 /** Create a fully populated tool registry with all built-in tools. */
 export function createToolRegistry(): ToolRegistry {

@@ -37,6 +37,12 @@ export class ToolRegistry {
     return tool.handler(input, ctx);
   }
 
+  /** Run a terminal tool's validator, if it has one. Returns an error message, or null to accept. */
+  validateTerminal(toolName: string, input: Record<string, any>, ctx: ToolContext): string | null {
+    const tool = this.tools.get(toolName);
+    return tool?.validateTerminal ? tool.validateTerminal(input, ctx) : null;
+  }
+
   /** List all registered tool names. */
   listNames(): string[] {
     return [...this.tools.keys()];
