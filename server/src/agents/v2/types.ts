@@ -1,12 +1,14 @@
 import type Anthropic from '@anthropic-ai/sdk';
 import type { PieceMetadataFull } from '../../services/ap-client.js';
 import type { TestPlanStep, TestPlanResult } from '../../services/ai-config-generator.js';
+import type { MessagesClient } from '../../services/anthropic-client.js';
+import type { ProbeResult } from '../../services/vendor-watch/types.js';
 
 export { TestPlanStep, TestPlanResult };
 
 // ── Agent roles ──
 
-export type AgentRole = 'coordinator' | 'research' | 'planner' | 'verifier' | 'fixer';
+export type AgentRole = 'coordinator' | 'research' | 'planner' | 'verifier' | 'fixer' | 'watch_planner';
 
 // ── Log entry (shared across all agents) ──
 
@@ -33,6 +35,8 @@ export interface ToolContext {
   abortSignal?: AbortSignal;
   mcpEnabled?: boolean;
   createdFlowIds?: Set<string>;
+  /** Vendor watch planner: every URL probe_source fetched this session (keyed by requested and final URL). */
+  probedSources?: Map<string, ProbeResult>;
 }
 
 export interface ToolDefinition {
@@ -40,6 +44,8 @@ export interface ToolDefinition {
   description: string;
   input_schema: Anthropic.Messages.Tool['input_schema'];
   handler: (input: Record<string, any>, ctx: ToolContext) => Promise<string>;
+  /** Terminal tools only: return an error message to send back to the model instead of accepting the call. */
+  validateTerminal?: (input: Record<string, any>, ctx: ToolContext) => string | null;
 }
 
 // ── Agent runner config ──
@@ -53,6 +59,12 @@ export interface AgentRunnerConfig {
   toolNames?: string[];
   abortSignal?: AbortSignal;
   onLog: OnLogCallback;
+  /** Anthropic server tools (e.g. web_search) appended to the local tools. */
+  serverTools?: Anthropic.Messages.ToolUnion[];
+  /** Skip the Activepieces MCP tools even when a token is configured. */
+  disableMcp?: boolean;
+  /** Inject a client (tests). Defaults to the SDK client built from Settings. */
+  client?: MessagesClient;
 }
 
 export interface AgentRunnerResult {

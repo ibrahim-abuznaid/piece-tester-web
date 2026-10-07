@@ -5,6 +5,7 @@ import { api, type TestPlan, type AgentLogEntry, type StepResult, type PlanProgr
 import { batchSetupRunner, EMPTY_BATCH, type BatchItem, type BatchActionStatus } from '../lib/batchSetupRunner';
 import TestResultBadge from '../components/TestResultBadge';
 import TestPlanView from '../components/TestPlanView';
+import VendorWatchChip from '../components/vendor-watch/VendorWatchChip';
 import {
   ArrowLeft, Play, Loader2, Link2, ExternalLink, Download,
   Clock, Trash2, Check, Wand2, AlertTriangle, ChevronDown,
@@ -745,6 +746,7 @@ export default function PieceDetail() {
                 {inactiveConns.length > 0 && <span className="text-gray-500 ml-1">(+{inactiveConns.length} saved)</span>}
               </span>
             )}
+            <VendorWatchChip pieceName={piece.name} />
           </div>
         </div>
       </div>

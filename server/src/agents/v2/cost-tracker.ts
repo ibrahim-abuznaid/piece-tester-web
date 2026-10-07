@@ -46,6 +46,13 @@ export function extractUsage(response: any): TokenUsage {
   };
 }
 
+/** Anthropic bills each server-side web search separately from tokens. */
+export const WEB_SEARCH_COST_USD = 0.01;
+
+export function webSearchCost(response: any): number {
+  return (response?.usage?.server_tool_use?.web_search_requests || 0) * WEB_SEARCH_COST_USD;
+}
+
 /**
  * Session-scoped cost tracker.
  * Create one per plan-creation or fix session to aggregate costs.
@@ -78,7 +85,7 @@ export class CostTracker {
   /** Log a single API call's usage. Call after each messages.create(). */
   trackResponse(model: string, response: any, agentRole: string): void {
     const usage = extractUsage(response);
-    const cost = calculateCost(model, usage);
+    const cost = calculateCost(model, usage) + webSearchCost(response);
 
     this.totalUsage.input_tokens += usage.input_tokens;
     this.totalUsage.output_tokens += usage.output_tokens;

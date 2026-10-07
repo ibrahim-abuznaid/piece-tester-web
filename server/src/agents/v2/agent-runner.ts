@@ -4,7 +4,7 @@ import { ActivepiecesClient } from '../../services/ap-client.js';
 import { refreshMcpTokenIfNeeded } from '../../routes/settings.js';
 import { McpProxyClient, mcpToolToAnthropic } from './mcp-proxy-client.js';
 import { ToolRegistry } from './tool-registry.js';
-import { buildAnthropicClientOptions } from '../../services/anthropic-client.js';
+import { buildAnthropicClientOptions, type MessagesClient } from '../../services/anthropic-client.js';
 import { TERMINAL_TOOLS } from './tools/index.js';
 import type { AgentRunnerConfig, AgentRunnerResult, OnLogCallback, AgentRole, ToolContext } from './types.js';
 import { CostTracker } from './cost-tracker.js';
@@ -24,7 +24,8 @@ function applyMessageCacheBreakpoint(messages: Anthropic.Messages.MessageParam[]
     }
   }
   const last = messages[messages.length - 1];
-  if (!last) return;
+  // After a pause_turn the last message is the assistant's own turn; it is resent untouched.
+  if (!last || last.role !== 'user') return;
   if (Array.isArray(last.content)) {
     const lastBlock = last.content[last.content.length - 1] as any;
     if (lastBlock && typeof lastBlock === 'object') lastBlock.cache_control = CACHE_CONTROL;
@@ -91,14 +92,14 @@ export async function runAgentLoop(
   costTracker?: CostTracker,
 ): Promise<AgentRunnerResult> {
   const settings = getSettings();
-  if (!settings.anthropic_api_key) {
+  if (!config.client && !settings.anthropic_api_key) {
     throw new Error('Anthropic API key not configured. Go to Settings to add it.');
   }
 
   // Per-worker model override (config.model) wins, else the configured default.
   // Lets cheap, high-volume workers (research, verifier) run on a faster model.
   const model = config.model || settings.ai_model || 'claude-sonnet-4-6';
-  const client = new Anthropic(buildAnthropicClientOptions(settings.anthropic_api_key));
+  const client: MessagesClient = config.client ?? new Anthropic(buildAnthropicClientOptions(settings.anthropic_api_key));
   const { role, systemPrompt, maxIterations, toolNames, abortSignal, onLog } = config;
 
   function log(type: Parameters<OnLogCallback>[0]['type'], message: string, detail?: string) {
@@ -108,7 +109,7 @@ export async function runAgentLoop(
   // ── MCP setup ──────────────────────────────────────────────────────────────
   const hasMcpOAuth = !!settings.mcp_access_token;
   const hasMcpLegacy = !!settings.mcp_token && !!settings.project_id;
-  const mcpEnabled = hasMcpOAuth || hasMcpLegacy;
+  const mcpEnabled = !config.disableMcp && (hasMcpOAuth || hasMcpLegacy);
 
   const mcpUrl = hasMcpOAuth
     ? 'https://mcp.activepieces.com/mcp'
@@ -123,7 +124,8 @@ export async function runAgentLoop(
 
   // Local tools from registry + MCP tools combined
   const localTools = registry.getTools(toolNames);
-  let allTools: any[] = [...localTools];
+  const serverTools = config.serverTools ?? [];
+  let allTools: any[] = [...localTools, ...serverTools];
 
   if (mcpEnabled) {
     try {
@@ -136,7 +138,7 @@ export async function runAgentLoop(
 
       // Inject MCP tools as regular Anthropic tools
       const mcpAnthropicTools = mcpTools.map(mcpToolToAnthropic);
-      allTools = [...localTools, ...mcpAnthropicTools];
+      allTools = [...localTools, ...serverTools, ...mcpAnthropicTools];
 
       log('thinking', `[${role}] MCP mode active — ${hasMcpOAuth ? 'OAuth cloud MCP' : 'legacy project MCP'}. ${mcpTools.length} MCP tools loaded.`);
     } catch (err: any) {
@@ -198,6 +200,12 @@ export async function runAgentLoop(
       break;
     }
 
+    // A server tool (web_search) used up its per-turn budget; resend the turn as-is so the model carries on.
+    if (response.stop_reason === 'pause_turn') {
+      log('thinking', `[${role}] Server tool paused the turn — continuing.`);
+      continue;
+    }
+
     const toolUseBlocks = assistantContent.filter(
       (b: any): b is Anthropic.Messages.ToolUseBlock => b.type === 'tool_use',
     );
@@ -213,8 +221,14 @@ export async function runAgentLoop(
       checkAborted(abortSignal);
       const input = toolUse.input as Record<string, any>;
 
-      // Terminal tool — capture output and stop loop
+      // Terminal tool — capture output and stop loop, unless its validator rejects the input
       if (TERMINAL_TOOLS.has(toolUse.name as any)) {
+        const rejection = registry.validateTerminal(toolUse.name, input, toolCtx);
+        if (rejection) {
+          log('error', `[${role}] ${toolUse.name} rejected: ${rejection.slice(0, 300)}`);
+          toolResults.push({ type: 'tool_result', tool_use_id: toolUse.id, content: `Rejected. Fix these and call ${toolUse.name} again:\n${rejection}`, is_error: true });
+          continue;
+        }
         log('decision', `[${role}] Terminal tool: ${toolUse.name}`, JSON.stringify(input).slice(0, 500));
         terminalOutput = input;
         terminatedByTool = true;

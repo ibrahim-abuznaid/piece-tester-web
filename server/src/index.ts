@@ -6,6 +6,8 @@ import { getDb } from './db/schema.js';
 import { initScheduler } from './services/scheduler.js';
 import { initFlowReaper } from './services/flow-reaper.js';
 import { reconcileOrphanedRuns } from './db/queries.js';
+import { reconcileVendorWatch } from './db/vendor-watch-queries.js';
+import { initVendorWatch } from './services/vendor-watch/cron.js';
 import settingsRoutes from './routes/settings.js';
 import piecesRoutes from './routes/pieces.js';
 import connectionsRoutes from './routes/connections.js';
@@ -17,6 +19,7 @@ import coverageRoutes from './routes/coverage.js';
 import authRoutes from './routes/auth.js';
 import alertsRoutes from './routes/alerts.js';
 import bugTrendRoutes from './routes/bug-trend.js';
+import vendorWatchRoutes from './routes/vendor-watch.js';
 import { requireAuth, assertAuthConfig } from './middleware/auth.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -50,6 +53,7 @@ app.use('/api/batch-setup', batchSetupRoutes);
 app.use('/api/coverage', coverageRoutes);
 app.use('/api/alerts', alertsRoutes);
 app.use('/api/bug-trend', bugTrendRoutes);
+app.use('/api/vendor-watch', vendorWatchRoutes);
 
 // ── Serve React client in production ──
 const clientDist = path.resolve(__dirname, '../../dist/client');
@@ -91,8 +95,12 @@ function startBackgroundWork() {
   const resumed = resumeInterruptedBatches();
   if (resumed > 0) console.log(`[server] Resumed ${resumed} interrupted batch setup run(s)`);
 
+  const vw = reconcileVendorWatch();
+  if (vw.runs + vw.plans > 0) console.log(`[server] Vendor watch: closed ${vw.runs} interrupted run(s), ${vw.plans} interrupted generation(s)`);
+
   initScheduler();
   initFlowReaper();
+  initVendorWatch();
 }
 
 function startServer(port: number, retries = 3) {

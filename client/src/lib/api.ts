@@ -1043,6 +1043,152 @@ function subscribeBatchSetup(id: string, callbacks: BatchStreamCallbacks): Abort
   return controller;
 }
 
+// ── Vendor watch ──
+
+export type VwPlanStatus = 'generating' | 'active' | 'paused' | 'stale' | 'failed';
+export type VwSourceKind = 'liveness' | 'feed' | 'openapi' | 'html';
+export type VwFindingKind = 'vendor_dead' | 'breaking' | 'deprecation' | 'auth_change' | 'new_feature' | 'other';
+export type VwSeverity = 'critical' | 'high' | 'medium' | 'low';
+export type VwFindingStatus = 'new' | 'filed' | 'dismissed';
+export type VwImportance = 'high' | 'medium' | 'low';
+export type VwImportanceFilter = VwImportance | 'unrated';
+
+/** How much a piece matters: Cloud usage over all versions, or the Enterprise list. */
+export interface VwImportanceFields {
+  importance: VwImportance | null;
+  enterprise: number;
+  usage_projects: number | null;
+  usage_fetched_at: string | null;
+}
+
+export interface VwConfig {
+  enabled: number;
+  cron_expression: string;
+  timezone: string;
+  auto_file_enabled: number;
+  linear_team_key: string;
+  linear_label: string;
+  classifier_model: string;
+  dead_after_failures: number;
+  importance_high_min: number;
+  importance_medium_min: number;
+  enterprise_pieces: string;
+  updated_at: string;
+}
+
+export type VwConfigPatch = Partial<Omit<VwConfig, 'updated_at' | 'enterprise_pieces'>> & { enterprise_pieces?: string[] };
+
+export interface VwPlan {
+  id: number;
+  piece_name: string;
+  piece_version: string;
+  piece_display_name: string;
+  vendor_name: string;
+  api_base_urls: string;
+  api_version: string;
+  auth_type: string;
+  endpoint_inventory: string;
+  status: VwPlanStatus;
+  generation_note: string;
+  generation_cost_usd: number;
+  generated_at: string | null;
+  last_run_at: string | null;
+  created_at: string;
+  sources_total?: number;
+  sources_ok?: number;
+  sources_failing?: number;
+  open_findings?: number;
+}
+
+export interface VwSource {
+  id: number;
+  plan_id: number;
+  kind: VwSourceKind;
+  url: string;
+  label: string;
+  enabled: number;
+  last_checked_at: string | null;
+  last_ok_at: string | null;
+  last_changed_at: string | null;
+  consecutive_failures: number;
+  last_error: string;
+}
+
+export interface VwRun {
+  id: number;
+  plan_id: number;
+  trigger_type: 'baseline' | 'scheduled' | 'manual';
+  cycle_id: string | null;
+  status: 'running' | 'completed' | 'failed';
+  sources_checked: number;
+  sources_changed: number;
+  sources_failed: number;
+  findings_created: number;
+  cost_usd: number;
+  error: string;
+  started_at: string;
+  finished_at: string | null;
+}
+
+export interface VwFinding {
+  id: number;
+  plan_id: number;
+  piece_name: string;
+  source_id: number | null;
+  run_id: number | null;
+  kind: VwFindingKind;
+  severity: VwSeverity;
+  affects_piece: number;
+  affected_targets: string;
+  effective_date: string | null;
+  title: string;
+  summary: string;
+  suggested_action: string;
+  evidence_url: string;
+  evidence_excerpt: string;
+  evidence_verified: number;
+  is_baseline: number;
+  signature: string;
+  status: VwFindingStatus;
+  filed_by: 'auto' | 'manual' | null;
+  linear_issue_id: string | null;
+  linear_identifier: string | null;
+  linear_url: string | null;
+  file_error: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export type VwPlanListRow = VwPlan & VwImportanceFields;
+export type VwFindingListRow = VwFinding & VwImportanceFields;
+
+export interface VwFindingList {
+  findings: VwFindingListRow[];
+  counts: Record<VwImportanceFilter, number>;
+}
+
+export interface VwUsageRefresh {
+  running: boolean;
+  scope: 'watched' | 'catalog' | null;
+  done: number;
+  total: number;
+  started_at: string | null;
+  finished_at: string | null;
+  error: string;
+}
+
+export interface VwUsage {
+  pieces: Array<{ piece_name: string } & VwImportanceFields>;
+  summary: { rated: number; oldest_fetched_at: string | null; newest_fetched_at: string | null };
+  refresh: VwUsageRefresh;
+}
+
+export interface VwDraft {
+  draft: { title: string; description: string; priority: number };
+  mode: 'create' | 'comment';
+  existing: { linear_identifier: string; linear_url: string } | null;
+}
+
 export const api = {
   // Auth
   login: (password: string) => request<{ success: boolean }>('POST', '/auth/login', { password }),
@@ -1315,4 +1461,28 @@ export const api = {
     request<AiUsageRow[]>('GET', `/settings/ai-costs/session/${sessionId}`),
   getAiCostByPiece: (pieceName: string, limit = 50) =>
     request<AiUsageRow[]>('GET', `/settings/ai-costs/piece/${encodeURIComponent(pieceName)}?limit=${limit}`),
+
+  // Vendor watch
+  vwConfig: () => request<VwConfig>('GET', '/vendor-watch/config'),
+  vwUpdateConfig: (patch: VwConfigPatch) => request<VwConfig>('PUT', '/vendor-watch/config', patch),
+  vwTestLinear: () => request<{ ok: boolean; team: string; state: string; label: string }>('POST', '/vendor-watch/config/test-linear'),
+  vwPlans: () => request<VwPlanListRow[]>('GET', '/vendor-watch/plans'),
+  vwPlan: (id: number) => request<{ plan: VwPlan; sources: VwSource[]; runs: VwRun[] }>('GET', `/vendor-watch/plans/${id}`),
+  vwPlanByPiece: (pieceName: string) =>
+    request<(VwPlan & { open_findings: number }) | null>('GET', `/vendor-watch/plans/by-piece/${encodeURIComponent(pieceName)}`),
+  vwGenerate: (piece_name: string) => request<{ plan_id: number }>('POST', '/vendor-watch/plans/generate', { piece_name }),
+  vwGenerateBatch: (piece_names: string[]) => request<{ plan_ids: number[] }>('POST', '/vendor-watch/plans/generate-batch', { piece_names }),
+  vwRunPlan: (id: number) => request<{ run_id: number }>('POST', `/vendor-watch/plans/${id}/run`),
+  vwSetPlanStatus: (id: number, status: 'active' | 'paused') => request<VwPlan>('PATCH', `/vendor-watch/plans/${id}`, { status }),
+  vwDeletePlan: (id: number) => request<{ ok: true }>('DELETE', `/vendor-watch/plans/${id}`),
+  vwSetSourceEnabled: (id: number, enabled: boolean) => request<VwSource>('PATCH', `/vendor-watch/sources/${id}`, { enabled }),
+  vwRunCycle: () => request<{ started: boolean }>('POST', '/vendor-watch/run-cycle'),
+  vwFindings: (status: VwFindingStatus, piece?: string, importance: VwImportanceFilter[] = []) =>
+    request<VwFindingList>('GET', `/vendor-watch/findings?status=${status}${piece ? `&piece=${encodeURIComponent(piece)}` : ''}${importance.length ? `&importance=${importance.join(',')}` : ''}`),
+  vwFindingDraft: (id: number) => request<VwDraft>('GET', `/vendor-watch/findings/${id}/draft`),
+  vwFileFinding: (id: number, body: { title: string; description: string; priority: number }) =>
+    request<VwFinding>('POST', `/vendor-watch/findings/${id}/file`, body),
+  vwDismissFinding: (id: number) => request<VwFinding>('POST', `/vendor-watch/findings/${id}/dismiss`),
+  vwUsage: () => request<VwUsage>('GET', '/vendor-watch/usage'),
+  vwRefreshUsage: (scope: 'watched' | 'catalog') => request<{ started: boolean }>('POST', '/vendor-watch/usage/refresh', { scope }),
 };

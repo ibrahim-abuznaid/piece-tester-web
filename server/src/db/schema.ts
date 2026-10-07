@@ -522,4 +522,126 @@ function initTables(db: DatabaseAdapter): void {
       schedule_id INTEGER
     );
   `);
+
+  // Vendor watch (docs/superpowers/specs/2026-10-06-vendor-watch-design.md)
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS vendor_watch_config (
+      id INTEGER PRIMARY KEY CHECK (id = 1),
+      enabled INTEGER NOT NULL DEFAULT 0,
+      cron_expression TEXT NOT NULL DEFAULT '0 4 * * *',
+      timezone TEXT NOT NULL DEFAULT 'UTC',
+      auto_file_enabled INTEGER NOT NULL DEFAULT 0,
+      linear_team_key TEXT NOT NULL DEFAULT 'PIE',
+      linear_label TEXT NOT NULL DEFAULT 'vendor-watch',
+      classifier_model TEXT NOT NULL DEFAULT '',
+      dead_after_failures INTEGER NOT NULL DEFAULT 3,
+      updated_at TEXT DEFAULT (datetime('now'))
+    );
+    INSERT OR IGNORE INTO vendor_watch_config (id) VALUES (1);
+
+    CREATE TABLE IF NOT EXISTS watch_plans (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      piece_name TEXT NOT NULL UNIQUE,
+      piece_version TEXT NOT NULL DEFAULT '',
+      piece_display_name TEXT NOT NULL DEFAULT '',
+      vendor_name TEXT NOT NULL DEFAULT '',
+      api_base_urls TEXT NOT NULL DEFAULT '[]',
+      api_version TEXT NOT NULL DEFAULT '',
+      auth_type TEXT NOT NULL DEFAULT '',
+      endpoint_inventory TEXT NOT NULL DEFAULT '[]',
+      status TEXT NOT NULL DEFAULT 'generating',
+      generation_note TEXT NOT NULL DEFAULT '',
+      generation_cost_usd REAL NOT NULL DEFAULT 0,
+      generated_at TEXT,
+      last_run_at TEXT,
+      created_at TEXT DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS watch_sources (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      plan_id INTEGER NOT NULL REFERENCES watch_plans(id) ON DELETE CASCADE,
+      kind TEXT NOT NULL,
+      url TEXT NOT NULL,
+      label TEXT NOT NULL DEFAULT '',
+      enabled INTEGER NOT NULL DEFAULT 1,
+      last_checked_at TEXT,
+      last_ok_at TEXT,
+      last_changed_at TEXT,
+      consecutive_failures INTEGER NOT NULL DEFAULT 0,
+      last_error TEXT NOT NULL DEFAULT '',
+      UNIQUE(plan_id, url)
+    );
+
+    CREATE TABLE IF NOT EXISTS watch_snapshots (
+      source_id INTEGER PRIMARY KEY REFERENCES watch_sources(id) ON DELETE CASCADE,
+      content_hash TEXT NOT NULL,
+      content TEXT NOT NULL,
+      fetched_at TEXT DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS watch_runs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      plan_id INTEGER NOT NULL REFERENCES watch_plans(id) ON DELETE CASCADE,
+      trigger_type TEXT NOT NULL,
+      cycle_id TEXT,
+      status TEXT NOT NULL DEFAULT 'running',
+      sources_checked INTEGER NOT NULL DEFAULT 0,
+      sources_changed INTEGER NOT NULL DEFAULT 0,
+      sources_failed INTEGER NOT NULL DEFAULT 0,
+      findings_created INTEGER NOT NULL DEFAULT 0,
+      cost_usd REAL NOT NULL DEFAULT 0,
+      error TEXT NOT NULL DEFAULT '',
+      started_at TEXT DEFAULT (datetime('now')),
+      finished_at TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS vendor_findings (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      plan_id INTEGER NOT NULL REFERENCES watch_plans(id) ON DELETE CASCADE,
+      piece_name TEXT NOT NULL,
+      source_id INTEGER REFERENCES watch_sources(id) ON DELETE SET NULL,
+      run_id INTEGER REFERENCES watch_runs(id) ON DELETE SET NULL,
+      kind TEXT NOT NULL,
+      severity TEXT NOT NULL,
+      affects_piece INTEGER NOT NULL DEFAULT 0,
+      affected_targets TEXT NOT NULL DEFAULT '[]',
+      effective_date TEXT,
+      title TEXT NOT NULL,
+      summary TEXT NOT NULL DEFAULT '',
+      suggested_action TEXT NOT NULL DEFAULT '',
+      evidence_url TEXT NOT NULL DEFAULT '',
+      evidence_excerpt TEXT NOT NULL DEFAULT '',
+      evidence_verified INTEGER NOT NULL DEFAULT 0,
+      is_baseline INTEGER NOT NULL DEFAULT 0,
+      signature TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'new',
+      filed_by TEXT,
+      linear_issue_id TEXT,
+      linear_identifier TEXT,
+      linear_url TEXT,
+      file_error TEXT NOT NULL DEFAULT '',
+      created_at TEXT DEFAULT (datetime('now')),
+      updated_at TEXT DEFAULT (datetime('now')),
+      UNIQUE(piece_name, signature)
+    );
+  `);
+
+  // Vendor watch importance (docs/superpowers/specs/2026-10-07-vendor-watch-importance-design.md)
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS piece_usage (
+      piece_name TEXT PRIMARY KEY,
+      projects INTEGER NOT NULL,
+      versions INTEGER NOT NULL,
+      versions_failed INTEGER NOT NULL DEFAULT 0,
+      fetched_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+  `);
+  for (const [col, ddl] of [
+    ['importance_high_min',   `ALTER TABLE vendor_watch_config ADD COLUMN importance_high_min INTEGER NOT NULL DEFAULT 300`],
+    ['importance_medium_min', `ALTER TABLE vendor_watch_config ADD COLUMN importance_medium_min INTEGER NOT NULL DEFAULT 50`],
+    ['enterprise_pieces',     `ALTER TABLE vendor_watch_config ADD COLUMN enterprise_pieces TEXT NOT NULL DEFAULT '[]'`],
+  ] as const) {
+    const c = db.pragma(`table_info(vendor_watch_config)`) as { name: string }[];
+    if (!c.some(x => x.name === col)) db.exec(ddl);
+  }
 }

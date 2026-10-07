@@ -108,3 +108,34 @@ The verifier's ruling on a plan — PASS, FAIL, or PARTIAL.
 
 **Fix with AI**:
 The user-facing entry point that sends a failing plan to the fixer.
+
+### Vendor watch
+
+**Watch plan**:
+One per piece: the piece's endpoint inventory plus the sources to watch. The vendor-side counterpart of a test plan.
+_Avoid_: watcher config, monitor
+
+**Endpoint inventory**:
+The API calls a piece makes, per target: method + path, or `sdk:<package>#<method>` for SDK-based pieces.
+
+**Source**:
+One URL a watch plan checks. Kind: `liveness`, `feed`, `openapi` or `html`.
+
+**Snapshot**:
+The normalized content of a source from its last successful check. Only the latest is kept.
+
+**Watch run**:
+One check of one watch plan's sources. Trigger: `baseline`, `scheduled` or `manual`.
+
+**Watch cycle**:
+All watch runs fired by one firing of the vendor-watch cron (or "Run all now").
+_Avoid_: wave (that's test plan runs), sweep (that's the flow reaper)
+
+**Finding**:
+What a watch run concluded about one vendor change: kind, severity, the targets it hits, evidence.
+
+**Baseline**:
+The first check of a source. It records the snapshot and reports only still-open deprecations; baseline findings are never auto-filed.
+
+**Vendor Changes inbox**:
+Findings with status `new`, waiting for a person to file or dismiss.

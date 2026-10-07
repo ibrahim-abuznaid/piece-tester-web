@@ -21,14 +21,17 @@
     "cors": "^2.8.5",
     "dotenv": "^16.6.1",
     "express": "^4.21.0",
+    "fast-xml-parser": "^5.11.2",
     "html-to-image": "^1.11.13",
     "lucide-react": "^0.468.0",
     "node-cron": "^3.0.3",
+    "node-html-parser": "^9.0.4",
     "react": "^18.3.0",
     "react-dom": "^18.3.0",
     "react-router-dom": "^6.28.0",
     "recharts": "^3.10.1",
-    "tailwind-merge": "^2.6.0"
+    "tailwind-merge": "^2.6.0",
+    "yaml": "^2.9.1"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.12",

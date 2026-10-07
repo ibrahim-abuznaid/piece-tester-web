@@ -16,6 +16,7 @@ import BatchSetup from './pages/BatchSetup';
 /** Heavy pages load on first visit: the chart pages carry recharts and html-to-image, and PieceDetail is the largest page. */
 const Reports = lazy(() => import('./pages/Reports'));
 const BugTrend = lazy(() => import('./pages/BugTrend'));
+const VendorWatch = lazy(() => import('./pages/VendorWatch'));
 const PieceDetail = lazy(() => import('./pages/PieceDetail'));
 
 /** Shows the pages' usual loading line while a lazy page's chunk downloads, and a reload banner if it fails. */
@@ -63,6 +64,7 @@ export default function App() {
             <Route path="/schedules" element={<Schedules />} />
             <Route path="/reports" element={<LazyPage><Reports /></LazyPage>} />
             <Route path="/bug-trend" element={<LazyPage><BugTrend /></LazyPage>} />
+            <Route path="/vendor-watch" element={<LazyPage><VendorWatch /></LazyPage>} />
             <Route path="/batch-setup" element={<BatchSetup />} />
             <Route path="/settings" element={<Settings />} />
           </Route>
