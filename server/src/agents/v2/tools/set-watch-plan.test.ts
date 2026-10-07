@@ -71,6 +71,17 @@ describe('validateWatchPlan', () => {
     expect(check({ api_base_urls: [] }).errors[0]).toMatch(/at least one URL/);
     expect(check({ api_base_urls: ['ftp://acme.dev'] }).errors[0]).toMatch(/not an http\(s\) URL/);
   });
+
+  it('requires a fixed DNS host first, and lets later base URLs be per-account patterns', () => {
+    const templated = 'https://{subdomain}.zendesk.com/api/v2';
+    expect(check({ api_base_urls: [templated] }).errors).toEqual([
+      `api_base_urls[0]: "${templated}" is not a fixed host. Put a vendor-owned host that exists for every customer first (the public API host, or the vendor's main website for per-account or self-hosted products); per-account URLs can follow.`,
+    ]);
+    expect(check({ api_base_urls: ['https://zendesk.com', templated] }).errors).toEqual([]);
+    for (const bad of ['https://localhost', 'https://${shop}.myshopify.com/admin', 'https://%7Bsub%7D.freshdesk.com']) {
+      expect(check({ api_base_urls: [bad] }).errors).toEqual([expect.stringMatching(/^api_base_urls\[0\]: .* is not a fixed host\./)]);
+    }
+  });
 });
 
 describe('validateWatchPlan on malformed input', () => {

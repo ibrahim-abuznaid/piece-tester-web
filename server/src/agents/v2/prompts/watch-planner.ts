@@ -10,7 +10,7 @@ export const WATCH_PLANNER_SYSTEM_PROMPT = `You build a vendor WATCH PLAN for on
 
 ## Step 1 — Endpoint inventory
 Read the piece source: index.ts, the common/ helpers, every action and trigger. Record:
-- api_base_urls: the base URL(s) the piece calls. The first must be the main API host.
+- api_base_urls: the base URL(s) the piece calls. The first must be the main API host. It is the liveness check, so it must be a real hostname with no placeholders. If the host depends on the customer's account, region or install (subdomains, self-hosted), put the vendor's fixed public API host first, or the vendor's main website if there is none, then the per-account pattern (e.g. "https://www.zendesk.com", then "https://{subdomain}.zendesk.com/api/v2").
 - api_version and auth_type.
 - endpoint_inventory: for EVERY action and trigger, each HTTP call it makes, as method + path with {} for path parameters (e.g. "/v1/customers/{}") and WITHOUT the host. If the piece calls a vendor SDK instead of raw HTTP, use method "SDK" and path "sdk:<package>#<method>" (e.g. "sdk:@slack/web-api#chat.postMessage"). Skip the generic Custom API Call action.
 

@@ -32,6 +32,15 @@ function isHttpUrl(u: string): boolean {
   }
 }
 
+/** A concrete DNS name the liveness check can resolve: letters, digits and hyphens in dot-separated labels, no placeholders. */
+function hasFixedHost(u: string): boolean {
+  try {
+    return /^[a-z0-9-]+(\.[a-z0-9-]+)+\.?$/i.test(new URL(u).hostname);
+  } catch {
+    return false;
+  }
+}
+
 const isRecord = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v);
 const kindOf = (v: unknown): string => (v == null ? 'nothing' : Array.isArray(v) ? 'array' : typeof v);
 /** Strings and numbers as trimmed text; anything else is ''. Never calls a model-supplied toString. */
@@ -88,6 +97,10 @@ export function validateWatchPlan(draft: WatchPlanDraft, ctx: Pick<ToolContext, 
   const warnings: string[] = [];
   if (plan.api_base_urls.length === 0) errors.push('api_base_urls: add at least one URL (the liveness check uses the first).');
   for (const u of plan.api_base_urls) if (!isHttpUrl(u)) errors.push(`api_base_urls: "${u}" is not an http(s) URL.`);
+  const livenessUrl = plan.api_base_urls[0];
+  if (livenessUrl && isHttpUrl(livenessUrl) && !hasFixedHost(livenessUrl)) {
+    errors.push(`api_base_urls[0]: "${livenessUrl}" is not a fixed host. Put a vendor-owned host that exists for every customer first (the public API host, or the vendor's main website for per-account or self-hosted products); per-account URLs can follow.`);
+  }
   if (plan.sources.length === 0) errors.push('sources: add at least one feed, openapi or html source.');
   if (plan.sources.length > MAX_SOURCES) errors.push(`sources: at most ${MAX_SOURCES}, got ${plan.sources.length}.`);
   const seen = new Set<string>();
