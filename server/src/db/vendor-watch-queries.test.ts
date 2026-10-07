@@ -5,7 +5,7 @@ import {
   getPlan, listPlans, listRunnablePlans, setPlanStatus, markStalePlans, deletePlan,
   replaceSources, listSources, setSourceEnabled, recordSourceOk, recordSourceFailure, getSnapshot, saveSnapshot,
   createRun, finishRun, getRun, insertFinding, listFindings, countOpenFindings, markFindingFiled,
-  dismissFinding, findMergeTarget, targetsOverlap, reconcileVendorWatch,
+  dismissFinding, findMergeTarget, targetsOverlap, reconcileVendorWatch, queuePlanGeneration,
 } from './vendor-watch-queries.js';
 import { resetVendorWatch, samplePlanResult, sampleDraft } from './vendor-watch-test-utils.js';
 
@@ -51,6 +51,21 @@ describe('watch plans', () => {
     const again = beginPlanGeneration(a.piece_name);
     expect(again.id).toBe(a.id);
     expect(again.status).toBe('generating');
+  });
+
+  it('queues a new plan, and re-queues an existing one in place keeping its generated data', () => {
+    const q = queuePlanGeneration('@activepieces/piece-new');
+    expect(q).toMatchObject({ piece_name: '@activepieces/piece-new', status: 'queued', generated_at: null });
+    expect(listRunnablePlans()).toEqual([]);
+
+    const a = activePlan();
+    failPlanGeneration(beginPlanGeneration(a.piece_name).id, 'old note');
+    const again = queuePlanGeneration(a.piece_name);
+    expect(again).toMatchObject({
+      id: a.id, status: 'queued', generation_note: '', piece_display_name: 'Acme', piece_version: '0.5.0',
+      api_base_urls: a.api_base_urls, endpoint_inventory: a.endpoint_inventory, generated_at: a.generated_at,
+    });
+    expect(beginPlanGeneration(a.piece_name)).toMatchObject({ id: a.id, status: 'generating' });
   });
 
   it('marks a first failed generation failed, and a failed regeneration stale', () => {
@@ -238,5 +253,19 @@ describe('reconcileVendorWatch', () => {
     expect(getPlan(a.id)!.status).toBe('stale');
     expect(getPlan(fresh.id)!.status).toBe('failed');
     expect(getPlan(fresh.id)!.generation_note).toBe('interrupted by restart');
+  });
+
+  it('fails plans that were still queued, alongside interrupted generations', () => {
+    const a = activePlan('@activepieces/piece-a');
+    queuePlanGeneration(a.piece_name);
+    const fresh = queuePlanGeneration('@activepieces/piece-fresh');
+    const generating = beginPlanGeneration('@activepieces/piece-generating');
+    const untouched = activePlan('@activepieces/piece-b');
+    expect(reconcileVendorWatch()).toEqual({ runs: 0, plans: 3 });
+    for (const id of [a.id, fresh.id]) {
+      expect(getPlan(id)).toMatchObject({ status: 'failed', generation_note: 'interrupted by restart (was queued)' });
+    }
+    expect(getPlan(generating.id)).toMatchObject({ status: 'failed', generation_note: 'interrupted by restart' });
+    expect(getPlan(untouched.id)!.status).toBe('active');
   });
 });

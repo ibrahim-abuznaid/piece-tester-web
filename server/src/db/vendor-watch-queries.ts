@@ -202,6 +202,16 @@ export function beginPlanGeneration(pieceName: string): WatchPlanRow {
   return getPlanByPiece(pieceName)!;
 }
 
+/** Like beginPlanGeneration, but the plan waits in the generation queue (`queued`) until its turn. */
+export function queuePlanGeneration(pieceName: string): WatchPlanRow {
+  getDb().run(
+    `INSERT INTO watch_plans (piece_name, status) VALUES (?, 'queued')
+     ON CONFLICT(piece_name) DO UPDATE SET status = 'queued', generation_note = ''`,
+    [pieceName],
+  );
+  return getPlanByPiece(pieceName)!;
+}
+
 export function completePlanGeneration(planId: number, r: PlanResult): WatchPlanRow {
   getDb().run(
     `UPDATE watch_plans SET piece_version = ?, piece_display_name = ?, vendor_name = ?, api_base_urls = ?,
@@ -509,18 +519,25 @@ export function findMergeTarget(pieceName: string, kind: FindingKind, targets: s
 
 // ── Boot ──
 
-/** Close runs and generations a restart interrupted. A regeneration falls back to stale, a first one to failed. */
+/**
+ * Close runs and generations a restart interrupted. A regeneration falls back to stale, a first one to failed.
+ * The generation queue lives in memory, so plans still waiting in it are failed too.
+ */
 export function reconcileVendorWatch(): { runs: number; plans: number } {
   const runs = getDb().run(
     `UPDATE watch_runs SET status = 'failed', error = 'interrupted by restart', finished_at = datetime('now')
      WHERE status = 'running'`,
   ).changes;
-  const plans = getDb().run(
+  const generating = getDb().run(
     `UPDATE watch_plans SET status = CASE WHEN generated_at IS NULL THEN 'failed' ELSE 'stale' END,
        generation_note = 'interrupted by restart'
      WHERE status = 'generating'`,
   ).changes;
-  return { runs, plans };
+  const queued = getDb().run(
+    `UPDATE watch_plans SET status = 'failed', generation_note = 'interrupted by restart (was queued)'
+     WHERE status = 'queued'`,
+  ).changes;
+  return { runs, plans: generating + queued };
 }
 
 // ── Piece importance ──

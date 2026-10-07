@@ -1,14 +1,18 @@
 import {
-  beginPlanGeneration, completePlanGeneration, failPlanGeneration, getPlan, getPlanByPiece, replaceSources,
-  type SourceInput, type WatchPlanRow,
+  beginPlanGeneration, completePlanGeneration, failPlanGeneration, getPlan, getPlanByPiece, queuePlanGeneration,
+  replaceSources, type SourceInput, type WatchPlanRow,
 } from '../../db/vendor-watch-queries.js';
 import { CostTracker } from '../../agents/v2/cost-tracker.js';
 import { runWatchPlannerWorker } from '../../agents/v2/workers/watch-planner.js';
 import type { PieceMetadataFull } from '../ap-client.js';
-import { submitPieceUnit } from '../batch-scheduler.js';
+import { githubRateLimitHitsSince } from '../github-api.js';
 import { createClient } from '../test-engine.js';
+import { enqueueGeneration } from './generation-queue.js';
 import { startWatchRun } from './runner.js';
 import type { SourceKind } from './types.js';
+
+const GITHUB_LIMIT_NOTE =
+  'GitHub rate limit was hit while reading the piece source; action files may be missing. Add a GitHub token in Settings and regenerate.';
 
 export interface GenerateDeps {
   getPieceMetadata: (name: string) => Promise<PieceMetadataFull>;
@@ -30,6 +34,7 @@ function defaultDeps(): GenerateDeps {
 export async function generateWatchPlan(pieceName: string, deps: Partial<GenerateDeps> = {}): Promise<WatchPlanRow> {
   const d: GenerateDeps = { ...defaultDeps(), ...deps };
   const plan = beginPlanGeneration(pieceName);
+  const startedAt = Date.now();
   const tracker = new CostTracker({ pieceName, actionName: '', operation: 'vendor_watch_generate', version: 'vendor-watch-1' });
   const agentErrors: string[] = [];
   try {
@@ -53,7 +58,8 @@ export async function generateWatchPlan(pieceName: string, deps: Partial<Generat
       api_version: p.api_version,
       auth_type: p.auth_type,
       endpoint_inventory: p.endpoint_inventory,
-      generation_note: [p.note, ...result.warnings].filter(Boolean).join('\n'),
+      generation_note: [p.note, ...result.warnings, githubRateLimitHitsSince(startedAt) ? GITHUB_LIMIT_NOTE : '']
+        .filter(Boolean).join('\n'),
       generation_cost_usd: cost,
     });
     const sources: SourceInput[] = [
@@ -68,19 +74,28 @@ export async function generateWatchPlan(pieceName: string, deps: Partial<Generat
   }
 }
 
-/** Queue generation for many pieces on the shared AI concurrency cap. Returns the plan ids at once. */
+/**
+ * Put one piece in the generation queue, marking its plan queued. A plan already queued or generating keeps its
+ * place. When the job's turn comes, a plan that was deleted or is no longer queued is skipped.
+ */
+function queueGeneration(pieceName: string, deps: Partial<GenerateDeps>, front: boolean): number {
+  const existing = getPlanByPiece(pieceName);
+  if (existing?.status === 'generating' || existing?.status === 'queued') return existing.id;
+  const plan = queuePlanGeneration(pieceName);
+  enqueueGeneration(pieceName, async () => {
+    if (getPlan(plan.id)?.status !== 'queued') return;
+    await generateWatchPlan(pieceName, deps);
+  }, { front });
+  return plan.id;
+}
+
+/** Queue generation for many pieces; they run one at a time on the Vendor Watch queue. Returns the plan ids at once. */
 export function generateWatchPlansInBackground(pieceNames: string[], deps: Partial<GenerateDeps> = {}): number[] {
-  const batchId = `vw-${Date.now()}`;
-  const ids: number[] = [];
-  for (const name of new Set(pieceNames.map(n => n.trim()).filter(Boolean))) {
-    const existing = getPlanByPiece(name);
-    if (existing?.status === 'generating') {
-      ids.push(existing.id);
-      continue;
-    }
-    ids.push(beginPlanGeneration(name).id);
-    submitPieceUnit(batchId, async () => { await generateWatchPlan(name, deps); })
-      .catch(err => console.error(`[vendor-watch] generating ${name} failed: ${err?.message || err}`));
-  }
-  return ids;
+  const names = new Set(pieceNames.map(n => n.trim()).filter(Boolean));
+  return [...names].map(name => queueGeneration(name, deps, false));
+}
+
+/** Queue one piece (a Generate watcher click) ahead of any batch still waiting. Returns its plan id at once. */
+export function generateWatchPlanInBackground(pieceName: string, deps: Partial<GenerateDeps> = {}): number {
+  return queueGeneration(pieceName.trim(), deps, true);
 }

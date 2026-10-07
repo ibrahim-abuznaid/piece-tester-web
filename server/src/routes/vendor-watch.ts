@@ -10,13 +10,14 @@ import { LinearError } from '../services/bug-trend/linear-client.js';
 import { parseConfigPatch } from '../services/vendor-watch/config.js';
 import { isCycleRunning, reloadVendorWatch, runWatchCycle } from '../services/vendor-watch/cron.js';
 import { fileFinding, FilingInProgressError, previewFiling } from '../services/vendor-watch/filing.js';
-import { generateWatchPlansInBackground } from '../services/vendor-watch/generate.js';
+import { generateWatchPlanInBackground, generateWatchPlansInBackground } from '../services/vendor-watch/generate.js';
+import { getGenerationQueueState } from '../services/vendor-watch/generation-queue.js';
 import { clearLinearTargetCache, resolveLinearTargets } from '../services/vendor-watch/linear-filer.js';
 import { startWatchRun } from '../services/vendor-watch/runner.js';
 import { ensureWatchedUsage, getUsageRefreshState, refreshPieceUsage } from '../services/vendor-watch/piece-usage.js';
 
 const router = Router();
-const MAX_BATCH = 100;
+const MAX_BATCH = 300;
 const FINDING_STATUSES: FindingStatus[] = ['new', 'filed', 'dismissed'];
 const NO_ANTHROPIC_KEY = 'Anthropic API key not configured. Go to Settings to add it.';
 
@@ -79,8 +80,7 @@ router.post('/plans/generate', (req, res) => {
   const name = typeof req.body?.piece_name === 'string' ? req.body.piece_name.trim() : '';
   if (!name) { res.status(400).json({ error: 'piece_name is required' }); return; }
   if (!getSettings().anthropic_api_key) { res.status(400).json({ error: NO_ANTHROPIC_KEY }); return; }
-  const [plan_id] = generateWatchPlansInBackground([name]);
-  res.status(202).json({ plan_id });
+  res.status(202).json({ plan_id: generateWatchPlanInBackground(name) });
 });
 
 router.post('/plans/generate-batch', (req, res) => {
@@ -93,11 +93,15 @@ router.post('/plans/generate-batch', (req, res) => {
   res.status(202).json({ plan_ids: generateWatchPlansInBackground(names) });
 });
 
+router.get('/generation-queue', (_req, res) => {
+  res.json(getGenerationQueueState());
+});
+
 router.post('/plans/:id/run', (req, res) => {
   const id = idParam(req.params.id);
   const plan = id ? getPlan(id) : undefined;
   if (!plan) { res.status(404).json({ error: 'Watch plan not found' }); return; }
-  if (plan.status === 'generating' || plan.status === 'failed') {
+  if (plan.status === 'queued' || plan.status === 'generating' || plan.status === 'failed') {
     res.status(409).json({ error: `Plan is ${plan.status}; generate it first` });
     return;
   }
@@ -112,7 +116,7 @@ router.patch('/plans/:id', (req, res) => {
   if (status !== 'active' && status !== 'paused') { res.status(400).json({ error: "status must be 'active' or 'paused'" }); return; }
   const plan = id ? getPlan(id) : undefined;
   if (!plan) { res.status(404).json({ error: 'Watch plan not found' }); return; }
-  if (plan.status === 'generating') { res.status(409).json({ error: 'Plan is generating' }); return; }
+  if (plan.status === 'queued' || plan.status === 'generating') { res.status(409).json({ error: `Plan is ${plan.status}` }); return; }
   res.json(setPlanStatus(plan.id, status));
 });
 
