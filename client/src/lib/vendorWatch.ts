@@ -171,12 +171,13 @@ export function addUpTo(current: string[], add: string[], max: number): string[]
 const EST_USD_PER_WATCHER = 0.35;
 const EST_MINUTES_PER_WATCHER = 1.5;
 
-/** "230 selected · about $81 · runs one at a time, about 6 h" */
+/** "230 selected · about $81 · runs one at a time, about 6 h"; cents under $10, minutes under an hour. */
 export function generationEstimate(n: number): string {
   if (n === 0) return '0 selected';
+  const usd = n * EST_USD_PER_WATCHER;
   const minutes = n * EST_MINUTES_PER_WATCHER;
   const time = minutes < 60 ? `${Math.ceil(minutes)} min` : `${Math.ceil(minutes / 60)} h`;
-  return `${n} selected · about $${Math.round(n * EST_USD_PER_WATCHER)} · runs one at a time, about ${time}`;
+  return `${n} selected · about $${usd.toFixed(usd < 10 ? 2 : 0)} · runs one at a time, about ${time}`;
 }
 
 /** A pasted list (one per line, or comma/semicolon separated) → catalog names, plus the entries the catalog doesn't have, as typed. */
@@ -185,7 +186,9 @@ export function parsePieceList(text: string, knownNames: Set<string>): { names: 
   const unknown: string[] = [];
   const seen = new Set<string>();
   for (const entry of text.split(/[\n,;]/).map(s => s.trim()).filter(Boolean)) {
-    const name = entry.startsWith('@') || entry.includes('/') ? entry : `@activepieces/piece-${entry.toLowerCase().replace(/\s+/g, '-')}`;
+    const name = entry.startsWith('@') || entry.includes('/')
+      ? entry
+      : `@activepieces/piece-${entry.toLowerCase().replace(/\s+/g, '-').replace(/^piece-/, '')}`;
     if (seen.has(name)) continue;
     seen.add(name);
     if (knownNames.has(name)) names.push(name);

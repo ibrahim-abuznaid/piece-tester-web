@@ -159,9 +159,12 @@ describe('bulk selection helpers', () => {
     expect(addUpTo(['a', 'b', 'c'], ['d'], 2)).toEqual(['a', 'b', 'c']);
   });
 
-  it('estimates cost and time for a batch, in minutes under an hour', () => {
+  it('estimates cost and time for a batch, in minutes under an hour and cents under $10', () => {
     expect(generationEstimate(0)).toBe('0 selected');
-    expect(generationEstimate(1)).toBe('1 selected · about $0 · runs one at a time, about 2 min');
+    expect(generationEstimate(1)).toBe('1 selected · about $0.35 · runs one at a time, about 2 min');
+    expect(generationEstimate(10)).toBe('10 selected · about $3.50 · runs one at a time, about 15 min');
+    expect(generationEstimate(28)).toBe('28 selected · about $9.80 · runs one at a time, about 42 min');
+    expect(generationEstimate(29)).toBe('29 selected · about $10 · runs one at a time, about 44 min');
     expect(generationEstimate(39)).toBe('39 selected · about $14 · runs one at a time, about 59 min');
     expect(generationEstimate(40)).toBe('40 selected · about $14 · runs one at a time, about 1 h');
     expect(generationEstimate(230)).toBe('230 selected · about $81 · runs one at a time, about 6 h');
@@ -177,6 +180,13 @@ describe('parsePieceList', () => {
   it('splits on newlines, commas and semicolons, maps short names and keeps scoped names', () => {
     expect(parsePieceList('Salesforce\n Google Sheets ,zoho-crm;@acme/piece-internal', known)).toEqual({
       names: ['@activepieces/piece-salesforce', '@activepieces/piece-google-sheets', '@activepieces/piece-zoho-crm', '@acme/piece-internal'],
+      unknown: [],
+    });
+  });
+
+  it('strips a leading "piece-" from a short name', () => {
+    expect(parsePieceList('piece-salesforce\nPiece-Zoho CRM', known)).toEqual({
+      names: ['@activepieces/piece-salesforce', '@activepieces/piece-zoho-crm'],
       unknown: [],
     });
   });
