@@ -59,7 +59,7 @@ function redactKey(message: string, apiKey: string): string {
 }
 
 /** Personal API keys go in Authorization as-is (no Bearer). Error messages never include the key. */
-async function linearQuery<T>(apiKey: string, query: string, variables: Record<string, unknown> = {}): Promise<T> {
+export async function linearQuery<T>(apiKey: string, query: string, variables: Record<string, unknown> = {}): Promise<T> {
   let res;
   try {
     res = await axios.post(LINEAR_GRAPHQL_URL, { query, variables }, {
