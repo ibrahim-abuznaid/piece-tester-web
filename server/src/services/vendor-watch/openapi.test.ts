@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { parseSpec, isOpenApiDoc, normalizePath, buildOpMap, diffOpenApi, normalizeOpenApi, parseOpMap, type OpMap } from './openapi.js';
-import { pathsMatch, resolveEntry, targetsUsingOp } from './endpoint-match.js';
+import { matchDistance, pathsMatch, resolveEntry, targetsUsingOp } from './endpoint-match.js';
 import { openApiFindings, openApiBaselineFindings } from './openapi-findings.js';
 import type { EndpointRef } from './types.js';
 
@@ -135,6 +135,8 @@ describe('endpoint matching', () => {
     expect(targetsUsingOp([entry], 'GET /v1/customers/{}/sources/{}', ops)).toEqual([]);
     expect(resolveEntry(entry, opsOf('GET /v1/sources/{}', 'GET /v2/sources/{}'))).toEqual(['GET /v1/sources/{}', 'GET /v2/sources/{}']);
     expect(resolveEntry({ ...entry, method: 'SDK', path: 'sdk:@acme/sdk#sources.get' }, ops)).toEqual([]);
+    expect(matchDistance(entry, ops)).toBe(1);
+    expect(matchDistance(entry, opsOf('GET /v1/sources/{}/items'))).toBe(Infinity);
   });
 });
 
@@ -167,10 +169,23 @@ describe('openApiFindings', () => {
     expect(f.map(x => [x.kind, x.affected_targets, x.signature])).toEqual([['other', [], 'other|deprecated|GET /issues']]);
   });
 
+  it('still reports a removed nested op as breaking when only a shorter op with the same tail survives', () => {
+    const [prev, next] = [opsOf('GET /issues', 'GET /repos/{}/{}/issues'), opsOf('GET /issues')];
+    const inv: EndpointRef[] = [{ target: 'list_repo_issues', target_kind: 'action', method: 'GET', path: '/repos/${owner}/${repo}/issues' }];
+    const f = openApiFindings(diffOpenApi(prev, next), inv, 'u', prev, next);
+    expect(f.map(x => [x.kind, x.severity, x.affected_targets, x.signature])).toEqual([
+      ['breaking', 'high', ['list_repo_issues'], 'breaking|GET /repos/{}/{}/issues'],
+    ]);
+  });
+
   it('does not report a base-path move as a removal for a target that still resolves in the new spec', () => {
     const [prev, next] = [opsOf('GET /orders'), opsOf('GET /v1/orders')];
     const f = openApiFindings(diffOpenApi(prev, next), inventory, 'u', prev, next);
     expect(f.map(x => [x.kind, x.affected_targets])).toEqual([['other', []], ['new_feature', []]]);
+    const [tiedPrev, tiedNext] = [opsOf('GET /v1/sources/{}', 'GET /v2/sources/{}'), opsOf('GET /v2/sources/{}')];
+    const inv: EndpointRef[] = [{ target: 'get_source', target_kind: 'action', method: 'GET', path: '/sources/{id}' }];
+    const tied = openApiFindings(diffOpenApi(tiedPrev, tiedNext), inv, 'u', tiedPrev, tiedNext);
+    expect(tied.map(x => [x.kind, x.affected_targets])).toEqual([['other', []]]);
   });
 
   it('on baseline, reports only deprecated operations the piece still calls', () => {

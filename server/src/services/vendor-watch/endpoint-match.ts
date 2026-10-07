@@ -21,22 +21,30 @@ export function pathsMatch(a: string, b: string): boolean {
   return short.every((s, i) => s === tail[i]);
 }
 
+function closest(entry: EndpointRef, ops: OpMap): { keys: string[]; distance: number } {
+  const method = entry.method.toUpperCase();
+  const path = normalizePath(entry.path);
+  const want = segments(path).length;
+  const scored = Object.keys(ops).flatMap(k => {
+    const [m, p] = splitOp(k);
+    return m === method && pathsMatch(path, p) ? [{ k, d: Math.abs(segments(p).length - want) }] : [];
+  });
+  const distance = Math.min(...scored.map(s => s.d));
+  return { keys: scored.filter(s => s.d === distance).map(s => s.k), distance };
+}
+
 /**
  * The op(s) in `ops` an inventory entry calls: among same-method ops whose path matches, the ones whose
  * segment count is closest to the entry's, all of them on a tie. A match with the same segment count is
  * the exact normalized path, so an exact match always wins outright. SDK entries never match.
  */
 export function resolveEntry(entry: EndpointRef, ops: OpMap): string[] {
-  const method = entry.method.toUpperCase();
-  const path = normalizePath(entry.path);
-  const candidates = Object.keys(ops).filter(k => {
-    const [m, p] = splitOp(k);
-    return m === method && pathsMatch(path, p);
-  });
-  const want = segments(path).length;
-  const distance = (k: string) => Math.abs(segments(splitOp(k)[1]).length - want);
-  const best = Math.min(...candidates.map(distance));
-  return candidates.filter(k => distance(k) === best);
+  return closest(entry, ops).keys;
+}
+
+/** Segment-count distance between an entry and the op(s) `resolveEntry` picks; Infinity when nothing matches. */
+export function matchDistance(entry: EndpointRef, ops: OpMap): number {
+  return closest(entry, ops).distance;
 }
 
 /** Inventory targets with an entry that resolves to `op` within `ops` (see `resolveEntry`). */

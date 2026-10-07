@@ -1,5 +1,5 @@
 import { sha1 } from './normalize.js';
-import { resolveEntry, targetsUsingOp } from './endpoint-match.js';
+import { matchDistance, targetsUsingOp } from './endpoint-match.js';
 import type { OpenApiDiff, OpMap } from './openapi.js';
 import type { EndpointRef, FindingDraft, FindingKind, Severity } from './types.js';
 
@@ -20,16 +20,17 @@ const who = (targets: string[]) => targets.map(t => `\`${t}\``).join(', ');
 
 /**
  * Deterministic findings from a spec diff. Changes to operations the piece calls are high; the rest are low.
- * Removed ops resolve against `prev`, and only entries that resolve to nothing in `next` count, so a
- * base-path move is not a removal. Everything else resolves against `next`.
+ * Removed ops resolve against `prev` and count only for entries whose best match in `next` is farther than
+ * in `prev` (or gone): a base-path move is not a removal, but losing a nested op to a shorter one with the
+ * same tail is. Everything else resolves against `next`.
  */
 export function openApiFindings(
   diff: OpenApiDiff, inventory: EndpointRef[], sourceUrl: string, prev: OpMap, next: OpMap,
 ): FindingDraft[] {
   const out: FindingDraft[] = [];
-  const gone = inventory.filter(e => resolveEntry(e, next).length === 0);
+  const lost = inventory.filter(e => matchDistance(e, next) > matchDistance(e, prev));
   for (const op of diff.removed) {
-    const t = targetsUsingOp(gone, op, prev);
+    const t = targetsUsingOp(lost, op, prev);
     out.push(t.length
       ? finding('breaking', 'high', t, `Endpoint removed: ${op}`,
         `The vendor's OpenAPI spec no longer has ${op}, which ${who(t)} call.`,
