@@ -1,5 +1,7 @@
 import { collapseWhitespace, sha1 } from './normalize.js';
-import { FINDING_KINDS, SEVERITIES, type FindingDraft, type FindingKind, type Severity, type SourceKind } from './types.js';
+import {
+  FINDING_KINDS, SEVERITIES, type EndpointRef, type FindingDraft, type FindingKind, type Severity, type SourceKind,
+} from './types.js';
 
 const MIN_EXCERPT_CHARS = 12;
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -80,6 +82,16 @@ export function shouldAutoFile(
   if (!BREAKAGE.has(f.kind) || f.affected_targets.length === 0) return false;
   if (f.severity !== 'critical' && f.severity !== 'high') return false;
   return f.evidence_verified || sourceKind === 'openapi';
+}
+
+/** A plan's stored `endpoint_inventory` JSON; [] when it is empty, malformed or not a list. */
+export function parseInventory(json: string): EndpointRef[] {
+  try {
+    const v = JSON.parse(json || '[]');
+    return Array.isArray(v) ? v : [];
+  } catch {
+    return [];
+  }
 }
 
 export function vendorDeadFinding(host: string, detail: string, failures: number, isBaseline: boolean, sourceUrl: string): FindingDraft {

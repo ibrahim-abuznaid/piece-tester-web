@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { validateClassifierFindings, shouldAutoFile, vendorDeadFinding, classifierSignature } from './findings.js';
+import { validateClassifierFindings, shouldAutoFile, vendorDeadFinding, classifierSignature, parseInventory } from './findings.js';
 import { sampleDraft } from '../../db/vendor-watch-test-utils.js';
 
 const text = 'Heads up!\n## 2026-09-01\n- The   Messages v1 API will be REMOVED on 2027-01-31. Please migrate to v2.';
@@ -90,5 +90,15 @@ describe('vendorDeadFinding', () => {
     const f = vendorDeadFinding('api.acme.dev', 'DNS: api.acme.dev not found', 3, false, 'https://api.acme.dev/v1');
     expect(f).toMatchObject({ kind: 'vendor_dead', severity: 'critical', affected_targets: ['*'], signature: 'vendor_dead|api.acme.dev', evidence_verified: true, is_baseline: false });
     expect(f.summary).toContain('3 time(s) in a row');
+  });
+});
+
+describe('parseInventory', () => {
+  it('reads a stored inventory and falls back to [] for anything else', () => {
+    const inv = [{ target: 'send_message', target_kind: 'action', method: 'POST', path: '/v1/messages' }];
+    expect(parseInventory(JSON.stringify(inv))).toEqual(inv);
+    expect(parseInventory('')).toEqual([]);
+    expect(parseInventory('{not json')).toEqual([]);
+    expect(parseInventory('{"target":"x"}')).toEqual([]);
   });
 });
