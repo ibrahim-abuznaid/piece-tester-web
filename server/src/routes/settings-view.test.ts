@@ -27,6 +27,7 @@ const raw = {
   batch_concurrency: 3,
   linear_api_key: 'lin_api_SUPERSECRETLINEARKEY1234567890abcd',
   bug_trend_roster: '[{"id":"u-kishan","name":"Kishan Parmar"}]',
+  github_token: 'github_pat_SUPERSECRETGITHUBTOKEN1234567890wxyz',
 };
 
 describe('maskedSettings', () => {
@@ -95,6 +96,21 @@ describe('maskedSettings', () => {
     const out = maskedSettings({ ...raw, linear_api_key: '' }) as any;
     expect(out.has_linear_api_key).toBe(false);
     expect(out.linear_api_key_masked).toBe('');
+  });
+  it('exposes the GitHub token as presence + mask, never raw', () => {
+    const out = maskedSettings(raw) as any;
+    expect(out.has_github_token).toBe(true);
+    expect(out.github_token).toBeUndefined();
+    expect(JSON.stringify(out)).not.toContain('SUPERSECRETGITHUBTOKEN');
+    expect(out.github_token_masked).toBe('gith...wxyz');
+  });
+  it('reports no GitHub token when it is empty, and bullets a short one', () => {
+    const none = maskedSettings({ ...raw, github_token: '' }) as any;
+    expect(none.has_github_token).toBe(false);
+    expect(none.github_token_masked).toBe('');
+    const short = maskedSettings({ ...raw, github_token: 'ghp_shortone' }) as any;
+    expect(short.github_token_masked).toBe('••••••');
+    expect(JSON.stringify(short)).not.toContain('ghp_shortone');
   });
   it('returns the bug trend roster parsed, and [] when the stored value is unreadable', () => {
     expect((maskedSettings(raw) as any).bug_trend_roster).toEqual([{ id: 'u-kishan', name: 'Kishan Parmar' }]);

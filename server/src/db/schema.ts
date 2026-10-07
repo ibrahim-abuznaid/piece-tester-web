@@ -133,6 +133,14 @@ function initTables(db: DatabaseAdapter): void {
     if (!c.some(x => x.name === col)) db.exec(ddl);
   }
 
+  // Migration: optional GitHub token for reading piece source (lifts the 60/hour limit)
+  for (const [col, ddl] of [
+    ['github_token', `ALTER TABLE settings ADD COLUMN github_token TEXT NOT NULL DEFAULT ''`],
+  ] as const) {
+    const c = db.pragma(`table_info(settings)`) as { name: string }[];
+    if (!c.some(x => x.name === col)) db.exec(ddl);
+  }
+
   // Migration: add ai_config_meta column to piece_connections if missing
   const connCols = db.pragma(`table_info(piece_connections)`) as { name: string }[];
   // (table may not exist yet — the CREATE TABLE below creates it; run migration only if table exists)

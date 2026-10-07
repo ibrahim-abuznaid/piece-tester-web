@@ -1,5 +1,8 @@
 import axios from 'axios';
 import type { ToolDefinition, ToolContext } from '../types.js';
+import { githubApiGet, GitHubRateLimitError } from '../../../services/github-api.js';
+
+const RATE_LIMIT_NOTE = 'GitHub API rate limit reached: the action files under src/lib/actions were not read.';
 
 export async function fetchPieceSourceFromGitHub(pieceName: string): Promise<string | null> {
   const shortName = pieceName.replace('@activepieces/piece-', '');
@@ -13,10 +16,11 @@ export async function fetchPieceSourceFromGitHub(pieceName: string): Promise<str
     } catch { /* not found */ }
   }
 
+  let rateLimited = false;
   try {
-    const apiResp = await axios.get(
+    const apiResp = await githubApiGet(
       `https://api.github.com/repos/activepieces/activepieces/contents/packages/pieces/community/${shortName}/src/lib/actions`,
-      { timeout: 10000, headers: { Accept: 'application/vnd.github.v3+json' } },
+      { timeout: 10000 },
     );
     if (Array.isArray(apiResp.data)) {
       const actionFiles = apiResp.data.filter((f: any) => f.name.endsWith('.ts') || f.name.endsWith('.js')).slice(0, 15);
@@ -27,7 +31,10 @@ export async function fetchPieceSourceFromGitHub(pieceName: string): Promise<str
         } catch { /* skip */ }
       }
     }
-  } catch { /* no action files directory */ }
+  } catch (err) {
+    // A missing actions directory is normal; a rate-limit hit is not, so say so in the output.
+    if (err instanceof GitHubRateLimitError) rateLimited = true;
+  }
 
   for (const helperPath of ['src/lib/common/props.ts', 'src/lib/common/index.ts', 'src/lib/common.ts', 'src/lib/common/common.ts']) {
     try {
@@ -36,6 +43,7 @@ export async function fetchPieceSourceFromGitHub(pieceName: string): Promise<str
     } catch { /* not found */ }
   }
 
+  if (rateLimited) files.push({ path: 'NOTE', content: RATE_LIMIT_NOTE });
   if (files.length === 0) return null;
   return files.map(f => `=== ${f.path} ===\n${f.content}`).join('\n\n');
 }

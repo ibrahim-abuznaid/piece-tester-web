@@ -30,6 +30,7 @@ export interface SettingsForView {
   jwt_auth_status: string;
   linear_api_key: string;
   bug_trend_roster: string;
+  github_token: string;
 }
 
 /** Mask a secret as head…tail, but only when it is long enough that the
@@ -83,5 +84,7 @@ export function maskedSettings(s: SettingsForView) {
     has_linear_api_key: !!s.linear_api_key,
     linear_api_key_masked: maskLong(s.linear_api_key, 8, 16),
     bug_trend_roster: parseRoster(s.bug_trend_roster),
+    has_github_token: !!s.github_token,
+    github_token_masked: maskLong(s.github_token, 4, 12),
   };
 }
