@@ -64,6 +64,7 @@ const breaking = (input: ClassifyInput) =>
   sampleDraft({ kind: 'breaking', severity: 'high', is_baseline: input.mode === 'baseline', signature: `${input.mode}-${input.text.length}` });
 const FEED: SourceInput = { kind: 'feed', url: 'https://acme.dev/rss', label: 'rss' };
 const HOST: SourceInput = { kind: 'liveness', url: 'https://api.acme.dev/v1', label: 'host' };
+const SPEC: SourceInput = { kind: 'openapi', url: 'https://acme.dev/openapi.json', label: 'spec' };
 
 describe('startWatchRun — feeds', () => {
   beforeEach(resetVendorWatch);
@@ -204,6 +205,32 @@ describe('startWatchRun — feeds', () => {
     expect(r.sources_failed).toBe(1);
     expect(getSnapshot(rows[0].id)!.content_hash).toBe(before);
     expect(listSources(planId)[0].consecutive_failures).toBe(1);
+  });
+
+  it('treats a spec that suddenly has no operations as a failure and leaves the snapshot alone', async () => {
+    updateWatchConfig({ auto_file_enabled: 1 });
+    const { planId, rows } = plan([SPEC]);
+    const h = harness();
+    h.body = JSON.stringify({ openapi: '3.0.0', paths: { '/v1/messages': { post: {} }, '/v1/orders': { get: {} } } });
+    await run(planId, h);
+    const before = getSnapshot(rows[0].id)!.content_hash;
+    h.body = JSON.stringify({ openapi: '3.0.0', paths: {} });
+    const r = await run(planId, h);
+    expect(r).toMatchObject({ sources_failed: 1, findings_created: 0 });
+    expect(listFindings()).toEqual([]);
+    expect(h.fileCalls).toEqual([]);
+    expect(getSnapshot(rows[0].id)!.content_hash).toBe(before);
+    expect(listSources(planId)[0].last_error).toBe('Spec has no operations');
+  });
+
+  it('stores no snapshot when the first read of a spec has no operations', async () => {
+    const { planId, rows } = plan([SPEC]);
+    const h = harness();
+    h.body = JSON.stringify({ openapi: '3.0.0', paths: {} });
+    const r = await run(planId, h, 'baseline');
+    expect(r).toMatchObject({ sources_failed: 1, findings_created: 0 });
+    expect(getSnapshot(rows[0].id)).toBeUndefined();
+    expect(listSources(planId)[0]).toMatchObject({ consecutive_failures: 1, last_error: 'Spec has no operations' });
   });
 
   it('records an HTTP error as a source failure', async () => {

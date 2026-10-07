@@ -193,6 +193,10 @@ function checkOpenApi(source: WatchSourceRow, body: string, prev: WatchSnapshotR
     return FAILED;
   }
   const ops = buildOpMap(doc);
+  if (Object.keys(ops).length === 0) {
+    recordSourceFailure(source.id, 'Spec has no operations');
+    return FAILED;
+  }
   const norm = normalizeOpenApi(ops);
   if (prev && prev.content_hash === norm.hash) {
     recordSourceOk(source.id, false);
