@@ -3,6 +3,7 @@ import { getDb } from './schema.js';
 import {
   beginPlanGeneration, completePlanGeneration, countFindingsByImportance, getPieceImportance, insertFinding,
   listFindings, listPieceUsage, listPlans, stalePieces, updateWatchConfig, upsertPieceUsage, usageSummary,
+  type FindingFilter,
 } from './vendor-watch-queries.js';
 import { resetVendorWatch, sampleDraft, samplePlanResult } from './vendor-watch-test-utils.js';
 import type { Severity } from '../services/vendor-watch/types.js';
@@ -137,7 +138,7 @@ describe('findings and plans by importance', () => {
 
   it('filters by one or more tiers, including unrated', () => {
     const s = seed();
-    const ids = (importance: Parameters<typeof listFindings>[0]['importance']) =>
+    const ids = (importance: FindingFilter['importance']) =>
       listFindings({ importance, sort: 'importance' }).map(f => f.id);
     expect(ids(['high'])).toEqual([s.highCrit.id, s.ent.id, s.highLow.id]);
     expect(ids(['medium', 'low'])).toEqual([s.medium.id, s.low.id]);

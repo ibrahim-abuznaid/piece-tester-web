@@ -1,5 +1,5 @@
-import { parseTargets, type VendorFindingRow } from '../../db/vendor-watch-queries.js';
-import type { EndpointRef, Severity } from './types.js';
+import { parseTargets, type ImportanceFields, type VendorFindingRow } from '../../db/vendor-watch-queries.js';
+import type { EndpointRef, Importance, Severity } from './types.js';
 
 export interface TicketContext {
   pieceDisplayName: string;
@@ -8,6 +8,7 @@ export interface TicketContext {
   inventory: EndpointRef[];
   sourceLabel: string;
   today: Date;
+  importance?: ImportanceFields;
 }
 
 export interface TicketDraft {
@@ -42,12 +43,27 @@ export function describeAffects(targets: string[], inventory: EndpointRef[]): st
   }).join(', ');
 }
 
+const IMPORTANCE_LABEL: Record<Importance, string> = { high: 'High', medium: 'Medium', low: 'Low' };
+
+/** "High (491 Cloud projects across all versions · on the Enterprise list)"; empty when the piece is unrated. */
+export function describeImportance(i: ImportanceFields): string {
+  if (!i.importance) return '';
+  const why: string[] = [];
+  if (i.usage_projects !== null) {
+    why.push(`${i.usage_projects.toLocaleString('en-US')} Cloud project${i.usage_projects === 1 ? '' : 's'} across all versions`);
+  }
+  if (i.enterprise) why.push('on the Enterprise list');
+  return why.length ? `${IMPORTANCE_LABEL[i.importance]} (${why.join(' · ')})` : IMPORTANCE_LABEL[i.importance];
+}
+
 export function buildTicketDraft(f: VendorFindingRow, ctx: TicketContext, filedBy: 'auto' | 'manual'): TicketDraft {
   const seen = f.created_at.slice(0, 10);
+  const importance = ctx.importance ? describeImportance(ctx.importance) : '';
   const lines = [
     '**Vendor change found by Piece Tester vendor watch**',
     '',
     `**Piece:** ${ctx.pieceDisplayName} (\`${ctx.pieceName}\` ${ctx.pieceVersion})`,
+    ...(importance ? [`**Importance:** ${importance}`] : []),
     `**What changed:** ${f.summary || f.title}`,
     `**Effective date:** ${describeEffectiveDate(f.effective_date, ctx.today)}`,
     `**Affects:** ${describeAffects(parseTargets(f.affected_targets), ctx.inventory)}`,

@@ -1,7 +1,7 @@
 import { getSettings } from '../../db/queries.js';
 import {
-  findMergeTarget, getFinding, getPlan, getSource, getWatchConfig, markFindingFiled, parseTargets, setFindingFileError,
-  type VendorFindingRow,
+  findMergeTarget, getFinding, getPieceImportance, getPlan, getSource, getWatchConfig, markFindingFiled, parseTargets,
+  setFindingFileError, type VendorFindingRow,
 } from '../../db/vendor-watch-queries.js';
 import { parseInventory } from './findings.js';
 import { addLinearComment, createLinearIssue, resolveLinearTargets, type LinearQueryFn } from './linear-filer.js';
@@ -44,6 +44,7 @@ function ticketContext(f: VendorFindingRow, today: Date): TicketContext {
     inventory: parseInventory(plan?.endpoint_inventory ?? ''),
     sourceLabel: f.source_id ? getSource(f.source_id)?.label ?? '' : '',
     today,
+    importance: getPieceImportance(f.piece_name),
   };
 }
 

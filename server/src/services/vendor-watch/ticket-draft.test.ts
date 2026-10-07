@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildTicketDraft, buildCommentBody, describeEffectiveDate, type TicketContext } from './ticket-draft.js';
+import { buildTicketDraft, buildCommentBody, describeEffectiveDate, describeImportance, type TicketContext } from './ticket-draft.js';
 import type { VendorFindingRow } from '../../db/vendor-watch-queries.js';
 
 const row = (over: Partial<VendorFindingRow> = {}): VendorFindingRow => ({
@@ -69,5 +69,34 @@ describe('buildCommentBody', () => {
     expect(body).toContain('finding #7');
     expect(body).toContain('> Messages v1 will be removed on 2027-01-31');
     expect(body).toContain('Source: https://acme.dev/changelog');
+  });
+});
+
+describe('describeImportance', () => {
+  it.each([
+    [{ importance: 'high', enterprise: 1, usage_projects: 491, usage_fetched_at: 'x' }, 'High (491 Cloud projects across all versions · on the Enterprise list)'],
+    [{ importance: 'high', enterprise: 1, usage_projects: null, usage_fetched_at: null }, 'High (on the Enterprise list)'],
+    [{ importance: 'medium', enterprise: 0, usage_projects: 1250, usage_fetched_at: 'x' }, 'Medium (1,250 Cloud projects across all versions)'],
+    [{ importance: 'low', enterprise: 0, usage_projects: 1, usage_fetched_at: 'x' }, 'Low (1 Cloud project across all versions)'],
+  ] as const)('%j → %s', (fields, text) => {
+    expect(describeImportance(fields)).toBe(text);
+  });
+
+  it('is empty for an unrated piece', () => {
+    expect(describeImportance({ importance: null, enterprise: 0, usage_projects: null, usage_fetched_at: null })).toBe('');
+  });
+});
+
+describe('buildTicketDraft importance line', () => {
+  it('adds the line under the piece when the piece is rated', () => {
+    const d = buildTicketDraft(row(), { ...ctx, importance: { importance: 'high', enterprise: 0, usage_projects: 14303, usage_fetched_at: 'x' } }, 'auto');
+    const lines = d.description.split('\n');
+    expect(lines[lines.findIndex(l => l.startsWith('**Piece:**')) + 1]).toBe('**Importance:** High (14,303 Cloud projects across all versions)');
+  });
+
+  it('leaves the line out when the piece is unrated or unknown', () => {
+    expect(buildTicketDraft(row(), ctx, 'auto').description).not.toContain('**Importance:**');
+    expect(buildTicketDraft(row(), { ...ctx, importance: { importance: null, enterprise: 0, usage_projects: null, usage_fetched_at: null } }, 'auto').description)
+      .not.toContain('**Importance:**');
   });
 });

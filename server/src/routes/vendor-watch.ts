@@ -1,10 +1,11 @@
 import { Router } from 'express';
 import { getSettings } from '../db/queries.js';
 import {
-  countOpenFindings, deletePlan, dismissFinding, getFinding, getPlan, getPlanByPiece, getSource, getWatchConfig,
-  listFindings, listPlans, listRuns, listSources, setPlanStatus, setSourceEnabled, updateWatchConfig,
+  countFindingsByImportance, countOpenFindings, deletePlan, dismissFinding, getFinding, getPlan, getPlanByPiece,
+  getSource, getWatchConfig, listFindings, listPieceUsage, listPlans, listRuns, listSources, setPlanStatus,
+  setSourceEnabled, updateWatchConfig, usageSummary,
 } from '../db/vendor-watch-queries.js';
-import type { FindingStatus } from '../services/vendor-watch/types.js';
+import { IMPORTANCE_FILTERS, type FindingStatus, type ImportanceFilter } from '../services/vendor-watch/types.js';
 import { LinearError } from '../services/bug-trend/linear-client.js';
 import { parseConfigPatch } from '../services/vendor-watch/config.js';
 import { isCycleRunning, reloadVendorWatch, runWatchCycle } from '../services/vendor-watch/cron.js';
@@ -12,6 +13,7 @@ import { fileFinding, FilingInProgressError, previewFiling } from '../services/v
 import { generateWatchPlansInBackground } from '../services/vendor-watch/generate.js';
 import { clearLinearTargetCache, resolveLinearTargets } from '../services/vendor-watch/linear-filer.js';
 import { startWatchRun } from '../services/vendor-watch/runner.js';
+import { ensureWatchedUsage, getUsageRefreshState, refreshPieceUsage } from '../services/vendor-watch/piece-usage.js';
 
 const router = Router();
 const MAX_BATCH = 100;
@@ -22,6 +24,10 @@ const idParam = (v: string) => {
   const n = Number(v);
   return Number.isInteger(n) && n > 0 ? n : null;
 };
+
+/** `?importance=high,medium` → the known tiers in it; anything else is ignored. */
+const importanceParam = (v: unknown): ImportanceFilter[] =>
+  typeof v === 'string' ? IMPORTANCE_FILTERS.filter(t => v.split(',').map(x => x.trim()).includes(t)) : [];
 
 // ── Config ──
 
@@ -53,6 +59,7 @@ router.post('/config/test-linear', async (_req, res) => {
 // ── Plans ──
 
 router.get('/plans', (_req, res) => {
+  ensureWatchedUsage();
   res.json(listPlans());
 });
 
@@ -131,12 +138,32 @@ router.post('/run-cycle', (_req, res) => {
   res.status(202).json({ started: true });
 });
 
+// ── Piece importance ──
+
+router.get('/usage', (_req, res) => {
+  res.json({ pieces: listPieceUsage(), summary: usageSummary(), refresh: getUsageRefreshState() });
+});
+
+router.post('/usage/refresh', (req, res) => {
+  const scope = req.body?.scope;
+  if (scope !== 'watched' && scope !== 'catalog') { res.status(400).json({ error: "scope must be 'watched' or 'catalog'" }); return; }
+  if (getUsageRefreshState().running) { res.status(409).json({ error: 'A usage refresh is already running' }); return; }
+  refreshPieceUsage(scope).catch(err => console.error(`[vendor-watch] usage refresh (${scope}) failed:`, err?.message || err));
+  res.status(202).json({ started: true });
+});
+
 // ── Findings ──
 
 router.get('/findings', (req, res) => {
   const status = FINDING_STATUSES.find(s => s === req.query.status);
   const piece = typeof req.query.piece === 'string' && req.query.piece ? req.query.piece : undefined;
-  res.json(listFindings({ status, piece }));
+  ensureWatchedUsage();
+  res.json({
+    findings: listFindings({
+      status, piece, importance: importanceParam(req.query.importance), sort: status === 'new' ? 'importance' : 'newest',
+    }),
+    counts: countFindingsByImportance({ status, piece }),
+  });
 });
 
 router.get('/findings/:id/draft', (req, res) => {

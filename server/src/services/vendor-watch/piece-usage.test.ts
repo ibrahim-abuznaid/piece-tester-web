@@ -32,7 +32,7 @@ function fakeCloud(usage: Record<string, Record<string, number>>, fail = new Set
   return { fetchJson, calls };
 }
 
-const CLOUD = {
+const CLOUD: Record<string, Record<string, number>> = {
   [P('slack')]: { '0.9.0': 19, '0.10.0': 1, '0.20.0': 2 },
   [P('stripe')]: { '0.8.0': 3, '0.7.0': 488 },
   [P('zagomail')]: { '0.1.0': 1 },
