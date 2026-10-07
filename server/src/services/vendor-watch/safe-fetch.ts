@@ -129,7 +129,7 @@ export async function safeFetch(rawUrl: string, opts: SafeFetchOptions = {}): Pr
     await assertPublicHost(url, lookup);
     let res: Response;
     try {
-      res = await fetchImpl(url.href, { redirect: 'manual', signal, headers: { 'User-Agent': USER_AGENT, Accept: '*/*' } });
+      res = await fetchImpl(url.href, { redirect: 'manual', signal, headers: { 'User-Agent': USER_AGENT, Accept: '*/*', 'Accept-Language': 'en-US,en;q=0.9' } });
     } catch (err) {
       throw classifyNetworkError(err);
     }

@@ -22,7 +22,7 @@ describe('safeFetch', () => {
     expect(r).toEqual({ status: 200, finalUrl: 'https://acme.dev/x', contentType: 'text/plain', body: 'hello' });
   });
 
-  it('fetches every hop with redirect: manual, its User-Agent and a timeout signal', async () => {
+  it('fetches every hop with redirect: manual, its User-Agent, English and a timeout signal', async () => {
     const f = vi.fn(async (url: string, _init?: RequestInit) =>
       url === 'https://acme.dev/old' ? new Response(null, { status: 301, headers: { location: '/new' } }) : new Response('ok'));
     await safeFetch('https://acme.dev/old', { lookup: publicLookup, fetchImpl: asFetch(f) });
@@ -30,6 +30,7 @@ describe('safeFetch', () => {
     for (const [, init] of f.mock.calls) {
       expect(init?.redirect).toBe('manual');
       expect(new Headers(init?.headers).get('User-Agent')).toBe('piece-tester-vendor-watch/1');
+      expect(new Headers(init?.headers).get('Accept-Language')).toBe('en-US,en;q=0.9');
       expect(init?.signal).toBeInstanceOf(AbortSignal);
     }
   });
