@@ -14,6 +14,10 @@ import type { SourceKind } from './types.js';
 const GITHUB_LIMIT_NOTE =
   'GitHub rate limit was hit while reading the piece source; action files may be missing. Add a GitHub token in Settings and regenerate.';
 
+/** One stuck agent run must not hold the single-lane generation queue. */
+export const VW_GENERATION_TIMEOUT_MS = 20 * 60_000;
+const TIMEOUT_NOTE = `Generation timed out after ${VW_GENERATION_TIMEOUT_MS / 60_000} minutes.`;
+
 export interface GenerateDeps {
   getPieceMetadata: (name: string) => Promise<PieceMetadataFull>;
   runWorker: typeof runWatchPlannerWorker;
@@ -44,11 +48,14 @@ export async function generateWatchPlan(pieceName: string, deps: Partial<Generat
     const kept = line ? `${note.slice(0, MAX_FAILURE_NOTE - line.length - 1)}\n${line}` : note;
     return failPlanGeneration(plan.id, kept, cost);
   };
+  let timeout: AbortSignal | undefined;
   try {
     const meta = await d.getPieceMetadata(pieceName);
+    timeout = AbortSignal.timeout(VW_GENERATION_TIMEOUT_MS);
     const result = await d.runWorker({
       pieceMeta: meta,
       costTracker: tracker,
+      abortSignal: timeout,
       onLog: (l) => { if (l.type === 'error') agentErrors.push(l.message); },
     });
     const cost = tracker.getTotals().cost_usd;
@@ -76,7 +83,7 @@ export async function generateWatchPlan(pieceName: string, deps: Partial<Generat
     d.startBaseline(plan.id);
     return getPlan(plan.id)!;
   } catch (err: any) {
-    return fail(String(err?.message || err), tracker.getTotals().cost_usd);
+    return fail(timeout?.aborted ? TIMEOUT_NOTE : String(err?.message || err), tracker.getTotals().cost_usd);
   }
 }
 

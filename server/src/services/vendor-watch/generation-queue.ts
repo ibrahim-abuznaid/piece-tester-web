@@ -3,7 +3,8 @@ import { getGitHubRateLimitedUntil } from '../github-api.js';
 /**
  * Watch-plan generation runs on its own in-memory FIFO, apart from the shared batch scheduler, so a big batch
  * never takes AI slots from test runs and reads GitHub at a steady pace. Nothing is persisted: on a restart
- * the queue is gone and reconcileVendorWatch() fails the plans still marked queued.
+ * the queue is gone and reconcileVendorWatch() closes the plans still marked queued: a first generation as
+ * failed, a regeneration as stale.
  */
 export const VW_GENERATION_CONCURRENCY = 1;
 const GITHUB_RESET_MARGIN_MS = 5_000;

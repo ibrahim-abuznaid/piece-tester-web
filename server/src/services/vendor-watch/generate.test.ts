@@ -6,7 +6,7 @@ import {
 import { resetVendorWatch, sampleDraft, samplePlanResult } from '../../db/vendor-watch-test-utils.js';
 import { __resetGitHubRateLimitForTests, __setHttpForTests, githubApiGet } from '../github-api.js';
 import {
-  generateWatchPlan, generateWatchPlanInBackground, generateWatchPlansInBackground, type GenerateDeps,
+  generateWatchPlan, generateWatchPlanInBackground, generateWatchPlansInBackground, VW_GENERATION_TIMEOUT_MS, type GenerateDeps,
 } from './generate.js';
 import { getGenerationQueueState, resetGenerationQueueForTests } from './generation-queue.js';
 import type { WatchPlanValidation } from '../../agents/v2/tools/set-watch-plan.js';
@@ -64,6 +64,7 @@ async function hitGitHubRateLimit(): Promise<void> {
 
 describe('generateWatchPlan', () => {
   beforeEach(resetVendorWatch);
+  afterEach(() => { vi.restoreAllMocks(); });
 
   it('saves the plan, puts the liveness source first, and starts the baseline', async () => {
     const { d, baselines } = deps();
@@ -103,6 +104,27 @@ describe('generateWatchPlan', () => {
     expect(getSnapshot(feed.id)?.content_hash).toBe('h1');
     expect(getSnapshot(oldLiveness.id)).toBeUndefined();
     expect(countOpenFindings(first.piece_name)).toBe(1);
+  });
+
+  it('gives the agent a 20-minute timeout and fails the generation with a clear note when it fires', async () => {
+    const clock = new AbortController();
+    const timeout = vi.spyOn(AbortSignal, 'timeout').mockReturnValue(clock.signal);
+    let seen: AbortSignal | undefined;
+    const pending = generateWatchPlan('@activepieces/piece-stuck', deps({
+      runWorker: ({ abortSignal }) => new Promise((_resolve, reject) => {
+        seen = abortSignal;
+        abortSignal?.addEventListener('abort', () => reject(new Error('Agent aborted: client disconnected')));
+      }),
+    }).d);
+
+    await waitFor(() => seen !== undefined);
+    expect(VW_GENERATION_TIMEOUT_MS).toBe(20 * 60_000);
+    expect(timeout).toHaveBeenCalledWith(VW_GENERATION_TIMEOUT_MS);
+    expect(seen).toBe(clock.signal);
+    expect(getPlanByPiece('@activepieces/piece-stuck')?.status).toBe('generating');
+
+    clock.abort(new DOMException('The operation was aborted due to timeout', 'TimeoutError'));
+    expect(await pending).toMatchObject({ status: 'failed', generation_note: 'Generation timed out after 20 minutes.' });
   });
 });
 
