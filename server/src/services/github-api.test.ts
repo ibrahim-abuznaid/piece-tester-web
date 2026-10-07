@@ -1,9 +1,13 @@
-import { describe, it, expect, vi, beforeEach, afterEach, type Mock, type MockInstance } from 'vitest';
+import { describe, it, expect, vi, beforeAll, afterAll, beforeEach, afterEach, type Mock, type MockInstance } from 'vitest';
+import http from 'node:http';
+import type { AddressInfo } from 'node:net';
+import { inspect } from 'node:util';
+import axios from 'axios';
 import { updateSettings } from '../db/queries.js';
 import {
   githubApiGet, validateGitHubToken, GitHubRateLimitError,
   getGitHubRateLimitedUntil, githubRateLimitHitsSince,
-  __setHttpForTests, __resetGitHubRateLimitForTests,
+  clearGitHubRateLimit, __setHttpForTests, __resetGitHubRateLimitForTests,
 } from './github-api.js';
 
 const URL = 'https://api.github.com/repos/activepieces/activepieces/contents/packages/pieces/community/acme/src/lib/actions';
@@ -78,21 +82,23 @@ describe('rate-limit detection', () => {
     await expect(githubApiGet(URL)).rejects.toBeInstanceOf(GitHubRateLimitError);
   });
 
-  it('does not treat 403 with requests remaining as a hit and rethrows the original error', async () => {
-    const original = httpError(403, { 'x-ratelimit-remaining': '42', 'x-ratelimit-reset': '1900000000' });
-    get.mockRejectedValueOnce(original);
+  it('does not treat 403 with requests remaining as a hit', async () => {
+    get.mockRejectedValueOnce(httpError(403, { 'x-ratelimit-remaining': '42', 'x-ratelimit-reset': '1900000000' }));
     const err = await githubApiGet(URL).catch(e => e);
-    expect(err).toBe(original);
     expect(err).not.toBeInstanceOf(GitHubRateLimitError);
+    expect(err.message).toBe('Request failed with status code 403');
+    expect(err.status).toBe(403);
     expect(getGitHubRateLimitedUntil()).toBe(0);
     expect(githubRateLimitHitsSince(0)).toBe(false);
     expect(warn).not.toHaveBeenCalled();
   });
 
-  it('rethrows a 404 untouched', async () => {
-    const original = httpError(404, {});
-    get.mockRejectedValueOnce(original);
-    await expect(githubApiGet(URL)).rejects.toBe(original);
+  it('passes a 404 on as a plain error carrying the status', async () => {
+    get.mockRejectedValueOnce(httpError(404, {}));
+    const err = await githubApiGet(URL).catch(e => e);
+    expect(err.constructor).toBe(Error);
+    expect(err.message).toBe('Request failed with status code 404');
+    expect(err.status).toBe(404);
     expect(getGitHubRateLimitedUntil()).toBe(0);
   });
 
@@ -130,6 +136,59 @@ describe('rate-limit detection', () => {
     await githubApiGet(URL).catch(() => {});
     expect(githubRateLimitHitsSince(NOW + 1)).toBe(true);
     expect(warn).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('clearGitHubRateLimit', () => {
+  it('drops the recorded wait but keeps the hit for githubRateLimitHitsSince', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(NOW);
+    get.mockRejectedValueOnce(httpError(403, { 'x-ratelimit-remaining': '0' }));
+    await githubApiGet(URL).catch(() => {});
+    expect(getGitHubRateLimitedUntil()).toBe(NOW + 60 * 60_000);
+    clearGitHubRateLimit();
+    expect(getGitHubRateLimitedUntil()).toBe(0);
+    expect(githubRateLimitHitsSince(NOW)).toBe(true);
+  });
+});
+
+describe('failures never carry the token', () => {
+  let server: http.Server;
+  let base: string;
+
+  beforeAll(async () => {
+    server = http.createServer((_req, res) => { res.statusCode = 500; res.end('boom'); });
+    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', () => resolve()));
+    base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  });
+
+  afterAll(async () => {
+    server.closeAllConnections();
+    await new Promise<void>(resolve => server.close(() => resolve()));
+  });
+
+  it('turns a real axios failure into an error with no copy of the saved token', async () => {
+    __setHttpForTests(null);
+    updateSettings({ github_token: TOKEN });
+    const raw = await axios.get(`${base}/raw`, { headers: { Authorization: `Bearer ${TOKEN}` } }).catch(e => e);
+    expect(JSON.stringify(raw)).toContain(TOKEN);
+
+    const err = await githubApiGet(`${base}/repos/x`).catch(e => e);
+    expect(err.message).toBe('Request failed with status code 500');
+    expect(err.status).toBe(500);
+    expect(JSON.stringify(err)).not.toContain(TOKEN);
+    expect(inspect(err, { depth: Infinity, showHidden: true })).not.toContain(TOKEN);
+    expect(Object.getOwnPropertyNames(err).sort()).toEqual(['message', 'stack', 'status']);
+  });
+
+  it('redacts the token if it shows up in the failure message itself', async () => {
+    updateSettings({ github_token: TOKEN });
+    get.mockRejectedValueOnce(Object.assign(new Error(`Invalid header value "Bearer ${TOKEN}"`), {
+      config: { headers: { Authorization: `Bearer ${TOKEN}` } },
+    }));
+    const err = await githubApiGet(URL).catch(e => e);
+    expect(err.message).toBe('Invalid header value "Bearer [redacted]"');
+    expect(inspect(err, { depth: Infinity, showHidden: true })).not.toContain(TOKEN);
   });
 });
 

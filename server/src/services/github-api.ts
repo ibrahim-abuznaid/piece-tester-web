@@ -28,6 +28,17 @@ function isRateLimitHit(status: number | undefined, headers: any): boolean {
   return (status === 403 || status === 429) && String(headers?.['x-ratelimit-remaining']) === '0';
 }
 
+function redact(message: string, token: string): string {
+  return token ? message.replaceAll(token, '[redacted]') : message;
+}
+
+/** Rebuild a failure as a plain Error (message + HTTP status only): axios errors carry the request headers, token included. */
+function plainFailure(err: any, token: string): Error & { status?: number } {
+  const safe: Error & { status?: number } = new Error(redact(String(err?.message || err), token));
+  if (typeof err?.response?.status === 'number') safe.status = err.response.status;
+  return safe;
+}
+
 function recordHit(headers: any): GitHubRateLimitError {
   const reset = Number(headers?.['x-ratelimit-reset']);
   const resetAt = Number.isFinite(reset) && reset > 0 ? reset * 1000 : Date.now() + FALLBACK_RESET_MS;
@@ -40,7 +51,8 @@ function recordHit(headers: any): GitHubRateLimitError {
 /**
  * GET a GitHub REST API URL, sending the saved token when there is one.
  * Throws GitHubRateLimitError (and remembers the reset time) when GitHub reports the
- * rate limit as used up; any other failure is rethrown unchanged.
+ * rate limit as used up; any other failure is thrown as a plain Error with only the
+ * message and HTTP `status`, so the token never travels with it.
  */
 export async function githubApiGet(url: string, opts: { timeout?: number } = {}): Promise<AxiosResponse> {
   const token = getSettings().github_token;
@@ -51,7 +63,7 @@ export async function githubApiGet(url: string, opts: { timeout?: number } = {})
     res = await httpGet(url, { timeout: opts.timeout ?? DEFAULT_TIMEOUT_MS, headers });
   } catch (err: any) {
     if (isRateLimitHit(err?.response?.status, err?.response?.headers)) throw recordHit(err.response.headers);
-    throw err;
+    throw plainFailure(err, token);
   }
   if (isRateLimitHit(res.status, res.headers)) throw recordHit(res.headers);
   return res;
@@ -67,6 +79,11 @@ export function githubRateLimitHitsSince(ts: number): boolean {
   return lastHitAt > 0 && lastHitAt >= ts;
 }
 
+/** Forget the recorded reset time (a token was just saved). Past hits still count for githubRateLimitHitsSince. */
+export function clearGitHubRateLimit(): void {
+  rateLimitedUntil = 0;
+}
+
 /** Check a candidate token against GitHub before saving it. Resolves the hourly core limit it grants. */
 export async function validateGitHubToken(token: string): Promise<{ limit: number }> {
   let res: AxiosResponse;
@@ -77,8 +94,7 @@ export async function validateGitHubToken(token: string): Promise<{ limit: numbe
     });
   } catch (err: any) {
     if (err?.response) throw new Error('GitHub rejected the token');
-    const msg = String(err?.message || err);
-    throw new Error(`Could not reach GitHub: ${token ? msg.replaceAll(token, '[redacted]') : msg}`);
+    throw new Error(`Could not reach GitHub: ${redact(String(err?.message || err), token)}`);
   }
   if (res.status !== 200) throw new Error('GitHub rejected the token');
   const limit = Number(res.data?.resources?.core?.limit);

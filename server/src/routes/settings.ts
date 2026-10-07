@@ -11,7 +11,7 @@ import { buildAnthropicClientOptions } from '../services/anthropic-client.js';
 import { fetchActiveUsers, fetchViewer } from '../services/bug-trend/linear-client.js';
 import { invalidateBugTrendCache } from '../services/bug-trend/bug-trend-service.js';
 import { seedRosterIfEmpty, validateRoster } from '../services/bug-trend/roster.js';
-import { validateGitHubToken } from '../services/github-api.js';
+import { clearGitHubRateLimit, validateGitHubToken } from '../services/github-api.js';
 
 // ── MCP OAuth constants ──
 const MCP_OAUTH_AUTHORIZE_URL = 'https://mcp.activepieces.com/authorize';
@@ -288,7 +288,10 @@ router.get('/linear-users', async (_req, res) => {
   }
 });
 
-/** Save the optional GitHub token used to read piece source. Validated against GitHub before saving. */
+/**
+ * Save the optional GitHub token used to read piece source. Validated against GitHub before saving.
+ * Clears any recorded rate-limit wait: that limit belonged to the unauthenticated calls.
+ */
 router.post('/save-github-token', async (req, res) => {
   const token = typeof req.body?.token === 'string' ? req.body.token.trim() : '';
   if (!token) return res.status(400).json({ error: 'Token is required' });
@@ -299,6 +302,7 @@ router.post('/save-github-token', async (req, res) => {
     return res.status(400).json({ error: err?.message || String(err) });
   }
   updateSettings({ github_token: token });
+  clearGitHubRateLimit();
   res.json({ success: true, limit });
 });
 
