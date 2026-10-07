@@ -152,13 +152,14 @@ export function getPlanByPiece(pieceName: string): WatchPlanRow | undefined {
   return getDb().get<WatchPlanRow>('SELECT * FROM watch_plans WHERE piece_name = ?', [pieceName]);
 }
 
-/** A source counts as failing when it has consecutive failures or a noted error (e.g. a liveness timeout). */
+/** An enabled source counts as failing when it has consecutive failures or a noted error (e.g. a liveness timeout). */
 export function listPlans(): WatchPlanListRow[] {
   return getDb().all<WatchPlanListRow>(`
     SELECT p.*,
       (SELECT COUNT(*) FROM watch_sources s WHERE s.plan_id = p.id) AS sources_total,
       (SELECT COUNT(*) FROM watch_sources s
-        WHERE s.plan_id = p.id AND (s.consecutive_failures > 0 OR s.last_error != '')) AS sources_failing,
+        WHERE s.plan_id = p.id AND s.enabled = 1
+          AND (s.consecutive_failures > 0 OR s.last_error != '')) AS sources_failing,
       (SELECT COUNT(*) FROM vendor_findings f WHERE f.plan_id = p.id AND f.status = 'new') AS open_findings
     FROM watch_plans p
     ORDER BY p.piece_name
@@ -346,16 +347,20 @@ export function listRuns(planId: number, limit = 20): WatchRunRow[] {
 
 // ── Findings ──
 
-/** Insert a finding unless its (piece, signature) already exists. Returns null when it was a duplicate. */
+/**
+ * Insert a finding unless its (piece, signature) already exists. Returns null when it was a duplicate.
+ * Only the signature conflict is skipped: a draft missing a required field throws.
+ */
 export function insertFinding(p: {
   plan_id: number; piece_name: string; source_id: number | null; run_id: number | null; draft: FindingDraft;
 }): VendorFindingRow | null {
   const d = p.draft;
   const res = getDb().run(
-    `INSERT OR IGNORE INTO vendor_findings (plan_id, piece_name, source_id, run_id, kind, severity, affects_piece,
+    `INSERT INTO vendor_findings (plan_id, piece_name, source_id, run_id, kind, severity, affects_piece,
        affected_targets, effective_date, title, summary, suggested_action, evidence_url, evidence_excerpt,
        evidence_verified, is_baseline, signature)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(piece_name, signature) DO NOTHING`,
     [
       p.plan_id, p.piece_name, p.source_id, p.run_id, d.kind, d.severity, d.affected_targets.length > 0 ? 1 : 0,
       JSON.stringify(d.affected_targets), d.effective_date, d.title, d.summary, d.suggested_action, d.evidence_url,

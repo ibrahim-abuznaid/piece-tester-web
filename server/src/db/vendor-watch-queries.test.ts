@@ -3,7 +3,7 @@ import { getDb } from './schema.js';
 import {
   getWatchConfig, updateWatchConfig, beginPlanGeneration, completePlanGeneration, failPlanGeneration,
   getPlan, listPlans, listRunnablePlans, setPlanStatus, markStalePlans, deletePlan,
-  replaceSources, listSources, recordSourceOk, recordSourceFailure, getSnapshot, saveSnapshot,
+  replaceSources, listSources, setSourceEnabled, recordSourceOk, recordSourceFailure, getSnapshot, saveSnapshot,
   createRun, finishRun, getRun, insertFinding, listFindings, countOpenFindings, markFindingFiled,
   dismissFinding, findMergeTarget, targetsOverlap, reconcileVendorWatch,
 } from './vendor-watch-queries.js';
@@ -72,6 +72,8 @@ describe('watch plans', () => {
     expect(row).toMatchObject({ sources_total: 2, sources_failing: 1, open_findings: 1 });
     recordSourceFailure(s2.id, 'timeout', false);
     expect(listPlans()[0].sources_failing).toBe(2);
+    setSourceEnabled(s2.id, false);
+    expect(listPlans()[0].sources_failing).toBe(1);
   });
 
   it('marks only active plans whose catalog version moved', () => {
@@ -166,6 +168,15 @@ describe('vendor findings', () => {
     expect(insertFinding({ plan_id: a.id, piece_name: a.piece_name, source_id: null, run_id: null, draft: sampleDraft() })).not.toBeNull();
     expect(insertFinding({ plan_id: a.id, piece_name: a.piece_name, source_id: null, run_id: null, draft: sampleDraft() })).toBeNull();
     expect(insertFinding({ plan_id: b.id, piece_name: b.piece_name, source_id: null, run_id: null, draft: sampleDraft() })).not.toBeNull();
+  });
+
+  it('throws on a draft missing a required field instead of reporting a duplicate', () => {
+    const a = activePlan();
+    for (const title of [undefined, null]) {
+      const draft = sampleDraft({ title: title as unknown as string, signature: `no-title-${title}` });
+      expect(() => insertFinding({ plan_id: a.id, piece_name: a.piece_name, source_id: null, run_id: null, draft })).toThrow(/NOT NULL/);
+    }
+    expect(listFindings()).toEqual([]);
   });
 
   it('stores affects_piece from the targets', () => {
