@@ -407,19 +407,30 @@ export interface FindingFilter {
   sort?: 'importance' | 'newest';
 }
 
-/** Findings joined with their piece's importance. Filters run before the 500-row cap. */
-export function listFindings(f: FindingFilter = {}): FindingListRow[] {
-  const { sql, params } = findingsWithImportance(f);
-  const tiers = f.importance ?? [];
-  const anyOf: string[] = [];
-  const named = tiers.filter((t): t is Importance => t !== 'unrated');
-  if (named.length) { anyOf.push(`importance IN (${named.map(() => '?').join(', ')})`); params.push(...named); }
-  if (tiers.includes('unrated')) anyOf.push('importance IS NULL');
+export interface FindingsPage {
+  limit: number;
+  offset: number;
+}
+
+/** Missing or non-numeric → 100 rows from the start. The limit is clamped to 1..200, the offset to 0 or more. */
+export function clampFindingsPage(p: Partial<FindingsPage> = {}): FindingsPage {
+  const limit = Number.isFinite(p.limit) ? Math.min(200, Math.max(1, Math.trunc(p.limit!))) : 100;
+  const offset = Number.isFinite(p.offset) ? Math.max(0, Math.trunc(p.offset!)) : 0;
+  return { limit, offset };
+}
+
+/** One page of findings joined with their piece's importance. Filters run before paging. */
+export function listFindings(f: FindingFilter = {}, page: Partial<FindingsPage> = {}): FindingListRow[] {
+  const { sql, params } = filteredFindings(f);
+  const { limit, offset } = clampFindingsPage(page);
   const order = f.sort === 'importance' ? `${IMPORTANCE_RANK}, ${SEVERITY_RANK}, id DESC` : 'id DESC';
-  return getDb().all<FindingListRow>(
-    `SELECT * FROM (${sql}) ${anyOf.length ? `WHERE (${anyOf.join(' OR ')})` : ''} ORDER BY ${order} LIMIT 500`,
-    params,
-  );
+  return getDb().all<FindingListRow>(`${sql} ORDER BY ${order} LIMIT ? OFFSET ?`, [...params, limit, offset]);
+}
+
+/** How many findings the filter matches, importance included: the total behind `listFindings` pages. */
+export function countFindings(f: FindingFilter = {}): number {
+  const { sql, params } = filteredFindings(f);
+  return getDb().get<{ n: number }>(`SELECT COUNT(*) AS n FROM (${sql})`, params)!.n;
 }
 
 /** Per-tier totals for the status and piece, ignoring any importance filter (the inbox chips). */
@@ -431,6 +442,16 @@ export function countFindingsByImportance(f: Pick<FindingFilter, 'status' | 'pie
   const counts: Record<ImportanceFilter, number> = { high: 0, medium: 0, low: 0, unrated: 0 };
   for (const r of rows) counts[r.tier] = r.n;
   return counts;
+}
+
+function filteredFindings(f: FindingFilter): { sql: string; params: unknown[] } {
+  const { sql, params } = findingsWithImportance(f);
+  const tiers = f.importance ?? [];
+  const anyOf: string[] = [];
+  const named = tiers.filter((t): t is Importance => t !== 'unrated');
+  if (named.length) { anyOf.push(`importance IN (${named.map(() => '?').join(', ')})`); params.push(...named); }
+  if (tiers.includes('unrated')) anyOf.push('importance IS NULL');
+  return { sql: `SELECT * FROM (${sql}) ${anyOf.length ? `WHERE (${anyOf.join(' OR ')})` : ''}`, params };
 }
 
 function findingsWithImportance(f: Pick<FindingFilter, 'status' | 'piece'>): { sql: string; params: unknown[] } {

@@ -634,6 +634,17 @@ function initTables(db: DatabaseAdapter): void {
     );
   `);
 
+  // Vendor watch indexes (docs/superpowers/plans/2026-10-07-vendor-watch-bulk-safe.md)
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_watch_sources_plan ON watch_sources(plan_id);
+    CREATE INDEX IF NOT EXISTS idx_watch_runs_plan ON watch_runs(plan_id);
+    CREATE INDEX IF NOT EXISTS idx_vendor_findings_plan ON vendor_findings(plan_id);
+    CREATE INDEX IF NOT EXISTS idx_vendor_findings_status ON vendor_findings(status);
+    CREATE INDEX IF NOT EXISTS idx_vendor_findings_signature ON vendor_findings(signature);
+    CREATE INDEX IF NOT EXISTS idx_vendor_findings_source ON vendor_findings(source_id);
+    CREATE INDEX IF NOT EXISTS idx_vendor_findings_run ON vendor_findings(run_id);
+  `);
+
   // Vendor watch importance (docs/superpowers/specs/2026-10-07-vendor-watch-importance-design.md)
   db.exec(`
     CREATE TABLE IF NOT EXISTS piece_usage (

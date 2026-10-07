@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { getSettings } from '../db/queries.js';
 import {
+  clampFindingsPage, countFindings, type FindingFilter,
   countFindingsByImportance, countOpenFindings, deletePlan, dismissFinding, getFinding, getPlan, getPlanByPiece,
   getSource, getWatchConfig, listFindings, listPieceUsage, listPlans, listRuns, listSources, setPlanStatus,
   setSourceEnabled, updateWatchConfig, usageSummary,
@@ -154,15 +155,23 @@ router.post('/usage/refresh', (req, res) => {
 
 // ── Findings ──
 
+/** `?limit=` / `?offset=`: missing, empty or non-numeric → undefined, so the page defaults apply. */
+const pageParam = (v: unknown): number | undefined => (typeof v === 'string' && v.trim() !== '' ? Number(v) : undefined);
+
 router.get('/findings', (req, res) => {
   const status = FINDING_STATUSES.find(s => s === req.query.status);
   const piece = typeof req.query.piece === 'string' && req.query.piece ? req.query.piece : undefined;
+  const filter: FindingFilter = {
+    status, piece, importance: importanceParam(req.query.importance), sort: status === 'new' ? 'importance' : 'newest',
+  };
+  const page = clampFindingsPage({ limit: pageParam(req.query.limit), offset: pageParam(req.query.offset) });
   ensureWatchedUsage();
   res.json({
-    findings: listFindings({
-      status, piece, importance: importanceParam(req.query.importance), sort: status === 'new' ? 'importance' : 'newest',
-    }),
+    findings: listFindings(filter, page),
     counts: countFindingsByImportance({ status, piece }),
+    total: countFindings(filter),
+    limit: page.limit,
+    offset: page.offset,
   });
 });
 

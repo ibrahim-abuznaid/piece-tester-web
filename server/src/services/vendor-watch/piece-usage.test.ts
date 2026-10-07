@@ -84,6 +84,22 @@ describe('fetchCloudUsage', () => {
     expect(row).toMatchObject({ projects: 488, versions: 2, versions_failed: 1 });
   });
 
+  it('asks Cloud for at most 3 versions at a time', async () => {
+    const many = Object.fromEntries(Array.from({ length: 4 }, (_, i) => [P(`p${i}`), { '0.1.0': 1, '0.2.0': 2, '0.3.0': 3 }]));
+    const cloud = fakeCloud(many);
+    let inFlight = 0;
+    let peak = 0;
+    const slow: FetchJson = async (url) => {
+      if (!url.includes('?version=')) return cloud.fetchJson(url);
+      peak = Math.max(peak, ++inFlight);
+      await new Promise(r => setTimeout(r, 5));
+      inFlight--;
+      return cloud.fetchJson(url);
+    };
+    expect(await fetchCloudUsage('all', { fetchJson: slow })).toHaveLength(4);
+    expect(peak).toBe(3);
+  });
+
   it('reports progress in versions', async () => {
     const progress: Array<[number, number]> = [];
     await fetchCloudUsage([P('slack'), P('stripe')], { fetchJson: fakeCloud(CLOUD).fetchJson, onProgress: (d, t) => progress.push([d, t]) });
