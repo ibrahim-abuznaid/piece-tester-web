@@ -1082,6 +1082,7 @@ export interface VwPlan {
   last_run_at: string | null;
   created_at: string;
   sources_total?: number;
+  sources_ok?: number;
   sources_failing?: number;
   open_findings?: number;
 }

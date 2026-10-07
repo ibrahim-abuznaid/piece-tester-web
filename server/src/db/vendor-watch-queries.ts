@@ -36,6 +36,7 @@ export interface WatchPlanRow {
 
 export interface WatchPlanListRow extends WatchPlanRow {
   sources_total: number;
+  sources_ok: number;
   sources_failing: number;
   open_findings: number;
 }
@@ -152,11 +153,17 @@ export function getPlanByPiece(pieceName: string): WatchPlanRow | undefined {
   return getDb().get<WatchPlanRow>('SELECT * FROM watch_plans WHERE piece_name = ?', [pieceName]);
 }
 
-/** An enabled source counts as failing when it has consecutive failures or a noted error (e.g. a liveness timeout). */
+/**
+ * An enabled source counts as failing when it has consecutive failures or a noted error (e.g. a liveness timeout),
+ * and as ok when it has been checked with neither. Disabled and never-checked sources count as neither.
+ */
 export function listPlans(): WatchPlanListRow[] {
   return getDb().all<WatchPlanListRow>(`
     SELECT p.*,
       (SELECT COUNT(*) FROM watch_sources s WHERE s.plan_id = p.id) AS sources_total,
+      (SELECT COUNT(*) FROM watch_sources s
+        WHERE s.plan_id = p.id AND s.enabled = 1 AND s.last_checked_at IS NOT NULL
+          AND s.consecutive_failures = 0 AND s.last_error = '') AS sources_ok,
       (SELECT COUNT(*) FROM watch_sources s
         WHERE s.plan_id = p.id AND s.enabled = 1
           AND (s.consecutive_failures > 0 OR s.last_error != '')) AS sources_failing,

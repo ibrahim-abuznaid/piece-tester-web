@@ -65,15 +65,23 @@ describe('watch plans', () => {
 
   it('lists plans with source and open-finding counts', () => {
     const a = activePlan();
-    const [s1, s2] = replaceSources(a.id, [{ kind: 'feed', url: 'https://acme.dev/rss', label: 'rss' }, { kind: 'liveness', url: 'https://api.acme.dev/v1', label: 'host' }]);
+    const [s1, s2, s3, s4] = replaceSources(a.id, [
+      { kind: 'feed', url: 'https://acme.dev/rss', label: 'rss' },
+      { kind: 'liveness', url: 'https://api.acme.dev/v1', label: 'host' },
+      { kind: 'html', url: 'https://acme.dev/changelog', label: 'changelog' },
+      { kind: 'openapi', url: 'https://acme.dev/openapi.json', label: 'spec' },
+    ]);
     recordSourceFailure(s1.id, 'HTTP 500');
+    recordSourceOk(s3.id, false);
+    recordSourceOk(s4.id, false);
+    setSourceEnabled(s4.id, false);
     insertFinding({ plan_id: a.id, piece_name: a.piece_name, source_id: s1.id, run_id: null, draft: sampleDraft() });
     const [row] = listPlans();
-    expect(row).toMatchObject({ sources_total: 2, sources_failing: 1, open_findings: 1 });
+    expect(row).toMatchObject({ sources_total: 4, sources_ok: 1, sources_failing: 1, open_findings: 1 });
     recordSourceFailure(s2.id, 'timeout', false);
-    expect(listPlans()[0].sources_failing).toBe(2);
+    expect(listPlans()[0]).toMatchObject({ sources_ok: 1, sources_failing: 2 });
     setSourceEnabled(s2.id, false);
-    expect(listPlans()[0].sources_failing).toBe(1);
+    expect(listPlans()[0]).toMatchObject({ sources_ok: 1, sources_failing: 1 });
   });
 
   it('marks only active plans whose catalog version moved', () => {

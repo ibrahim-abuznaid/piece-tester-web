@@ -100,9 +100,9 @@ export default function WatchersTab({ piece }: { piece?: string }) {
                           {p.status}
                         </span>
                       </td>
-                      <td className="px-3 py-2 text-[12px] text-gray-400">
-                        {p.sources_total ?? 0}
-                        {p.sources_failing ? <span className="ml-1 text-red-400">({p.sources_failing} failing)</span> : null}
+                      <td className="whitespace-nowrap px-3 py-2 text-[12px] text-gray-400"
+                        title={`${p.sources_total ?? 0} in total, counting disabled and not yet checked`}>
+                        {p.sources_ok ?? 0} ok / <span className={p.sources_failing ? 'text-red-400' : undefined}>{p.sources_failing ?? 0} failing</span>
                       </td>
                       <td className="px-3 py-2 text-[12px] text-gray-400">{p.last_run_at ?? '—'}</td>
                       <td className="px-3 py-2 text-[12px] text-gray-300">{p.open_findings ?? 0}</td>
@@ -112,7 +112,14 @@ export default function WatchersTab({ piece }: { piece?: string }) {
                           {runnable && <IconButton title="Pause" onClick={() => act.mutate({ action: 'pause', plan: p })}><Pause size={13} /></IconButton>}
                           {p.status === 'paused' && <IconButton title="Resume" onClick={() => act.mutate({ action: 'resume', plan: p })}><Play size={13} /></IconButton>}
                           {p.status !== 'generating' && (
-                            <IconButton title="Regenerate" onClick={() => act.mutate({ action: 'regenerate', plan: p })}><RefreshCw size={13} /></IconButton>
+                            <IconButton title="Regenerate" onClick={() => {
+                              const resume = p.status === 'paused' ? ' It will also resume the watcher.' : '';
+                              if (window.confirm(`Regenerate the watcher for ${p.piece_name}? This runs the AI agent again (about $0.20–0.60) and replaces its sources.${resume}`)) {
+                                act.mutate({ action: 'regenerate', plan: p });
+                              }
+                            }}>
+                              <RefreshCw size={13} />
+                            </IconButton>
                           )}
                           {p.status !== 'generating' && (
                             <IconButton title="Delete" onClick={() => {

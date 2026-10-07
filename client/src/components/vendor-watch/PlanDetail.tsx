@@ -36,7 +36,8 @@ export default function PlanDetail({ planId }: { planId: number }) {
                     className={`inline-flex items-center gap-1 truncate hover:underline ${s.enabled ? 'text-gray-200' : 'text-gray-500 line-through'}`}>
                     {s.label || s.url} <ExternalLink size={10} />
                   </a>
-                  <button onClick={() => toggle.mutate(s)} className="ml-auto text-[11px] text-primary-400 hover:underline">
+                  <button onClick={() => toggle.mutate(s)} disabled={toggle.isPending}
+                    className="ml-auto text-[11px] text-primary-400 hover:underline disabled:opacity-50">
                     {s.enabled ? 'disable' : 'enable'}
                   </button>
                 </div>
@@ -45,6 +46,7 @@ export default function PlanDetail({ planId }: { planId: number }) {
             );
           })}
         </ul>
+        {toggle.isError && <div className="mt-1.5 text-[11px] text-red-400">{(toggle.error as Error).message}</div>}
         {plan.generation_note && <p className="mt-3 whitespace-pre-line text-[12px] text-gray-400">{plan.generation_note}</p>}
         <p className="mt-1 text-[11px] text-gray-500">
           {plan.vendor_name || 'Unknown vendor'} · API {plan.api_version || '—'} · {plan.auth_type || '—'} · generated for ${plan.generation_cost_usd.toFixed(2)}
