@@ -4,7 +4,7 @@ import {
 import { runWithConcurrency } from '../concurrency.js';
 
 const CLOUD_API = 'https://cloud.activepieces.com/api/v1';
-const VERSION_CONCURRENCY = 8;
+const VERSION_CONCURRENCY = 3;
 const REQUEST_TIMEOUT_MS = 20_000;
 export const USAGE_MAX_AGE_DAYS = 7;
 const RETRY_AFTER_FAILURE_MS = 60 * 60_000;
