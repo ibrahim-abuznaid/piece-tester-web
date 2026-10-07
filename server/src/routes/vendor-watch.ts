@@ -146,10 +146,10 @@ router.get('/findings/:id/draft', (req, res) => {
 });
 
 router.post('/findings/:id/file', async (req, res) => {
-  const id = idParam(req.params.id);
-  if (!id || !getFinding(id)) { res.status(404).json({ error: 'Finding not found' }); return; }
-  const { title, description, priority } = req.body ?? {};
   try {
+    const id = idParam(req.params.id);
+    if (!id || !getFinding(id)) { res.status(404).json({ error: 'Finding not found' }); return; }
+    const { title, description, priority } = req.body ?? {};
     const row = await fileFinding(id, {
       filedBy: 'manual',
       override: {
