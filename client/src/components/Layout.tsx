@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { NavLink, Outlet } from 'react-router-dom';
-import { Activity, Puzzle, Link2, Play, ScrollText, BarChart3, TrendingDown, Settings, ListChecks, Square, LogOut } from 'lucide-react';
+import { Activity, Puzzle, Link2, Play, ScrollText, BarChart3, TrendingDown, Radar, Settings, ListChecks, Square, LogOut } from 'lucide-react';
 import { api } from '../lib/api';
 
 const nav = [
@@ -11,6 +11,7 @@ const nav = [
   { to: '/schedules', label: 'Coverage', icon: Puzzle },
   { to: '/reports', label: 'Reports', icon: BarChart3 },
   { to: '/bug-trend', label: 'Bug Trend', icon: TrendingDown },
+  { to: '/vendor-watch', label: 'Vendor Watch', icon: Radar },
   { to: '/batch-setup', label: 'Batch Setup', icon: ListChecks },
   { to: '/settings', label: 'Settings', icon: Settings },
 ];
