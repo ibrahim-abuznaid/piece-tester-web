@@ -114,7 +114,6 @@ describe('changedFields', () => {
   });
 });
 
-
 describe('findings paging', () => {
   it('describes the page range and the neighbouring offsets', () => {
     expect(pageInfo({ offset: 0, limit: 100, total: 340 }, 100)).toEqual({ from: 1, to: 100, prevOffset: null, nextOffset: 100 });

@@ -25,6 +25,7 @@ export default function FindingsTable({ status, piece, importance, onImportanceC
   // The page belongs to one filter: a new tab, piece or importance filter starts again at the first page.
   const filterKey = `${status}|${piece ?? ''}|${importance.join(',')}`;
   const [page, setPage] = useState({ filterKey, offset: 0 });
+  if (page.filterKey !== filterKey) setPage({ filterKey, offset: 0 });
   const offset = page.filterKey === filterKey ? page.offset : 0;
   const tableTop = useRef<HTMLDivElement>(null);
   const findings = useQuery({
