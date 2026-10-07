@@ -1,5 +1,5 @@
 import type {
-  VwFindingKind, VwImportanceFields, VwImportanceFilter, VwPlanStatus, VwSeverity, VwSource,
+  VwFindingKind, VwImportanceFields, VwImportanceFilter, VwPlan, VwPlanStatus, VwSeverity, VwSource,
 } from './api';
 
 export const KIND_LABEL: Record<VwFindingKind, string> = {
@@ -19,6 +19,7 @@ export const SEVERITY_CLASS: Record<VwSeverity, string> = {
 };
 
 export const PLAN_STATUS_CLASS: Record<VwPlanStatus, string> = {
+  queued: 'bg-gray-800 text-gray-400',
   generating: 'bg-blue-500/15 text-blue-300',
   active: 'bg-green-500/15 text-green-300',
   paused: 'bg-gray-700/50 text-gray-300',
@@ -132,3 +133,66 @@ export function changedFields<T extends object>(base: T, next: T): Partial<T> {
   ) as Partial<T>;
 }
 
+
+/** A failed plan doesn't count, so its piece can be picked again. */
+export function watchedPieceNames(plans: Array<Pick<VwPlan, 'piece_name' | 'status'>>): Set<string> {
+  return new Set(plans.filter(p => p.status !== 'failed').map(p => p.piece_name));
+}
+
+/** The `n` most used pieces on Cloud that aren't watched yet. Core pieces (Webhook, HTTP, Code…) have no vendor to watch. */
+export function pickTopByUsage(
+  pieces: Array<{ name: string; categories?: string[]; usage_projects: number | null }>,
+  n: number,
+  watched: Set<string>,
+): string[] {
+  return pieces
+    .filter((p): p is typeof p & { usage_projects: number } =>
+      p.usage_projects !== null && !p.categories?.includes('CORE') && !watched.has(p.name))
+    .sort((a, b) => b.usage_projects - a.usage_projects || a.name.localeCompare(b.name))
+    .slice(0, Math.max(0, n))
+    .map(p => p.name);
+}
+
+export function pickEnterprise(pieces: Array<{ name: string; enterprise: number }>, watched: Set<string>): string[] {
+  return pieces.filter(p => p.enterprise && !watched.has(p.name)).map(p => p.name);
+}
+
+/** `current` plus the new names from `add`, in order, until the list holds `max`. */
+export function addUpTo(current: string[], add: string[], max: number): string[] {
+  const out = [...current];
+  const seen = new Set(current);
+  for (const name of add) {
+    if (out.length >= max) break;
+    if (!seen.has(name)) { seen.add(name); out.push(name); }
+  }
+  return out;
+}
+
+const EST_USD_PER_WATCHER = 0.35;
+const EST_MINUTES_PER_WATCHER = 1.5;
+
+/** "230 selected · about $81 · runs one at a time, about 6 h"; cents under $10, minutes under an hour. */
+export function generationEstimate(n: number): string {
+  if (n === 0) return '0 selected';
+  const usd = n * EST_USD_PER_WATCHER;
+  const minutes = n * EST_MINUTES_PER_WATCHER;
+  const time = minutes < 60 ? `${Math.ceil(minutes)} min` : `${Math.ceil(minutes / 60)} h`;
+  return `${n} selected · about $${usd.toFixed(usd < 10 ? 2 : 0)} · runs one at a time, about ${time}`;
+}
+
+/** A pasted list (one per line, or comma/semicolon separated) → catalog names, plus the entries the catalog doesn't have, as typed. */
+export function parsePieceList(text: string, knownNames: Set<string>): { names: string[]; unknown: string[] } {
+  const names: string[] = [];
+  const unknown: string[] = [];
+  const seen = new Set<string>();
+  for (const entry of text.split(/[\n,;]/).map(s => s.trim()).filter(Boolean)) {
+    const name = entry.startsWith('@') || entry.includes('/')
+      ? entry
+      : `@activepieces/piece-${entry.toLowerCase().replace(/\s+/g, '-').replace(/^piece-/, '')}`;
+    if (seen.has(name)) continue;
+    seen.add(name);
+    if (knownNames.has(name)) names.push(name);
+    else unknown.push(entry);
+  }
+  return { names, unknown };
+}

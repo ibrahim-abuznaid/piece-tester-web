@@ -12,7 +12,10 @@ export default function VendorWatchChip({ pieceName }: { pieceName: string }) {
   const plan = useQuery({
     queryKey: ['vw-plan-by-piece', pieceName],
     queryFn: () => api.vwPlanByPiece(pieceName),
-    refetchInterval: (query) => (query.state.data?.status === 'generating' ? 3000 : false),
+    refetchInterval: (query) => {
+      const status = query.state.data?.status;
+      return status === 'generating' ? 3000 : status === 'queued' ? 30_000 : false;
+    },
   });
   const generate = useMutation({
     mutationFn: () => api.vwGenerate(pieceName),

@@ -1045,7 +1045,7 @@ function subscribeBatchSetup(id: string, callbacks: BatchStreamCallbacks): Abort
 
 // ── Vendor watch ──
 
-export type VwPlanStatus = 'generating' | 'active' | 'paused' | 'stale' | 'failed';
+export type VwPlanStatus = 'queued' | 'generating' | 'active' | 'paused' | 'stale' | 'failed';
 export type VwSourceKind = 'liveness' | 'feed' | 'openapi' | 'html';
 export type VwFindingKind = 'vendor_dead' | 'breaking' | 'deprecation' | 'auth_change' | 'new_feature' | 'other';
 export type VwSeverity = 'critical' | 'high' | 'medium' | 'low';
@@ -1487,4 +1487,12 @@ export const api = {
   vwDismissFinding: (id: number) => request<VwFinding>('POST', `/vendor-watch/findings/${id}/dismiss`),
   vwUsage: () => request<VwUsage>('GET', '/vendor-watch/usage'),
   vwRefreshUsage: (scope: 'watched' | 'catalog') => request<{ started: boolean }>('POST', '/vendor-watch/usage/refresh', { scope }),
+  vwGenerationQueue: () => request<VwGenerationQueue>('GET', '/vendor-watch/generation-queue'),
 };
+
+/** Watcher generation runs one plan at a time; `github_wait_until` is set while it waits out GitHub's rate limit. */
+export interface VwGenerationQueue {
+  pending: number;
+  running: number;
+  github_wait_until: string | null;
+}
