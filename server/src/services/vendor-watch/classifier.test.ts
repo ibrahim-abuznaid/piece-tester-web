@@ -39,6 +39,14 @@ describe('classifyChange', () => {
     expect(r.costUsd).toBeCloseTo(0.002);
   });
 
+  it('bounds the output: 16000 max tokens and at most 15 findings, most severe first', async () => {
+    const { client, calls } = fake(reply([]));
+    await classifyChange(input(), { client });
+    expect(calls[0].max_tokens).toBe(16000);
+    expect(calls[0].system).toContain('Report at most 15 findings, most severe first.');
+    expect(calls[0].tools[0].input_schema.properties.findings.maxItems).toBe(15);
+  });
+
   it('tells the model when it is reading a baseline, and marks the findings', async () => {
     const { client, calls } = fake(reply([finding]));
     const r = await classifyChange(input({ mode: 'baseline' }), { client });

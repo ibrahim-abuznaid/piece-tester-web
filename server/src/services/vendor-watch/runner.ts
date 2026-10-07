@@ -252,18 +252,24 @@ async function checkTextSource(
     recordSourceOk(source.id, false);
     return NOTHING;
   }
-  const result = await deps.classify({
-    pieceName: plan.piece_name,
-    pieceDisplayName: plan.piece_display_name || plan.piece_name,
-    vendorName: plan.vendor_name,
-    apiVersion: plan.api_version,
-    authType: plan.auth_type,
-    inventory,
-    source: { label: source.label, url: source.url, kind: source.kind },
-    mode: prev ? 'change' : 'baseline',
-    text,
-    today: deps.today().toISOString().slice(0, 10),
-  });
+  let result: ClassifyResult;
+  try {
+    result = await deps.classify({
+      pieceName: plan.piece_name,
+      pieceDisplayName: plan.piece_display_name || plan.piece_name,
+      vendorName: plan.vendor_name,
+      apiVersion: plan.api_version,
+      authType: plan.auth_type,
+      inventory,
+      source: { label: source.label, url: source.url, kind: source.kind },
+      mode: prev ? 'change' : 'baseline',
+      text,
+      today: deps.today().toISOString().slice(0, 10),
+    });
+  } catch (err: any) {
+    recordSourceFailure(source.id, `Classifier: ${err?.message || err}`, false);
+    throw err;
+  }
   saveSnapshot(source.id, norm.hash, norm.content);
   recordSourceOk(source.id, !!prev);
   return { changed: !!prev, failed: false, findings: result.findings, costUsd: result.costUsd };

@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { getDb } from '../../db/schema.js';
 import {
   beginPlanGeneration, completePlanGeneration, replaceSources, getSnapshot, listFindings, listSources,
-  updateWatchConfig, deletePlan, getRun, type SourceInput,
+  updateWatchConfig, deletePlan, getRun, listPlans, type SourceInput,
 } from '../../db/vendor-watch-queries.js';
 import { resetVendorWatch, samplePlanResult, sampleDraft } from '../../db/vendor-watch-test-utils.js';
 import { startWatchRun, type RunnerDeps } from './runner.js';
@@ -133,6 +133,24 @@ describe('startWatchRun — feeds', () => {
     h.classify = async () => ({ findings: [], costUsd: 0 });
     await run(planId, h);
     expect(h.classifyCalls.filter(c => c.mode === 'change')).toHaveLength(2);
+    expect(getSnapshot(rows[0].id)!.content_hash).not.toBe(before);
+  });
+
+  it('marks the source failing when the classifier throws, never counting toward dead, until a good check clears it', async () => {
+    const { planId, rows } = plan([FEED]);
+    const h = harness();
+    await run(planId, h);
+    const before = getSnapshot(rows[0].id)!.content_hash;
+    h.body = RSS(['a', 'b']);
+    h.classify = async () => { throw new Error('Classifier output was truncated'); };
+    await run(planId, h);
+    await run(planId, h);
+    expect(listSources(planId)[0]).toMatchObject({ consecutive_failures: 0, last_error: 'Classifier: Classifier output was truncated' });
+    expect(listPlans()[0]).toMatchObject({ sources_ok: 0, sources_failing: 1 });
+    expect(getSnapshot(rows[0].id)!.content_hash).toBe(before);
+    h.classify = async () => ({ findings: [], costUsd: 0 });
+    await run(planId, h);
+    expect(listSources(planId)[0]).toMatchObject({ consecutive_failures: 0, last_error: '' });
     expect(getSnapshot(rows[0].id)!.content_hash).not.toBe(before);
   });
 

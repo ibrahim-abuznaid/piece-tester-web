@@ -38,6 +38,7 @@ const REPORT_TOOL = {
     properties: {
       findings: {
         type: 'array',
+        maxItems: 15,
         items: {
           type: 'object',
           properties: {
@@ -82,7 +83,8 @@ Rules:
 - Match changes to the inventory by endpoint path, SDK method name or feature name, and put the matching target names in affected_targets. Use ["*"] only for changes that hit every target (auth, base URL, API version, vendor shutdown).
 - evidence_excerpt MUST be copied word for word from the text. Never paraphrase it.
 - Marketing posts, docs typo fixes, UI-only changes and changes to products the piece does not call are NOT findings. An empty list is the normal answer.
-- One finding per distinct change.`;
+- One finding per distinct change.
+- Report at most 15 findings, most severe first.`;
 
 const BASELINE_NOTE = 'This is the FIRST read of this source, so the text is history, not news. Report only deprecations, sunsets, breaking changes and auth changes that are still upcoming or took effect in the last 90 days. Do not report new features or anything older.';
 
@@ -133,7 +135,7 @@ export async function classifyChange(
 
   const response = await client.messages.create({
     model,
-    max_tokens: 4096,
+    max_tokens: 16000,
     system: CLASSIFIER_SYSTEM,
     tools: [REPORT_TOOL],
     tool_choice: { type: 'tool', name: REPORT_TOOL.name },
