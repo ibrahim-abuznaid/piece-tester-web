@@ -20,6 +20,15 @@ export interface FileOptions {
   today?: Date;
 }
 
+export class FilingInProgressError extends Error {
+  constructor(findingId: number) {
+    super(`Finding ${findingId} is already being filed`);
+    this.name = 'FilingInProgressError';
+  }
+}
+
+const filing = new Set<number>();
+
 function mustGet(id: number): VendorFindingRow {
   const f = getFinding(id);
   if (!f) throw new Error(`Finding ${id} not found`);
@@ -52,12 +61,17 @@ export function previewFiling(findingId: number, today = new Date()): FilingPrev
   return { draft: buildTicketDraft(f, ticketContext(f, today), 'manual'), mode: 'create', existing: null };
 }
 
-/** File one finding: comment on a matching filed ticket, or create a new one. On failure the finding stays 'new' with file_error set. */
+/**
+ * File one finding: comment on a matching filed ticket, or create a new one. On failure the finding stays 'new' with file_error set.
+ * A second call for a finding that is still being filed throws FilingInProgressError before touching Linear.
+ */
 export async function fileFinding(findingId: number, opts: FileOptions): Promise<VendorFindingRow> {
   const f = mustGet(findingId);
   if (f.status !== 'new') throw new Error(`Finding ${findingId} is already ${f.status}`);
   const apiKey = getSettings().linear_api_key;
   const config = getWatchConfig();
+  if (filing.has(f.id)) throw new FilingInProgressError(f.id);
+  filing.add(f.id);
   try {
     const merge = findMergeTarget(f.piece_name, f.kind, parseTargets(f.affected_targets), f.id);
     if (merge?.linear_issue_id) {
@@ -80,5 +94,7 @@ export async function fileFinding(findingId: number, opts: FileOptions): Promise
   } catch (err: any) {
     setFindingFileError(f.id, err?.message || String(err));
     throw err;
+  } finally {
+    filing.delete(f.id);
   }
 }

@@ -66,6 +66,23 @@ describe('fileFinding', () => {
     await expect(fileFinding(f.id, { filedBy: 'auto', query: fakeLinear({ label: false }).q })).rejects.toThrow(/not found in PIE/);
     expect(getFinding(f.id)).toMatchObject({ status: 'new' });
     expect(getFinding(f.id)!.file_error).toContain("Label 'vendor-watch' not found");
+    await expect(fileFinding(f.id, { filedBy: 'manual', query: fakeLinear().q })).resolves.toMatchObject({ status: 'filed', file_error: '' });
+  });
+
+  it('refuses a second concurrent filing of the same finding before it reaches Linear', async () => {
+    const { add } = setup();
+    const f = add('a');
+    const { q, calls } = fakeLinear();
+    let open!: () => void;
+    const gate = new Promise<void>(r => { open = r; });
+    const gated = (async (...args: Parameters<LinearQueryFn>) => { await gate; return q(...args); }) as LinearQueryFn;
+    const first = fileFinding(f.id, { filedBy: 'auto', query: gated });
+    const second = fileFinding(f.id, { filedBy: 'manual', query: gated });
+    open();
+    const [a, b] = await Promise.allSettled([first, second]);
+    expect(a).toMatchObject({ status: 'fulfilled', value: { status: 'filed', filed_by: 'auto', file_error: '' } });
+    expect(b).toMatchObject({ status: 'rejected', reason: { message: `Finding ${f.id} is already being filed` } });
+    expect(calls.map(c => c.op)).toEqual(['VendorWatchTeam', 'VendorWatchLabel', 'VendorWatchCreateIssue']);
   });
 
   it('refuses a finding that is not new', async () => {
