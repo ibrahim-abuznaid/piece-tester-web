@@ -1,3 +1,5 @@
+import type Anthropic from '@anthropic-ai/sdk';
+
 /**
  * Bounded Anthropic client options shared by every LLM call in the app.
  *
@@ -30,3 +32,10 @@ export function buildAnthropicClientOptions(apiKey: string): AnthropicClientOpti
     maxRetries: ANTHROPIC_MAX_RETRIES,
   };
 }
+
+/** The one SDK surface the agent runner and the vendor-watch classifier use. Lets tests inject a fake. */
+export type MessagesClient = {
+  messages: {
+    create: (body: Anthropic.MessageCreateParamsNonStreaming, opts?: Anthropic.RequestOptions) => Promise<Anthropic.Message>;
+  };
+};
