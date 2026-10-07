@@ -72,7 +72,9 @@ export function initVendorWatch(): boolean {
     return false;
   }
   try {
-    task = cron.schedule(c.cron_expression, () => { void runWatchCycle(); }, { timezone: c.timezone || 'UTC' });
+    task = cron.schedule(c.cron_expression, () => {
+      runWatchCycle().catch(err => console.error(`[vendor-watch] cycle failed: ${err?.message || err}`));
+    }, { timezone: c.timezone || 'UTC' });
   } catch (err: any) {
     console.warn(`[vendor-watch] could not register the cron: ${err?.message || err}`);
     return false;

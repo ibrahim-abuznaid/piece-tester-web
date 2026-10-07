@@ -1,7 +1,14 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { beginPlanGeneration, completePlanGeneration, getPlan, setPlanStatus, updateWatchConfig } from '../../db/vendor-watch-queries.js';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import {
+  beginPlanGeneration, completePlanGeneration, getPlan, listRunnablePlans, setPlanStatus, updateWatchConfig,
+} from '../../db/vendor-watch-queries.js';
 import { resetVendorWatch, samplePlanResult } from '../../db/vendor-watch-test-utils.js';
 import { initVendorWatch, isCycleRunning, runWatchCycle, stopVendorWatch } from './cron.js';
+
+vi.mock('../../db/vendor-watch-queries.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../db/vendor-watch-queries.js')>();
+  return { ...actual, listRunnablePlans: vi.fn(actual.listRunnablePlans) };
+});
 
 function active(name: string) {
   const p = beginPlanGeneration(name);
@@ -68,5 +75,11 @@ describe('runWatchCycle', () => {
     });
     expect(r).toMatchObject({ started: true, plans: 1, staleMarked: 0 });
     expect(ran).toHaveLength(1);
+  });
+
+  it('clears the overlap flag when listing plans throws', async () => {
+    vi.mocked(listRunnablePlans).mockImplementationOnce(() => { throw new Error('db gone'); });
+    await expect(runWatchCycle({ catalogVersions: async () => new Map(), runPlan: async () => {} })).rejects.toThrow('db gone');
+    expect(isCycleRunning()).toBe(false);
   });
 });
