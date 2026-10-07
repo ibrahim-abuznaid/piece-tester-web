@@ -126,6 +126,24 @@ describe('generateWatchPlan and the GitHub rate limit', () => {
     expect(plan.generation_note).toBe(['Found an RSS changelog.', 'endpoint_inventory: dropped "ghost"', RATE_LIMIT_LINE].join('\n'));
   });
 
+  it('appends the rate-limit line to the failure note when GitHub limited a failed generation', async () => {
+    const plan = await generateWatchPlan('@activepieces/piece-new', deps({ runWorker: async () => { await hitGitHubRateLimit(); return null; } }).d);
+    expect(plan.status).toBe('failed');
+    expect(plan.generation_note).toBe(`The agent finished without saving a watch plan.\n${RATE_LIMIT_LINE}`);
+
+    const long = await generateWatchPlan('@activepieces/piece-long', deps({
+      runWorker: async () => { await hitGitHubRateLimit(); throw new Error('x'.repeat(5000)); },
+    }).d);
+    expect(long.status).toBe('failed');
+    expect(long.generation_note.length).toBeLessThanOrEqual(2000);
+    expect(long.generation_note.endsWith(`x\n${RATE_LIMIT_LINE}`)).toBe(true);
+  });
+
+  it('leaves a failure note alone when GitHub did not limit the generation', async () => {
+    const plan = await generateWatchPlan('@activepieces/piece-new', deps({ runWorker: async () => null }).d);
+    expect(plan.generation_note).toBe('The agent finished without saving a watch plan.');
+  });
+
   it('leaves the note alone when the only hit came before this generation started', async () => {
     await hitGitHubRateLimit();
     await new Promise(r => setTimeout(r, 5));

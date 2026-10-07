@@ -226,13 +226,16 @@ export function completePlanGeneration(planId: number, r: PlanResult): WatchPlan
   return getPlan(planId)!;
 }
 
+/** Longest generation_note a failed generation keeps. */
+export const MAX_FAILURE_NOTE = 2000;
+
 /** A first generation that fails → failed. A failed regeneration → stale, so the old plan keeps running. */
 export function failPlanGeneration(planId: number, note: string, costUsd = 0): WatchPlanRow {
   getDb().run(
     `UPDATE watch_plans SET status = CASE WHEN generated_at IS NULL THEN 'failed' ELSE 'stale' END,
        generation_note = ?, generation_cost_usd = ?
      WHERE id = ?`,
-    [note.slice(0, 2000), costUsd, planId],
+    [note.slice(0, MAX_FAILURE_NOTE), costUsd, planId],
   );
   return getPlan(planId)!;
 }
@@ -521,7 +524,7 @@ export function findMergeTarget(pieceName: string, kind: FindingKind, targets: s
 
 /**
  * Close runs and generations a restart interrupted. A regeneration falls back to stale, a first one to failed.
- * The generation queue lives in memory, so plans still waiting in it are failed too.
+ * The generation queue lives in memory, so plans still waiting in it are closed the same way.
  */
 export function reconcileVendorWatch(): { runs: number; plans: number } {
   const runs = getDb().run(
@@ -534,7 +537,8 @@ export function reconcileVendorWatch(): { runs: number; plans: number } {
      WHERE status = 'generating'`,
   ).changes;
   const queued = getDb().run(
-    `UPDATE watch_plans SET status = 'failed', generation_note = 'interrupted by restart (was queued)'
+    `UPDATE watch_plans SET status = CASE WHEN generated_at IS NULL THEN 'failed' ELSE 'stale' END,
+       generation_note = 'interrupted by restart (was queued)'
      WHERE status = 'queued'`,
   ).changes;
   return { runs, plans: generating + queued };

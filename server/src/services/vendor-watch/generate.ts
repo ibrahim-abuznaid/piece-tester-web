@@ -1,6 +1,6 @@
 import {
-  beginPlanGeneration, completePlanGeneration, failPlanGeneration, getPlan, getPlanByPiece, queuePlanGeneration,
-  replaceSources, type SourceInput, type WatchPlanRow,
+  beginPlanGeneration, completePlanGeneration, failPlanGeneration, getPlan, getPlanByPiece, MAX_FAILURE_NOTE,
+  queuePlanGeneration, replaceSources, type SourceInput, type WatchPlanRow,
 } from '../../db/vendor-watch-queries.js';
 import { CostTracker } from '../../agents/v2/cost-tracker.js';
 import { runWatchPlannerWorker } from '../../agents/v2/workers/watch-planner.js';
@@ -37,6 +37,13 @@ export async function generateWatchPlan(pieceName: string, deps: Partial<Generat
   const startedAt = Date.now();
   const tracker = new CostTracker({ pieceName, actionName: '', operation: 'vendor_watch_generate', version: 'vendor-watch-1' });
   const agentErrors: string[] = [];
+  const githubNote = () => (githubRateLimitHitsSince(startedAt) ? GITHUB_LIMIT_NOTE : '');
+  /** The GitHub line goes last; a long error is cut, not the line. */
+  const fail = (note: string, cost: number) => {
+    const line = githubNote();
+    const kept = line ? `${note.slice(0, MAX_FAILURE_NOTE - line.length - 1)}\n${line}` : note;
+    return failPlanGeneration(plan.id, kept, cost);
+  };
   try {
     const meta = await d.getPieceMetadata(pieceName);
     const result = await d.runWorker({
@@ -46,9 +53,9 @@ export async function generateWatchPlan(pieceName: string, deps: Partial<Generat
     });
     const cost = tracker.getTotals().cost_usd;
     if (!result) {
-      return failPlanGeneration(plan.id, agentErrors.slice(-3).join('\n') || 'The agent finished without saving a watch plan.', cost);
+      return fail(agentErrors.slice(-3).join('\n') || 'The agent finished without saving a watch plan.', cost);
     }
-    if (result.errors.length) return failPlanGeneration(plan.id, `Watch plan rejected: ${result.errors.join('; ')}`, cost);
+    if (result.errors.length) return fail(`Watch plan rejected: ${result.errors.join('; ')}`, cost);
     const p = result.plan;
     completePlanGeneration(plan.id, {
       piece_version: meta.version,
@@ -58,8 +65,7 @@ export async function generateWatchPlan(pieceName: string, deps: Partial<Generat
       api_version: p.api_version,
       auth_type: p.auth_type,
       endpoint_inventory: p.endpoint_inventory,
-      generation_note: [p.note, ...result.warnings, githubRateLimitHitsSince(startedAt) ? GITHUB_LIMIT_NOTE : '']
-        .filter(Boolean).join('\n'),
+      generation_note: [p.note, ...result.warnings, githubNote()].filter(Boolean).join('\n'),
       generation_cost_usd: cost,
     });
     const sources: SourceInput[] = [
@@ -70,7 +76,7 @@ export async function generateWatchPlan(pieceName: string, deps: Partial<Generat
     d.startBaseline(plan.id);
     return getPlan(plan.id)!;
   } catch (err: any) {
-    return failPlanGeneration(plan.id, String(err?.message || err), tracker.getTotals().cost_usd);
+    return fail(String(err?.message || err), tracker.getTotals().cost_usd);
   }
 }
 

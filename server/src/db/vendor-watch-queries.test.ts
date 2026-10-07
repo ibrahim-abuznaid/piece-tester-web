@@ -255,16 +255,16 @@ describe('reconcileVendorWatch', () => {
     expect(getPlan(fresh.id)!.generation_note).toBe('interrupted by restart');
   });
 
-  it('fails plans that were still queued, alongside interrupted generations', () => {
+  it('closes plans still queued like generations: a queued regeneration falls back to stale, a first one to failed', () => {
     const a = activePlan('@activepieces/piece-a');
     queuePlanGeneration(a.piece_name);
     const fresh = queuePlanGeneration('@activepieces/piece-fresh');
     const generating = beginPlanGeneration('@activepieces/piece-generating');
     const untouched = activePlan('@activepieces/piece-b');
     expect(reconcileVendorWatch()).toEqual({ runs: 0, plans: 3 });
-    for (const id of [a.id, fresh.id]) {
-      expect(getPlan(id)).toMatchObject({ status: 'failed', generation_note: 'interrupted by restart (was queued)' });
-    }
+    expect(getPlan(a.id)).toMatchObject({ status: 'stale', generation_note: 'interrupted by restart (was queued)' });
+    expect(listRunnablePlans().map(p => p.id)).toEqual([a.id, untouched.id]);
+    expect(getPlan(fresh.id)).toMatchObject({ status: 'failed', generation_note: 'interrupted by restart (was queued)' });
     expect(getPlan(generating.id)).toMatchObject({ status: 'failed', generation_note: 'interrupted by restart' });
     expect(getPlan(untouched.id)!.status).toBe('active');
   });
