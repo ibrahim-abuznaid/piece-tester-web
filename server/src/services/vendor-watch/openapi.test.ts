@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { parseSpec, isOpenApiDoc, normalizePath, buildOpMap, diffOpenApi, normalizeOpenApi, parseOpMap } from './openapi.js';
-import { pathsMatch, targetsUsingOp } from './endpoint-match.js';
+import { parseSpec, isOpenApiDoc, normalizePath, buildOpMap, diffOpenApi, normalizeOpenApi, parseOpMap, type OpMap } from './openapi.js';
+import { pathsMatch, resolveEntry, targetsUsingOp } from './endpoint-match.js';
 import { openApiFindings, openApiBaselineFindings } from './openapi-findings.js';
 import type { EndpointRef } from './types.js';
 
@@ -32,6 +32,8 @@ const specV2 = {
   },
   components: { parameters: { Cursor: { name: 'cursor', in: 'query', required: true } } },
 };
+
+const opsOf = (...keys: string[]): OpMap => Object.fromEntries(keys.map(k => [k, { deprecated: false, params: [] }]));
 
 const inventory: EndpointRef[] = [
   { target: 'delete_widget', target_kind: 'action', method: 'DELETE', path: '/widgets/${widgetId}' },
@@ -107,7 +109,7 @@ describe('diffOpenApi', () => {
     const diff = diffOpenApi(buildOpMap(before), buildOpMap(after));
     expect(diff).toEqual({ removed: [], newlyDeprecated: [], newRequiredParams: [], added: [] });
     const used: EndpointRef[] = [{ target: 'get_customer', target_kind: 'action', method: 'GET', path: '/v1/customers/{id}' }];
-    expect(openApiFindings(diff, used, 'u')).toEqual([]);
+    expect(openApiFindings(diff, used, 'u', buildOpMap(before), buildOpMap(after))).toEqual([]);
   });
 });
 
@@ -120,15 +122,26 @@ describe('endpoint matching', () => {
   });
 
   it('maps an operation to the targets that call it, ignoring SDK entries', () => {
-    expect(targetsUsingOp(inventory, 'GET /v1/widgets/{}')).toEqual(['get_widget']);
-    expect(targetsUsingOp(inventory, 'DELETE /v1/widgets/{}')).toEqual(['delete_widget']);
-    expect(targetsUsingOp(inventory, 'POST /v1/orders')).toEqual([]);
+    const ops = buildOpMap(specV1);
+    expect(targetsUsingOp(inventory, 'GET /v1/widgets/{}', ops)).toEqual(['get_widget']);
+    expect(targetsUsingOp(inventory, 'DELETE /v1/widgets/{}', ops)).toEqual(['delete_widget']);
+    expect(targetsUsingOp(inventory, 'POST /v1/orders', ops)).toEqual([]);
+  });
+
+  it('resolves an entry to the op whose segment count is closest, keeping ties, when no path is exact', () => {
+    const ops = opsOf('GET /v1/sources/{}', 'GET /v1/customers/{}/sources/{}');
+    const entry: EndpointRef = { target: 'get_source', target_kind: 'action', method: 'GET', path: '/sources/{id}' };
+    expect(resolveEntry(entry, ops)).toEqual(['GET /v1/sources/{}']);
+    expect(targetsUsingOp([entry], 'GET /v1/customers/{}/sources/{}', ops)).toEqual([]);
+    expect(resolveEntry(entry, opsOf('GET /v1/sources/{}', 'GET /v2/sources/{}'))).toEqual(['GET /v1/sources/{}', 'GET /v2/sources/{}']);
+    expect(resolveEntry({ ...entry, method: 'SDK', path: 'sdk:@acme/sdk#sources.get' }, ops)).toEqual([]);
   });
 });
 
 describe('openApiFindings', () => {
   it('turns a diff into findings: breaking/deprecation for used operations, one new_feature for additions', () => {
-    const f = openApiFindings(diffOpenApi(buildOpMap(specV1), buildOpMap(specV2)), inventory, 'https://acme.dev/openapi.json');
+    const [prev, next] = [buildOpMap(specV1), buildOpMap(specV2)];
+    const f = openApiFindings(diffOpenApi(prev, next), inventory, 'https://acme.dev/openapi.json', prev, next);
     expect(f.map(x => [x.kind, x.severity, x.affected_targets, x.signature])).toEqual([
       ['breaking', 'high', ['delete_widget'], 'breaking|DELETE /v1/widgets/{}'],
       ['deprecation', 'high', ['get_widget'], 'deprecation|GET /v1/widgets/{}'],
@@ -140,9 +153,24 @@ describe('openApiFindings', () => {
   });
 
   it('reports changes to operations the piece does not use as low "other" findings', () => {
-    const f = openApiFindings(diffOpenApi(buildOpMap(specV1), buildOpMap(specV2)), [], 'u');
+    const [prev, next] = [buildOpMap(specV1), buildOpMap(specV2)];
+    const f = openApiFindings(diffOpenApi(prev, next), [], 'u', prev, next);
     expect(f.filter(x => x.kind === 'other').map(x => x.severity)).toEqual(['low', 'low', 'low']);
     expect(f.some(x => x.kind === 'breaking' || x.kind === 'deprecation')).toBe(false);
+  });
+
+  it('does not hit a target that calls a nested path when the top-level op with the same tail is deprecated', () => {
+    const prev = opsOf('GET /issues', 'GET /repos/{}/{}/issues');
+    const next: OpMap = { ...prev, 'GET /issues': { deprecated: true, params: [] } };
+    const inv: EndpointRef[] = [{ target: 'list_repo_issues', target_kind: 'action', method: 'GET', path: '/repos/${owner}/${repo}/issues' }];
+    const f = openApiFindings(diffOpenApi(prev, next), inv, 'u', prev, next);
+    expect(f.map(x => [x.kind, x.affected_targets, x.signature])).toEqual([['other', [], 'other|deprecated|GET /issues']]);
+  });
+
+  it('does not report a base-path move as a removal for a target that still resolves in the new spec', () => {
+    const [prev, next] = [opsOf('GET /orders'), opsOf('GET /v1/orders')];
+    const f = openApiFindings(diffOpenApi(prev, next), inventory, 'u', prev, next);
+    expect(f.map(x => [x.kind, x.affected_targets])).toEqual([['other', []], ['new_feature', []]]);
   });
 
   it('on baseline, reports only deprecated operations the piece still calls', () => {

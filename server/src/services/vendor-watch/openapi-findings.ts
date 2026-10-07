@@ -1,5 +1,5 @@
 import { sha1 } from './normalize.js';
-import { targetsUsingOp } from './endpoint-match.js';
+import { resolveEntry, targetsUsingOp } from './endpoint-match.js';
 import type { OpenApiDiff, OpMap } from './openapi.js';
 import type { EndpointRef, FindingDraft, FindingKind, Severity } from './types.js';
 
@@ -18,11 +18,18 @@ function finding(
 
 const who = (targets: string[]) => targets.map(t => `\`${t}\``).join(', ');
 
-/** Deterministic findings from a spec diff. Changes to operations the piece calls are high; the rest are low. */
-export function openApiFindings(diff: OpenApiDiff, inventory: EndpointRef[], sourceUrl: string): FindingDraft[] {
+/**
+ * Deterministic findings from a spec diff. Changes to operations the piece calls are high; the rest are low.
+ * Removed ops resolve against `prev`, and only entries that resolve to nothing in `next` count, so a
+ * base-path move is not a removal. Everything else resolves against `next`.
+ */
+export function openApiFindings(
+  diff: OpenApiDiff, inventory: EndpointRef[], sourceUrl: string, prev: OpMap, next: OpMap,
+): FindingDraft[] {
   const out: FindingDraft[] = [];
+  const gone = inventory.filter(e => resolveEntry(e, next).length === 0);
   for (const op of diff.removed) {
-    const t = targetsUsingOp(inventory, op);
+    const t = targetsUsingOp(gone, op, prev);
     out.push(t.length
       ? finding('breaking', 'high', t, `Endpoint removed: ${op}`,
         `The vendor's OpenAPI spec no longer has ${op}, which ${who(t)} call.`,
@@ -33,7 +40,7 @@ export function openApiFindings(diff: OpenApiDiff, inventory: EndpointRef[], sou
         'No action needed.', op, sourceUrl, `other|removed|${op}`, false));
   }
   for (const op of diff.newlyDeprecated) {
-    const t = targetsUsingOp(inventory, op);
+    const t = targetsUsingOp(inventory, op, next);
     out.push(t.length
       ? finding('deprecation', 'high', t, `Endpoint deprecated: ${op}`,
         `The vendor's OpenAPI spec now marks ${op} as deprecated; ${who(t)} call it.`,
@@ -44,7 +51,7 @@ export function openApiFindings(diff: OpenApiDiff, inventory: EndpointRef[], sou
         'No action needed.', op, sourceUrl, `other|deprecated|${op}`, false));
   }
   for (const { op, param } of diff.newRequiredParams) {
-    const t = targetsUsingOp(inventory, op);
+    const t = targetsUsingOp(inventory, op, next);
     out.push(t.length
       ? finding('breaking', 'high', t, `New required parameter on ${op}`,
         `${op} now requires ${param}; ${who(t)} call it.`,
@@ -71,7 +78,7 @@ export function openApiBaselineFindings(ops: OpMap, inventory: EndpointRef[], so
   const out: FindingDraft[] = [];
   for (const [op, info] of Object.entries(ops)) {
     if (!info.deprecated) continue;
-    const t = targetsUsingOp(inventory, op);
+    const t = targetsUsingOp(inventory, op, ops);
     if (!t.length) continue;
     out.push(finding('deprecation', 'medium', t, `Piece calls a deprecated endpoint: ${op}`,
       `The vendor's OpenAPI spec marks ${op} as deprecated, and ${who(t)} still call it.`,

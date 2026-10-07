@@ -1,22 +1,48 @@
-import { normalizePath } from './openapi.js';
+import { normalizePath, type OpMap } from './openapi.js';
 import type { EndpointRef } from './types.js';
 
-/** Segment-wise suffix match, so an inventory path without the base path ('/orders') matches '/v1/orders'. */
+const segments = (path: string) => normalizePath(path).split('/').filter(Boolean);
+
+function splitOp(op: string): [method: string, path: string] {
+  const space = op.indexOf(' ');
+  return [op.slice(0, space), op.slice(space + 1)];
+}
+
+/**
+ * Segment-wise suffix match in either direction, so an inventory path without the base path ('/orders')
+ * matches '/v1/orders'. A candidate test only: `resolveEntry` picks the op an entry actually calls.
+ */
 export function pathsMatch(a: string, b: string): boolean {
-  const sa = normalizePath(a).split('/').filter(Boolean);
-  const sb = normalizePath(b).split('/').filter(Boolean);
+  const sa = segments(a);
+  const sb = segments(b);
   const [short, long] = sa.length <= sb.length ? [sa, sb] : [sb, sa];
   if (short.length === 0 || short.every(s => s === '{}')) return false;
   const tail = long.slice(long.length - short.length);
   return short.every((s, i) => s === tail[i]);
 }
 
-/** Inventory targets that call the operation "METHOD /path". SDK entries never match. */
-export function targetsUsingOp(inventory: EndpointRef[], op: string): string[] {
-  const space = op.indexOf(' ');
-  const method = op.slice(0, space);
-  const path = op.slice(space + 1);
-  return [...new Set(
-    inventory.filter(e => e.method.toUpperCase() === method && pathsMatch(e.path, path)).map(e => e.target),
-  )];
+/**
+ * The op(s) in `ops` an inventory entry calls: among same-method ops whose path matches, the ones whose
+ * segment count is closest to the entry's, all of them on a tie. A match with the same segment count is
+ * the exact normalized path, so an exact match always wins outright. SDK entries never match.
+ */
+export function resolveEntry(entry: EndpointRef, ops: OpMap): string[] {
+  const method = entry.method.toUpperCase();
+  const path = normalizePath(entry.path);
+  const candidates = Object.keys(ops).filter(k => {
+    const [m, p] = splitOp(k);
+    return m === method && pathsMatch(path, p);
+  });
+  const want = segments(path).length;
+  const distance = (k: string) => Math.abs(segments(splitOp(k)[1]).length - want);
+  const best = Math.min(...candidates.map(distance));
+  return candidates.filter(k => distance(k) === best);
+}
+
+/** Inventory targets with an entry that resolves to `op` within `ops` (see `resolveEntry`). */
+export function targetsUsingOp(inventory: EndpointRef[], op: string, ops: OpMap): string[] {
+  const [method, path] = splitOp(op);
+  return [...new Set(inventory
+    .filter(e => e.method.toUpperCase() === method && pathsMatch(e.path, path) && resolveEntry(e, ops).includes(op))
+    .map(e => e.target))];
 }
