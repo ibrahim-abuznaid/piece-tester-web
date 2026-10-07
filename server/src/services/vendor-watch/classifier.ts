@@ -48,7 +48,7 @@ const REPORT_TOOL = {
               type: 'array', items: { type: 'string' },
               description: 'Target names from the inventory this change hits; ["*"] when it hits every target (auth, base URL, API version, shutdown); [] when it hits nothing the piece uses.',
             },
-            effective_date: { type: ['string', 'null'], description: 'YYYY-MM-DD when the change takes effect, or null if the text gives no date.' },
+            effective_date: { type: ['string', 'null'], description: 'YYYY-MM-DD when the change takes effect (removal, sunset or enforcement date), or null if the text gives no such date. A release or publish date counts only when the change takes effect on release. Never guess.' },
             title: { type: 'string', description: 'At most 90 characters, plain words, e.g. "Conversations API v1 sunsets on 2027-03-01".' },
             summary: { type: 'string', description: 'At most 600 characters: what changes and what it means for this piece.' },
             suggested_action: { type: 'string', description: 'One sentence: what the Pieces team should do.' },
@@ -82,6 +82,8 @@ Severity:
 Rules:
 - Match changes to the inventory by endpoint path, SDK method name or feature name, and put the matching target names in affected_targets. Use ["*"] only for changes that hit every target (auth, base URL, API version, vendor shutdown).
 - evidence_excerpt MUST be copied word for word from the text. Never paraphrase it.
+- Release notes of the vendor's SDK (for example a GitHub releases feed of its Node library) describe the SDK, not the HTTP API. They only affect targets whose inventory entry is "SDK sdk:<that SDK>#…". A change to the SDK's types, such as a field becoming required or a parameter removed from its typings, does not break targets that call the HTTP API directly. The piece also keeps its pinned SDK version until someone upgrades it, so an SDK-only change is at most medium.
+- If the vendor versions its API (dated or numbered versions), a change that ships only in a newer version does not break the piece, because existing callers keep their version. Report it as new_feature or other at low severity. Only the deprecation, sunset or retirement of a version the piece uses (see "API version" above) is a deprecation or breaking change.
 - Marketing posts, docs typo fixes, UI-only changes and changes to products the piece does not call are NOT findings. An empty list is the normal answer.
 - One finding per distinct change.
 - Report at most 15 findings, most severe first.`;

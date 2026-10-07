@@ -47,6 +47,14 @@ describe('classifyChange', () => {
     expect(calls[0].tools[0].input_schema.properties.findings.maxItems).toBe(15);
   });
 
+  it('tells the model that SDK-only and newer-API-version changes do not break HTTP callers', async () => {
+    const { client, calls } = fake(reply([]));
+    await classifyChange(input(), { client });
+    expect(calls[0].system).toContain('does not break targets that call the HTTP API directly');
+    expect(calls[0].system).toContain('a change that ships only in a newer version does not break the piece');
+    expect(calls[0].tools[0].input_schema.properties.findings.items.properties.effective_date.description).toContain('Never guess.');
+  });
+
   it('tells the model when it is reading a baseline, and marks the findings', async () => {
     const { client, calls } = fake(reply([finding]));
     const r = await classifyChange(input({ mode: 'baseline' }), { client });
