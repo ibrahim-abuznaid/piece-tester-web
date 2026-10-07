@@ -22,6 +22,8 @@ describe('parseConfigPatch', () => {
     [{ linear_team_key: 'p-1' }, /team key/],
     [{ linear_label: '' }, /1–80/],
     [{ linear_label: 'piece-tester' }, /Bug Trend/],
+    [{ linear_label: 'Piece-Tester' }, /Bug Trend/],
+    [{ linear_label: ' piece-tester ' }, /Bug Trend/],
     [{ dead_after_failures: 0 }, /1 to 30/],
     [{ dead_after_failures: 2.5 }, /1 to 30/],
   ])('rejects %j', (body, message) => {

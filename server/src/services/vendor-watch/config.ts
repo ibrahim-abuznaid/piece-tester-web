@@ -29,7 +29,7 @@ export function parseConfigPatch(body: Record<string, unknown>): { patch: WatchC
   if (body.linear_label !== undefined) {
     const v = String(body.linear_label).trim();
     if (!v || v.length > 80) return { patch, error: 'Linear label must be 1–80 characters' };
-    if (v === 'piece-tester') return { patch, error: 'Do not use the piece-tester label: Bug Trend counts those issues as tester bugs' };
+    if (v.toLowerCase() === 'piece-tester') return { patch, error: 'Do not use the piece-tester label: Bug Trend counts those issues as tester bugs' };
     patch.linear_label = v;
   }
   if (body.classifier_model !== undefined) {
