@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   compareImportance, countByImportance, describeTargets, effectiveLabel, importanceTitle, matchesImportance,
-  parseImportanceParam, parseJsonArray, shortPieceName, sourceHealth, toggleImportance,
+  parseImportanceParam, parseJsonArray, shortPieceName, sourceHealth, toPieceName, toggleImportance,
 } from './vendorWatch';
 
 describe('vendorWatch helpers', () => {
@@ -86,5 +86,22 @@ describe('importance helpers', () => {
       { n: 'e', ...rated('high', { enterprise: 1, usage_projects: null }) },
     ];
     expect([...rows].sort(compareImportance).map(r => r.n)).toEqual(['d', 'c', 'e', 'a', 'b']);
+  });
+});
+
+describe('toPieceName', () => {
+  it.each([
+    ['Salesforce', '@activepieces/piece-salesforce'],
+    ['  Google Sheets ', '@activepieces/piece-google-sheets'],
+    ['piece-sap-ariba', '@activepieces/piece-sap-ariba'],
+    ['zoho-crm', '@activepieces/piece-zoho-crm'],
+    ['@activepieces/piece-netsuite', '@activepieces/piece-netsuite'],
+    ['@acme/piece-internal', '@acme/piece-internal'],
+  ])('%s → %s', (text, name) => {
+    expect(toPieceName(text)).toBe(name);
+  });
+
+  it.each(['', '   ', 'Sales/force', 'what?!'])('rejects %j', (text) => {
+    expect(toPieceName(text)).toBeNull();
   });
 });

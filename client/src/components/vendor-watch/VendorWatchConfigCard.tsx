@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Building2, CheckCircle, Loader2, RefreshCw, X, XCircle } from 'lucide-react';
 import { api, type VwConfig } from '../../lib/api';
-import { parseJsonArray, shortPieceName } from '../../lib/vendorWatch';
+import { parseJsonArray, shortPieceName, toPieceName } from '../../lib/vendorWatch';
 
 const INPUT = 'w-full rounded border border-gray-700 bg-gray-950 px-2 py-1.5 text-sm text-gray-200';
 
@@ -155,12 +155,12 @@ function ImportanceSettings({ high, medium, enterprise, onHigh, onMedium, onEnte
     return t ? pieces.find(p => [p.name, p.displayName, shortPieceName(p.name)].some(x => x.toLowerCase() === t)) : undefined;
   };
   const add = (text: string, fromEnter: boolean) => {
-    const hit = find(text);
-    if (!hit) {
-      if (fromEnter && text.trim()) setHint('Pick a piece from the list.');
+    const name = find(text)?.name ?? (fromEnter ? toPieceName(text) : null);
+    if (!name) {
+      if (fromEnter && text.trim()) setHint('Not a piece name. Pick one from the list or type its package name.');
       return;
     }
-    if (!enterprise.includes(hit.name)) onEnterprise([...enterprise, hit.name]);
+    if (!enterprise.includes(name)) onEnterprise([...enterprise, name]);
     setDraft('');
     setHint('');
   };

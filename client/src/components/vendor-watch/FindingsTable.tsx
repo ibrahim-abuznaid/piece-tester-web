@@ -60,7 +60,7 @@ export default function FindingsTable({ status, piece, importance, onImportanceC
             <tbody>
               {rows.map(f => (
                 <tr key={f.id} className="border-t border-gray-800 align-top">
-                  <td className="px-3 py-2 font-mono text-[12px] text-gray-300">{shortPieceName(f.piece_name)}</td>
+                  <td className="whitespace-nowrap px-3 py-2 font-mono text-[12px] text-gray-300">{shortPieceName(f.piece_name)}</td>
                   <td className="px-3 py-2"><ImportanceBadge row={f} /></td>
                   <td className="whitespace-nowrap px-3 py-2">
                     <span className="rounded border border-gray-600/40 bg-gray-800/60 px-1.5 py-0.5 text-[11px] text-gray-300">{KIND_LABEL[f.kind]}</span>

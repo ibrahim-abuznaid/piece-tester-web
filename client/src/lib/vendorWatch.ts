@@ -117,3 +117,11 @@ export function importanceTitle(f: VwImportanceFields): string {
   return parts.join(' · ');
 }
 
+/** A typed piece ("Google Sheets", "zoho-crm", "@activepieces/piece-x") → its package name, or null. */
+export function toPieceName(text: string): string | null {
+  const t = text.trim().toLowerCase();
+  if (/^@[a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._-]*$/.test(t)) return t;
+  const slug = t.replace(/\s+/g, '-').replace(/^piece-/, '');
+  return /^[a-z0-9][a-z0-9._-]*$/.test(slug) ? `@activepieces/piece-${slug}` : null;
+}
+
