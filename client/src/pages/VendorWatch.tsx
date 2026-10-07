@@ -2,6 +2,8 @@ import { useSearchParams } from 'react-router-dom';
 import FindingsTable from '../components/vendor-watch/FindingsTable';
 import WatchersTab from '../components/vendor-watch/WatchersTab';
 import VendorWatchConfigCard from '../components/vendor-watch/VendorWatchConfigCard';
+import type { VwImportanceFilter } from '../lib/api';
+import { parseImportanceParam } from '../lib/vendorWatch';
 
 const TABS = [
   { id: 'inbox', label: 'Inbox' },
@@ -21,6 +23,9 @@ export default function VendorWatch() {
     fn(next);
     setParams(next, { replace: true });
   };
+  const importance = parseImportanceParam(params.get('importance'));
+  const setImportance = (v: VwImportanceFilter[]) =>
+    update(p => (v.length ? p.set('importance', v.join(',')) : p.delete('importance')));
 
   return (
     <div>
@@ -42,9 +47,9 @@ export default function VendorWatch() {
           </button>
         ))}
       </div>
-      {tab === 'inbox' && <FindingsTable status="new" piece={piece} />}
-      {tab === 'filed' && <FindingsTable status="filed" piece={piece} />}
-      {tab === 'watchers' && <WatchersTab piece={piece} />}
+      {tab === 'inbox' && <FindingsTable status="new" piece={piece} importance={importance} onImportanceChange={setImportance} />}
+      {tab === 'filed' && <FindingsTable status="filed" piece={piece} importance={importance} onImportanceChange={setImportance} />}
+      {tab === 'watchers' && <WatchersTab piece={piece} importance={importance} onImportanceChange={setImportance} />}
       {tab === 'config' && <VendorWatchConfigCard />}
     </div>
   );

@@ -1050,6 +1050,16 @@ export type VwSourceKind = 'liveness' | 'feed' | 'openapi' | 'html';
 export type VwFindingKind = 'vendor_dead' | 'breaking' | 'deprecation' | 'auth_change' | 'new_feature' | 'other';
 export type VwSeverity = 'critical' | 'high' | 'medium' | 'low';
 export type VwFindingStatus = 'new' | 'filed' | 'dismissed';
+export type VwImportance = 'high' | 'medium' | 'low';
+export type VwImportanceFilter = VwImportance | 'unrated';
+
+/** How much a piece matters: Cloud usage over all versions, or the Enterprise list. */
+export interface VwImportanceFields {
+  importance: VwImportance | null;
+  enterprise: number;
+  usage_projects: number | null;
+  usage_fetched_at: string | null;
+}
 
 export interface VwConfig {
   enabled: number;
@@ -1060,10 +1070,13 @@ export interface VwConfig {
   linear_label: string;
   classifier_model: string;
   dead_after_failures: number;
+  importance_high_min: number;
+  importance_medium_min: number;
+  enterprise_pieces: string;
   updated_at: string;
 }
 
-export type VwConfigPatch = Partial<Omit<VwConfig, 'updated_at'>>;
+export type VwConfigPatch = Partial<Omit<VwConfig, 'updated_at' | 'enterprise_pieces'>> & { enterprise_pieces?: string[] };
 
 export interface VwPlan {
   id: number;
@@ -1144,6 +1157,30 @@ export interface VwFinding {
   file_error: string;
   created_at: string;
   updated_at: string;
+}
+
+export type VwPlanListRow = VwPlan & VwImportanceFields;
+export type VwFindingListRow = VwFinding & VwImportanceFields;
+
+export interface VwFindingList {
+  findings: VwFindingListRow[];
+  counts: Record<VwImportanceFilter, number>;
+}
+
+export interface VwUsageRefresh {
+  running: boolean;
+  scope: 'watched' | 'catalog' | null;
+  done: number;
+  total: number;
+  started_at: string | null;
+  finished_at: string | null;
+  error: string;
+}
+
+export interface VwUsage {
+  pieces: Array<{ piece_name: string } & VwImportanceFields>;
+  summary: { rated: number; oldest_fetched_at: string | null; newest_fetched_at: string | null };
+  refresh: VwUsageRefresh;
 }
 
 export interface VwDraft {
@@ -1429,7 +1466,7 @@ export const api = {
   vwConfig: () => request<VwConfig>('GET', '/vendor-watch/config'),
   vwUpdateConfig: (patch: VwConfigPatch) => request<VwConfig>('PUT', '/vendor-watch/config', patch),
   vwTestLinear: () => request<{ ok: boolean; team: string; state: string; label: string }>('POST', '/vendor-watch/config/test-linear'),
-  vwPlans: () => request<VwPlan[]>('GET', '/vendor-watch/plans'),
+  vwPlans: () => request<VwPlanListRow[]>('GET', '/vendor-watch/plans'),
   vwPlan: (id: number) => request<{ plan: VwPlan; sources: VwSource[]; runs: VwRun[] }>('GET', `/vendor-watch/plans/${id}`),
   vwPlanByPiece: (pieceName: string) =>
     request<(VwPlan & { open_findings: number }) | null>('GET', `/vendor-watch/plans/by-piece/${encodeURIComponent(pieceName)}`),
@@ -1440,10 +1477,12 @@ export const api = {
   vwDeletePlan: (id: number) => request<{ ok: true }>('DELETE', `/vendor-watch/plans/${id}`),
   vwSetSourceEnabled: (id: number, enabled: boolean) => request<VwSource>('PATCH', `/vendor-watch/sources/${id}`, { enabled }),
   vwRunCycle: () => request<{ started: boolean }>('POST', '/vendor-watch/run-cycle'),
-  vwFindings: (status: VwFindingStatus, piece?: string) =>
-    request<VwFinding[]>('GET', `/vendor-watch/findings?status=${status}${piece ? `&piece=${encodeURIComponent(piece)}` : ''}`),
+  vwFindings: (status: VwFindingStatus, piece?: string, importance: VwImportanceFilter[] = []) =>
+    request<VwFindingList>('GET', `/vendor-watch/findings?status=${status}${piece ? `&piece=${encodeURIComponent(piece)}` : ''}${importance.length ? `&importance=${importance.join(',')}` : ''}`),
   vwFindingDraft: (id: number) => request<VwDraft>('GET', `/vendor-watch/findings/${id}/draft`),
   vwFileFinding: (id: number, body: { title: string; description: string; priority: number }) =>
     request<VwFinding>('POST', `/vendor-watch/findings/${id}/file`, body),
   vwDismissFinding: (id: number) => request<VwFinding>('POST', `/vendor-watch/findings/${id}/dismiss`),
+  vwUsage: () => request<VwUsage>('GET', '/vendor-watch/usage'),
+  vwRefreshUsage: (scope: 'watched' | 'catalog') => request<{ started: boolean }>('POST', '/vendor-watch/usage/refresh', { scope }),
 };

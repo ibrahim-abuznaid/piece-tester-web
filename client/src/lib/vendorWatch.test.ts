@@ -1,5 +1,8 @@
 import { describe, it, expect } from 'vitest';
-import { describeTargets, effectiveLabel, parseJsonArray, shortPieceName, sourceHealth } from './vendorWatch';
+import {
+  compareImportance, countByImportance, describeTargets, effectiveLabel, importanceTitle, matchesImportance,
+  parseImportanceParam, parseJsonArray, shortPieceName, sourceHealth, toggleImportance,
+} from './vendorWatch';
 
 describe('vendorWatch helpers', () => {
   it('describes targets', () => {
@@ -29,5 +32,59 @@ describe('vendorWatch helpers', () => {
     expect(parseJsonArray('{"a":1}')).toEqual([]);
     expect(parseJsonArray(null)).toEqual([]);
     expect(shortPieceName('@activepieces/piece-slack')).toBe('slack');
+  });
+});
+
+describe('importance helpers', () => {
+  const rated = (importance: 'high' | 'medium' | 'low' | null, over: Partial<{ enterprise: number; usage_projects: number | null; usage_fetched_at: string | null }> = {}) => ({
+    importance, enterprise: 0, usage_projects: 491, usage_fetched_at: '2026-10-07 08:00:00', ...over,
+  });
+
+  it('parses the URL param in canonical order, dropping unknown and duplicate values', () => {
+    expect(parseImportanceParam(null)).toEqual([]);
+    expect(parseImportanceParam('')).toEqual([]);
+    expect(parseImportanceParam('low,high,bogus,high')).toEqual(['high', 'low']);
+    expect(parseImportanceParam(' unrated , medium')).toEqual(['medium', 'unrated']);
+  });
+
+  it('toggles a tier in and out, keeping canonical order', () => {
+    expect(toggleImportance([], 'low')).toEqual(['low']);
+    expect(toggleImportance(['low'], 'high')).toEqual(['high', 'low']);
+    expect(toggleImportance(['high', 'low'], 'high')).toEqual(['low']);
+  });
+
+  it('matches rows against a filter, with an empty filter matching everything', () => {
+    expect(matchesImportance(rated('high'), [])).toBe(true);
+    expect(matchesImportance(rated('high'), ['high', 'medium'])).toBe(true);
+    expect(matchesImportance(rated('low'), ['high', 'medium'])).toBe(false);
+    expect(matchesImportance(rated(null), ['unrated'])).toBe(true);
+    expect(matchesImportance(rated(null), ['high'])).toBe(false);
+  });
+
+  it('counts rows per tier', () => {
+    expect(countByImportance([rated('high'), rated('high'), rated(null), rated('low')]))
+      .toEqual({ high: 2, medium: 0, low: 1, unrated: 1 });
+  });
+
+  it('explains a rating in the tooltip', () => {
+    expect(importanceTitle(rated('high', { enterprise: 1 })))
+      .toBe('High importance · 491 Cloud projects across all versions · on the Enterprise list · usage from 2026-10-07');
+    expect(importanceTitle(rated('high', { enterprise: 1, usage_projects: null, usage_fetched_at: null })))
+      .toBe('High importance · on the Enterprise list · no Cloud usage fetched yet');
+    expect(importanceTitle(rated('low', { usage_projects: 1 })))
+      .toBe('Low importance · 1 Cloud project across all versions · usage from 2026-10-07');
+    expect(importanceTitle(rated(null, { usage_projects: null, usage_fetched_at: null })))
+      .toBe('Not rated yet: Cloud usage for this piece has not been fetched');
+  });
+
+  it('orders rows by tier, then Cloud projects, unrated last', () => {
+    const rows = [
+      { n: 'a', ...rated('low', { usage_projects: 3 }) },
+      { n: 'b', ...rated(null, { usage_projects: null }) },
+      { n: 'c', ...rated('high', { usage_projects: 400 }) },
+      { n: 'd', ...rated('high', { usage_projects: 9000 }) },
+      { n: 'e', ...rated('high', { enterprise: 1, usage_projects: null }) },
+    ];
+    expect([...rows].sort(compareImportance).map(r => r.n)).toEqual(['d', 'c', 'e', 'a', 'b']);
   });
 });
