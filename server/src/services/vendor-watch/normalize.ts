@@ -94,7 +94,14 @@ export function parseFeed(body: string): FeedEntry[] {
     const text = htmlToText(textOf(e.content) || textOf(e.summary));
     return { id: textOf(e.id) || link || sha1(`${title}|${date ?? ''}`), title, date, text, link };
   });
-  return [...fromRss, ...fromAtom];
+  return uniqueIds([...fromRss, ...fromAtom]);
+}
+
+/** Every entry whose id is shared (e.g. guid-less items that all link to /changelog) gets sha1(id|title|date) instead. */
+function uniqueIds(entries: FeedEntry[]): FeedEntry[] {
+  const counts = new Map<string, number>();
+  for (const e of entries) counts.set(e.id, (counts.get(e.id) ?? 0) + 1);
+  return entries.map(e => (counts.get(e.id)! > 1 ? { ...e, id: sha1(`${e.id}|${e.title}|${e.date ?? ''}`) } : e));
 }
 
 export function normalizeFeed(entries: FeedEntry[]): Normalized {

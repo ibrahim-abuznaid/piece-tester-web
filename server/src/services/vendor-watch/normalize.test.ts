@@ -47,6 +47,30 @@ describe('parseFeed', () => {
   it('returns nothing for a non-feed document', () => {
     expect(parseFeed('<html><body>hi</body></html>')).toEqual([]);
   });
+
+  const SHARED_LINK = (titles: string[]) => `<rss><channel>${titles
+    .map(t => `<item><title>${t}</title><link>https://acme.dev/changelog</link><description>Details about ${t}.</description></item>`)
+    .join('')}</channel></rss>`;
+
+  it('gives guid-less items that share one link distinct ids, stable across parses', () => {
+    const ids = parseFeed(SHARED_LINK(['One', 'Two', 'Three'])).map(e => e.id);
+    expect(new Set(ids).size).toBe(3);
+    expect(parseFeed(SHARED_LINK(['One', 'Two', 'Three'])).map(e => e.id)).toEqual(ids);
+  });
+
+  it('finds exactly the one new item when a fourth item shares the link', () => {
+    const before = normalizeFeed(parseFeed(SHARED_LINK(['One', 'Two', 'Three'])));
+    const after = parseFeed(SHARED_LINK(['Four', 'One', 'Two', 'Three']));
+    expect(normalizeFeed(after).hash).not.toBe(before.hash);
+    expect(newFeedEntries(after, before.content).map(e => e.title)).toEqual(['Four']);
+  });
+
+  it('keeps unique guids as ids', () => {
+    const guids = `<rss><channel>${['g-1', 'g-2', 'g-3']
+      .map(g => `<item><guid>${g}</guid><title>Same title</title><link>https://acme.dev/changelog</link></item>`)
+      .join('')}</channel></rss>`;
+    expect(parseFeed(guids).map(e => e.id)).toEqual(['g-1', 'g-2', 'g-3']);
+  });
 });
 
 describe('feed snapshots', () => {
