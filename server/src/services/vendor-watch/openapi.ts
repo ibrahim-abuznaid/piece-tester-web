@@ -64,6 +64,7 @@ function resolveRef(doc: AnyObj, v: any): any {
   return target ?? v;
 }
 
+/** A Swagger-2 `in: body` param is keyed `body:`, like an OAS3 `requestBody`: its name is not part of the API. */
 export function buildOpMap(doc: unknown): OpMap {
   const d = (doc ?? {}) as AnyObj;
   const out: OpMap = {};
@@ -77,7 +78,8 @@ export function buildOpMap(doc: unknown): OpMap {
       for (const raw of [...shared, ...(Array.isArray(op.parameters) ? op.parameters : [])]) {
         const p = resolveRef(d, raw);
         if (!p || typeof p.name !== 'string' || typeof p.in !== 'string') continue;
-        params.set(`${p.in}:${p.name}`, { name: p.name, in: p.in, required: p.required === true || p.in === 'path' });
+        const name = p.in === 'body' ? '' : p.name;
+        params.set(`${p.in}:${name}`, { name, in: p.in, required: p.required === true || p.in === 'path' });
       }
       if (resolveRef(d, op.requestBody)?.required === true) params.set('body:', { name: '', in: 'body', required: true });
       out[opKey(m, path)] = {

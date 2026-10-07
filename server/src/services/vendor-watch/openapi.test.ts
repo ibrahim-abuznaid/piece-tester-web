@@ -111,6 +111,25 @@ describe('diffOpenApi', () => {
     const used: EndpointRef[] = [{ target: 'get_customer', target_kind: 'action', method: 'GET', path: '/v1/customers/{id}' }];
     expect(openApiFindings(diff, used, 'u', buildOpMap(before), buildOpMap(after))).toEqual([]);
   });
+
+  it('does not report renaming a required Swagger-2 body parameter as a change', () => {
+    const swagger = (bodyName: string) => ({
+      swagger: '2.0',
+      paths: { '/v1/orders': { post: { parameters: [{ name: bodyName, in: 'body', required: true, schema: {} }] } } },
+    });
+    const [before, after] = [buildOpMap(swagger('payload')), buildOpMap(swagger('body'))];
+    const diff = diffOpenApi(before, after);
+    expect(diff).toEqual({ removed: [], newlyDeprecated: [], newRequiredParams: [], added: [] });
+    expect(normalizeOpenApi(after).hash).toBe(normalizeOpenApi(before).hash);
+    const used: EndpointRef[] = [{ target: 'create_order', target_kind: 'action', method: 'POST', path: '/v1/orders' }];
+    expect(openApiFindings(diff, used, 'u', before, after)).toEqual([]);
+  });
+
+  it('still catches a required body parameter added to a Swagger-2 op that had none', () => {
+    const before = { swagger: '2.0', paths: { '/v1/orders': { post: {} } } };
+    const after = { swagger: '2.0', paths: { '/v1/orders': { post: { parameters: [{ name: 'payload', in: 'body', required: true }] } } } };
+    expect(diffOpenApi(buildOpMap(before), buildOpMap(after)).newRequiredParams).toEqual([{ op: 'POST /v1/orders', param: 'body:' }]);
+  });
 });
 
 describe('endpoint matching', () => {
