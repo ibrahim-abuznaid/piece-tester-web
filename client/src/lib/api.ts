@@ -1374,6 +1374,8 @@ export const api = {
   saveLinearKey: (api_key: string) => request<SaveLinearKeyResult>('POST', '/settings/save-linear-key', { api_key }),
   removeLinearKey: () => request<{ success: boolean }>('POST', '/settings/remove-linear-key'),
   getLinearUsers: () => request<LinearUser[]>('GET', '/settings/linear-users'),
+  saveGitHubToken: (token: string) => request<{ success: boolean; limit: number }>('POST', '/settings/save-github-token', { token }),
+  removeGitHubToken: () => request<{ success: boolean }>('POST', '/settings/remove-github-token'),
   getReportPieceBreakdown: (dateFrom?: string, dateTo?: string) => {
     const p = new URLSearchParams();
     if (dateFrom) p.set('date_from', dateFrom);
