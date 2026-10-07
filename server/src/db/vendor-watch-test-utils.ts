@@ -10,9 +10,11 @@ export function resetVendorWatch(): void {
     DELETE FROM watch_snapshots;
     DELETE FROM watch_sources;
     DELETE FROM watch_plans;
+    DELETE FROM piece_usage;
     UPDATE vendor_watch_config SET enabled = 0, cron_expression = '0 4 * * *', timezone = 'UTC',
       auto_file_enabled = 0, linear_team_key = 'PIE', linear_label = 'vendor-watch',
-      classifier_model = '', dead_after_failures = 3 WHERE id = 1;
+      classifier_model = '', dead_after_failures = 3,
+      importance_high_min = 300, importance_medium_min = 50, enterprise_pieces = '[]' WHERE id = 1;
   `);
 }
 

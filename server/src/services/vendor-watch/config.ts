@@ -1,8 +1,20 @@
 import cron from 'node-cron';
-import type { WatchConfigPatch } from '../../db/vendor-watch-queries.js';
+import type { WatchConfigPatch, WatchConfigRow } from '../../db/vendor-watch-queries.js';
 
-/** Validate a PUT /config body. Only fields present in the body end up in the patch. */
-export function parseConfigPatch(body: Record<string, unknown>): { patch: WatchConfigPatch; error?: string } {
+const MAX_ENTERPRISE_PIECES = 200;
+const MAX_THRESHOLD = 1_000_000;
+const PIECE_NAME = /^(@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*$/;
+
+type SavedThresholds = Pick<WatchConfigRow, 'importance_high_min' | 'importance_medium_min'>;
+
+/**
+ * Validate a PUT /config body. Only fields present in the body end up in the patch.
+ * `saved` supplies the threshold the body leaves out, so High stays above Medium.
+ */
+export function parseConfigPatch(
+  body: Record<string, unknown>,
+  saved?: SavedThresholds,
+): { patch: WatchConfigPatch; error?: string } {
   const patch: WatchConfigPatch = {};
   const flag = (v: unknown) => (v === true || v === 1 || v === '1' ? 1 : 0);
   if (body.enabled !== undefined) patch.enabled = flag(body.enabled);
@@ -41,6 +53,31 @@ export function parseConfigPatch(body: Record<string, unknown>): { patch: WatchC
     const n = Number(body.dead_after_failures);
     if (!Number.isInteger(n) || n < 1 || n > 30) return { patch, error: 'dead_after_failures must be a whole number from 1 to 30' };
     patch.dead_after_failures = n;
+  }
+  for (const key of ['importance_high_min', 'importance_medium_min'] as const) {
+    if (body[key] === undefined) continue;
+    const n = Number(body[key]);
+    if (!Number.isInteger(n) || n < 1 || n > MAX_THRESHOLD) {
+      return { patch, error: `${key} must be a whole number from 1 to ${MAX_THRESHOLD.toLocaleString('en-US')}` };
+    }
+    patch[key] = n;
+  }
+  const high = patch.importance_high_min ?? saved?.importance_high_min;
+  const medium = patch.importance_medium_min ?? saved?.importance_medium_min;
+  const thresholdChanged = patch.importance_high_min !== undefined || patch.importance_medium_min !== undefined;
+  if (thresholdChanged && high !== undefined && medium !== undefined && high <= medium) {
+    return { patch, error: `High must be above Medium (got High ${high}, Medium ${medium})` };
+  }
+  if (body.enterprise_pieces !== undefined) {
+    const v = body.enterprise_pieces;
+    if (!Array.isArray(v) || !v.every(x => typeof x === 'string')) {
+      return { patch, error: 'enterprise_pieces must be a list of piece names' };
+    }
+    const names = [...new Set(v.map(x => x.trim()).filter(Boolean))];
+    const bad = names.find(n => !PIECE_NAME.test(n));
+    if (bad) return { patch, error: `Not a piece name: "${bad}"` };
+    if (names.length > MAX_ENTERPRISE_PIECES) return { patch, error: `At most ${MAX_ENTERPRISE_PIECES} enterprise pieces` };
+    patch.enterprise_pieces = JSON.stringify(names);
   }
   return { patch };
 }

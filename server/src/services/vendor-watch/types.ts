@@ -4,9 +4,13 @@ export type RunTrigger = 'baseline' | 'scheduled' | 'manual';
 export type FindingKind = 'vendor_dead' | 'breaking' | 'deprecation' | 'auth_change' | 'new_feature' | 'other';
 export type Severity = 'critical' | 'high' | 'medium' | 'low';
 export type FindingStatus = 'new' | 'filed' | 'dismissed';
+export type Importance = 'high' | 'medium' | 'low';
+/** An importance filter value: a tier, or `unrated` for pieces with no usage data yet. */
+export type ImportanceFilter = Importance | 'unrated';
 
 export const FINDING_KINDS: readonly FindingKind[] = ['vendor_dead', 'breaking', 'deprecation', 'auth_change', 'new_feature', 'other'];
 export const SEVERITIES: readonly Severity[] = ['critical', 'high', 'medium', 'low'];
+export const IMPORTANCE_FILTERS: readonly ImportanceFilter[] = ['high', 'medium', 'low', 'unrated'];
 
 /** One API call a piece makes. SDK-based pieces use method 'SDK' and path 'sdk:<package>#<method>'. */
 export interface EndpointRef {

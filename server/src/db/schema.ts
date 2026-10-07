@@ -625,4 +625,23 @@ function initTables(db: DatabaseAdapter): void {
       UNIQUE(piece_name, signature)
     );
   `);
+
+  // Vendor watch importance (docs/superpowers/specs/2026-10-07-vendor-watch-importance-design.md)
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS piece_usage (
+      piece_name TEXT PRIMARY KEY,
+      projects INTEGER NOT NULL,
+      versions INTEGER NOT NULL,
+      versions_failed INTEGER NOT NULL DEFAULT 0,
+      fetched_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+  `);
+  for (const [col, ddl] of [
+    ['importance_high_min',   `ALTER TABLE vendor_watch_config ADD COLUMN importance_high_min INTEGER NOT NULL DEFAULT 300`],
+    ['importance_medium_min', `ALTER TABLE vendor_watch_config ADD COLUMN importance_medium_min INTEGER NOT NULL DEFAULT 50`],
+    ['enterprise_pieces',     `ALTER TABLE vendor_watch_config ADD COLUMN enterprise_pieces TEXT NOT NULL DEFAULT '[]'`],
+  ] as const) {
+    const c = db.pragma(`table_info(vendor_watch_config)`) as { name: string }[];
+    if (!c.some(x => x.name === col)) db.exec(ddl);
+  }
 }

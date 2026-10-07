@@ -29,4 +29,40 @@ describe('parseConfigPatch', () => {
   ])('rejects %j', (body, message) => {
     expect(parseConfigPatch(body).error).toMatch(message);
   });
+
+  describe('importance settings', () => {
+    const saved = { importance_high_min: 300, importance_medium_min: 50 };
+
+    it('accepts thresholds and a deduped, trimmed enterprise list', () => {
+      expect(parseConfigPatch({
+        importance_high_min: 500, importance_medium_min: 40,
+        enterprise_pieces: [' @activepieces/piece-salesforce', '@activepieces/piece-salesforce', '@activepieces/piece-sap'],
+      }, saved)).toEqual({ patch: {
+        importance_high_min: 500, importance_medium_min: 40,
+        enterprise_pieces: '["@activepieces/piece-salesforce","@activepieces/piece-sap"]',
+      } });
+    });
+
+    it('accepts an empty enterprise list', () => {
+      expect(parseConfigPatch({ enterprise_pieces: [] }, saved)).toEqual({ patch: { enterprise_pieces: '[]' } });
+    });
+
+    it('checks High above Medium against the saved value when only one threshold changes', () => {
+      expect(parseConfigPatch({ importance_medium_min: 300 }, saved).error).toMatch(/High must be above Medium/);
+      expect(parseConfigPatch({ importance_high_min: 50 }, saved).error).toMatch(/High must be above Medium/);
+      expect(parseConfigPatch({ importance_high_min: 51 }, saved)).toEqual({ patch: { importance_high_min: 51 } });
+    });
+
+    it.each([
+      [{ importance_high_min: 0 }, /whole number/],
+      [{ importance_medium_min: 1.5 }, /whole number/],
+      [{ importance_high_min: 2_000_000 }, /whole number/],
+      [{ enterprise_pieces: 'piece-sap' }, /list of piece names/],
+      [{ enterprise_pieces: [42] }, /list of piece names/],
+      [{ enterprise_pieces: ['not a piece name!'] }, /Not a piece name/],
+      [{ enterprise_pieces: Array.from({ length: 201 }, (_, i) => `@x/piece-${i}`) }, /At most 200/],
+    ])('rejects %j', (body, message) => {
+      expect(parseConfigPatch(body, saved).error).toMatch(message);
+    });
+  });
 });

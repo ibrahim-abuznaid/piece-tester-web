@@ -1,6 +1,7 @@
 import { getDb } from './schema.js';
 import type {
-  EndpointRef, FindingDraft, FindingKind, FindingStatus, PlanStatus, RunTrigger, Severity, SourceKind,
+  EndpointRef, FindingDraft, FindingKind, FindingStatus, Importance, ImportanceFilter, PlanStatus, RunTrigger, Severity,
+  SourceKind,
 } from '../services/vendor-watch/types.js';
 
 export interface WatchConfigRow {
@@ -13,6 +14,9 @@ export interface WatchConfigRow {
   linear_label: string;
   classifier_model: string;
   dead_after_failures: number;
+  importance_high_min: number;
+  importance_medium_min: number;
+  enterprise_pieces: string;   // JSON string[]
   updated_at: string;
 }
 
@@ -34,7 +38,15 @@ export interface WatchPlanRow {
   created_at: string;
 }
 
-export interface WatchPlanListRow extends WatchPlanRow {
+/** How much a piece matters: Cloud usage over all versions, or the Enterprise list. */
+export interface ImportanceFields {
+  importance: Importance | null;
+  enterprise: number;
+  usage_projects: number | null;
+  usage_fetched_at: string | null;
+}
+
+export interface WatchPlanListRow extends WatchPlanRow, ImportanceFields {
   sources_total: number;
   sources_ok: number;
   sources_failing: number;
@@ -112,6 +124,7 @@ export interface VendorFindingRow {
 const CONFIG_FIELDS = [
   'enabled', 'cron_expression', 'timezone', 'auto_file_enabled',
   'linear_team_key', 'linear_label', 'classifier_model', 'dead_after_failures',
+  'importance_high_min', 'importance_medium_min', 'enterprise_pieces',
 ] as const;
 
 export type WatchConfigPatch = Partial<Pick<WatchConfigRow, (typeof CONFIG_FIELDS)[number]>>;
@@ -158,8 +171,9 @@ export function getPlanByPiece(pieceName: string): WatchPlanRow | undefined {
  * and as ok when it has been checked with neither. Disabled and never-checked sources count as neither.
  */
 export function listPlans(): WatchPlanListRow[] {
+  const imp = importanceSelect('p.piece_name');
   return getDb().all<WatchPlanListRow>(`
-    SELECT p.*,
+    SELECT * FROM (SELECT p.*, ${imp.sql},
       (SELECT COUNT(*) FROM watch_sources s WHERE s.plan_id = p.id) AS sources_total,
       (SELECT COUNT(*) FROM watch_sources s
         WHERE s.plan_id = p.id AND s.enabled = 1 AND s.last_checked_at IS NOT NULL
@@ -169,8 +183,9 @@ export function listPlans(): WatchPlanListRow[] {
           AND (s.consecutive_failures > 0 OR s.last_error != '')) AS sources_failing,
       (SELECT COUNT(*) FROM vendor_findings f WHERE f.plan_id = p.id AND f.status = 'new') AS open_findings
     FROM watch_plans p
-    ORDER BY p.piece_name
-  `);
+    LEFT JOIN piece_usage u ON u.piece_name = p.piece_name)
+    ORDER BY ${IMPORTANCE_RANK}, piece_name
+  `, imp.params);
 }
 
 export function listRunnablePlans(): WatchPlanRow[] {
@@ -381,15 +396,54 @@ export function getFinding(id: number): VendorFindingRow | undefined {
   return getDb().get<VendorFindingRow>('SELECT * FROM vendor_findings WHERE id = ?', [id]);
 }
 
-export function listFindings(f: { status?: FindingStatus; piece?: string } = {}): VendorFindingRow[] {
-  const where: string[] = [];
-  const params: unknown[] = [];
-  if (f.status) { where.push('status = ?'); params.push(f.status); }
-  if (f.piece) { where.push('piece_name = ?'); params.push(f.piece); }
-  return getDb().all<VendorFindingRow>(
-    `SELECT * FROM vendor_findings ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY id DESC LIMIT 500`,
+export type FindingListRow = VendorFindingRow & ImportanceFields;
+
+export interface FindingFilter {
+  status?: FindingStatus;
+  piece?: string;
+  /** Empty or missing = every tier. */
+  importance?: ImportanceFilter[];
+  /** `importance`: tier, then severity, then newest. Default: newest first. */
+  sort?: 'importance' | 'newest';
+}
+
+/** Findings joined with their piece's importance. Filters run before the 500-row cap. */
+export function listFindings(f: FindingFilter = {}): FindingListRow[] {
+  const { sql, params } = findingsWithImportance(f);
+  const tiers = f.importance ?? [];
+  const anyOf: string[] = [];
+  const named = tiers.filter((t): t is Importance => t !== 'unrated');
+  if (named.length) { anyOf.push(`importance IN (${named.map(() => '?').join(', ')})`); params.push(...named); }
+  if (tiers.includes('unrated')) anyOf.push('importance IS NULL');
+  const order = f.sort === 'importance' ? `${IMPORTANCE_RANK}, ${SEVERITY_RANK}, id DESC` : 'id DESC';
+  return getDb().all<FindingListRow>(
+    `SELECT * FROM (${sql}) ${anyOf.length ? `WHERE (${anyOf.join(' OR ')})` : ''} ORDER BY ${order} LIMIT 500`,
     params,
   );
+}
+
+/** Per-tier totals for the status and piece, ignoring any importance filter (the inbox chips). */
+export function countFindingsByImportance(f: Pick<FindingFilter, 'status' | 'piece'> = {}): Record<ImportanceFilter, number> {
+  const { sql, params } = findingsWithImportance(f);
+  const rows = getDb().all<{ tier: ImportanceFilter; n: number }>(
+    `SELECT COALESCE(importance, 'unrated') AS tier, COUNT(*) AS n FROM (${sql}) GROUP BY tier`, params,
+  );
+  const counts: Record<ImportanceFilter, number> = { high: 0, medium: 0, low: 0, unrated: 0 };
+  for (const r of rows) counts[r.tier] = r.n;
+  return counts;
+}
+
+function findingsWithImportance(f: Pick<FindingFilter, 'status' | 'piece'>): { sql: string; params: unknown[] } {
+  const imp = importanceSelect('f.piece_name');
+  const where: string[] = [];
+  const params: unknown[] = [...imp.params];
+  if (f.status) { where.push('f.status = ?'); params.push(f.status); }
+  if (f.piece) { where.push('f.piece_name = ?'); params.push(f.piece); }
+  return {
+    sql: `SELECT f.*, ${imp.sql} FROM vendor_findings f LEFT JOIN piece_usage u ON u.piece_name = f.piece_name
+      ${where.length ? `WHERE ${where.join(' AND ')}` : ''}`,
+    params,
+  };
 }
 
 export function countOpenFindings(pieceName: string): number {
@@ -467,4 +521,94 @@ export function reconcileVendorWatch(): { runs: number; plans: number } {
      WHERE status = 'generating'`,
   ).changes;
   return { runs, plans };
+}
+
+// ── Piece importance ──
+
+const IMPORTANCE_RANK = `CASE importance WHEN 'high' THEN 0 WHEN 'medium' THEN 1 WHEN 'low' THEN 2 ELSE 3 END`;
+const SEVERITY_RANK = `CASE severity WHEN 'critical' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 ELSE 3 END`;
+
+/**
+ * The one place the importance rule lives: on the Enterprise list → high; no usage row → NULL (unrated);
+ * then Cloud projects against the config thresholds. Needs `piece_usage` joined as `u`.
+ */
+function importanceSelect(nameColumn: string): { sql: string; params: unknown[] } {
+  const c = getWatchConfig();
+  return {
+    sql: `CASE
+        WHEN ${nameColumn} IN (SELECT value FROM json_each(?)) THEN 'high'
+        WHEN u.projects IS NULL THEN NULL
+        WHEN u.projects >= ? THEN 'high'
+        WHEN u.projects >= ? THEN 'medium'
+        ELSE 'low'
+      END AS importance,
+      (${nameColumn} IN (SELECT value FROM json_each(?))) AS enterprise,
+      u.projects AS usage_projects,
+      u.fetched_at AS usage_fetched_at`,
+    params: [c.enterprise_pieces, c.importance_high_min, c.importance_medium_min, c.enterprise_pieces],
+  };
+}
+
+export interface PieceUsageInput {
+  piece_name: string;
+  projects: number;
+  versions: number;
+  versions_failed: number;
+}
+
+export function upsertPieceUsage(rows: PieceUsageInput[], fetchedAt?: string): void {
+  const db = getDb();
+  db.transaction(() => {
+    for (const r of rows) {
+      db.run(
+        `INSERT INTO piece_usage (piece_name, projects, versions, versions_failed, fetched_at)
+         VALUES (?, ?, ?, ?, COALESCE(?, datetime('now')))
+         ON CONFLICT(piece_name) DO UPDATE SET projects = excluded.projects, versions = excluded.versions,
+           versions_failed = excluded.versions_failed, fetched_at = excluded.fetched_at`,
+        [r.piece_name, r.projects, r.versions, r.versions_failed, fetchedAt ?? null],
+      );
+    }
+  });
+}
+
+export type PieceImportanceRow = { piece_name: string } & ImportanceFields;
+
+export function getPieceImportance(pieceName: string): ImportanceFields {
+  const imp = importanceSelect('n.piece_name');
+  return getDb().get<ImportanceFields>(
+    `SELECT ${imp.sql} FROM (SELECT ? AS piece_name) n LEFT JOIN piece_usage u ON u.piece_name = n.piece_name`,
+    [...imp.params, pieceName],
+  )!;
+}
+
+/** Every piece with usage data, plus Enterprise-list pieces that have none yet. */
+export function listPieceUsage(): PieceImportanceRow[] {
+  const imp = importanceSelect('n.piece_name');
+  return getDb().all<PieceImportanceRow>(
+    `SELECT n.piece_name, ${imp.sql}
+     FROM (SELECT piece_name FROM piece_usage UNION SELECT value FROM json_each(?)) n
+     LEFT JOIN piece_usage u ON u.piece_name = n.piece_name
+     ORDER BY u.projects DESC, n.piece_name`,
+    [...imp.params, getWatchConfig().enterprise_pieces],
+  );
+}
+
+/** The names with no usage row, a row older than `maxAgeDays`, or a row where some versions failed. */
+export function stalePieces(names: string[], maxAgeDays: number): string[] {
+  if (names.length === 0) return [];
+  const fresh = new Set(getDb().all<{ piece_name: string }>(
+    `SELECT piece_name FROM piece_usage WHERE fetched_at >= datetime('now', ?) AND versions_failed = 0`,
+    [`-${maxAgeDays} days`],
+  ).map(r => r.piece_name));
+  return names.filter(n => !fresh.has(n));
+}
+
+export function listWatchedPieceNames(): string[] {
+  return getDb().all<{ piece_name: string }>('SELECT piece_name FROM watch_plans ORDER BY piece_name').map(r => r.piece_name);
+}
+
+export function usageSummary(): { rated: number; oldest_fetched_at: string | null; newest_fetched_at: string | null } {
+  return getDb().get<{ rated: number; oldest_fetched_at: string | null; newest_fetched_at: string | null }>(
+    `SELECT COUNT(*) AS rated, MIN(fetched_at) AS oldest_fetched_at, MAX(fetched_at) AS newest_fetched_at FROM piece_usage`,
+  )!;
 }

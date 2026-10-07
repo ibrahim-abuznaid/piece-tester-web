@@ -30,7 +30,7 @@ router.get('/config', (_req, res) => {
 });
 
 router.put('/config', (req, res) => {
-  const { patch, error } = parseConfigPatch(req.body ?? {});
+  const { patch, error } = parseConfigPatch(req.body ?? {}, getWatchConfig());
   if (error) { res.status(400).json({ error }); return; }
   const row = updateWatchConfig(patch);
   if (patch.linear_team_key !== undefined || patch.linear_label !== undefined) clearLinearTargetCache();
