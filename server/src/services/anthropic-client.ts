@@ -29,8 +29,8 @@ const EFFORT_MODELS = /^claude-(opus-4-[5-9]|sonnet-4-6|(opus|sonnet|haiku|fable
 /**
  * `output_config.effort` for models that take it, nothing for the rest.
  * Sonnet 5.5 thinks by default and its default effort is `high`, so callers
- * pick a lower level on purpose. Sonnet 4.5 and Haiku 4.5 (the research and
- * verifier workers) reject the field, so it is left off for them.
+ * pick a lower level on purpose. Sonnet 4.5 and Haiku 4.5 reject the field,
+ * so it is left off for them.
  */
 export function effortFor(model: string, effort: Effort): Pick<Anthropic.MessageCreateParamsNonStreaming, 'output_config'> {
   return EFFORT_MODELS.test(model) ? { output_config: { effort } } : {};
