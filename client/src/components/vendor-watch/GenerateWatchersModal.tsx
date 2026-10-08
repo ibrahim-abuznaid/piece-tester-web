@@ -3,9 +3,10 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Loader2, Search, Wand2, X } from 'lucide-react';
 import { api, type VwImportanceFields, type VwImportanceFilter } from '../../lib/api';
 import {
-  addUpTo, compareImportance, countByImportance, generationEstimate, matchesImportance, pickEnterprise, pickTopByUsage,
-  shortPieceName, watchedPieceNames,
+  addUpTo, compareImportance, countByImportance, generationEstimate, matchesImportance, parsePieceCsv, pickEnterprise,
+  pickTopByUsage, shortPieceName, uploadNote, watchedPieceNames,
 } from '../../lib/vendorWatch';
+import CsvUploadButton from './CsvUploadButton';
 import ImportanceBadge from './ImportanceBadge';
 import ImportanceFilter from './ImportanceFilter';
 
@@ -74,6 +75,23 @@ export default function GenerateWatchersModal({ onClose }: { onClose: () => void
     setPicked(new Set(next));
     setNote(names.length === 0 ? none : added < fresh ? `Added ${added}: a batch holds at most ${MAX_BATCH} pieces.` : '');
   };
+  const selectFromFile = (text: string, file: string) => {
+    const { names, unknown } = parsePieceCsv(text, rated);
+    const core = new Set(rated.filter(p => p.categories?.includes('CORE')).map(p => p.name));
+    const vendorPieces = names.filter(n => !core.has(n));
+    const unwatched = vendorPieces.filter(n => !watched.has(n));
+    const next = addUpTo([...picked], unwatched, MAX_BATCH);
+    const added = next.length - picked.size;
+    setPicked(new Set(next));
+    setNote(uploadNote(file, {
+      found: names.length,
+      added,
+      builtIn: names.length - vendorPieces.length,
+      watched: vendorPieces.length - unwatched.length,
+      capped: unwatched.filter(n => !picked.has(n)).length - added,
+      unknown,
+    }, MAX_BATCH));
+  };
   const submit = () => {
     const n = picked.size;
     if (!window.confirm(`Generate watchers for ${n} piece${n === 1 ? '' : 's'}?\n\n${generationEstimate(n)}`)) return;
@@ -83,7 +101,7 @@ export default function GenerateWatchersModal({ onClose }: { onClose: () => void
   const bulkButton = 'rounded border border-gray-700 px-2 py-1 text-gray-300 hover:bg-gray-800 disabled:opacity-50';
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={onClose}>
+    <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/60 p-4 pt-[10vh]" onClick={onClose}>
       <div className="flex max-h-[80vh] w-full max-w-2xl flex-col rounded-lg border border-gray-800 bg-gray-900 p-4" onClick={e => e.stopPropagation()}>
         <div className="mb-3 flex items-center justify-between">
           <h2 className="text-sm font-semibold text-gray-200">Generate watchers</h2>
@@ -121,6 +139,7 @@ export default function GenerateWatchersModal({ onClose }: { onClose: () => void
             onClick={() => select(pickEnterprise(rated, watched), 'No unwatched Enterprise pieces left to add.')}>
             Select all Enterprise
           </button>
+          <CsvUploadButton disabled={!ready} className={bulkButton} onText={selectFromFile} onError={setNote} />
           <button disabled={picked.size === 0} className={bulkButton} onClick={() => { setPicked(new Set()); setNote(''); }}>
             Clear
           </button>

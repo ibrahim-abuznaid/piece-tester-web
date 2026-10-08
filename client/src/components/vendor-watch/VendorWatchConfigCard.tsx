@@ -2,7 +2,8 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Building2, CheckCircle, ChevronDown, ChevronRight, Loader2, RefreshCw, X, XCircle } from 'lucide-react';
 import { api, type VwConfig } from '../../lib/api';
-import { addUpTo, changedFields, findPiece, parseJsonArray, parsePieceList, shortPieceName, toPieceName } from '../../lib/vendorWatch';
+import { addUpTo, changedFields, findPiece, parseJsonArray, parsePieceCsv, parsePieceList, shortPieceName, toPieceName } from '../../lib/vendorWatch';
+import CsvUploadButton from './CsvUploadButton';
 
 const INPUT = 'w-full rounded border border-gray-700 bg-gray-950 px-2 py-1.5 text-sm text-gray-200';
 /** The server's limit for the Enterprise list. */
@@ -230,20 +231,31 @@ function PasteEnterpriseList({ enterprise, onEnterprise, catalog, catalogError }
   const [open, setOpen] = useState(false);
   const [text, setText] = useState('');
   const [result, setResult] = useState<{ added: number; capped: number; unknown: string[] } | null>(null);
+  const [fileError, setFileError] = useState('');
 
-  const add = () => {
-    const { names, unknown } = parsePieceList(text, catalog ?? []);
+  const addNames = ({ names, unknown }: { names: string[]; unknown: string[] }) => {
     const next = addUpTo(enterprise, names, MAX_ENTERPRISE_PIECES);
     const added = next.length - enterprise.length;
     if (added > 0) onEnterprise(next);
     setResult({ added, capped: names.filter(n => !enterprise.includes(n)).length - added, unknown });
     setText(unknown.join('\n'));
+    setFileError('');
+  };
+  const add = () => addNames(parsePieceList(text, catalog ?? []));
+  const addFile = (csv: string, file: string) => {
+    const parsed = parsePieceCsv(csv, catalog ?? []);
+    if (parsed.names.length === 0 && parsed.unknown.length === 0) {
+      setResult(null);
+      setFileError(`No piece names found in ${file}.`);
+      return;
+    }
+    addNames(parsed);
   };
 
   return (
     <div className="mt-1.5">
       <button onClick={() => setOpen(!open)} className="flex items-center gap-1 text-[12px] text-gray-400 hover:text-gray-200">
-        {open ? <ChevronDown size={12} /> : <ChevronRight size={12} />} Paste a list
+        {open ? <ChevronDown size={12} /> : <ChevronRight size={12} />} Paste or upload a list
       </button>
       {open && (
         <div className="mt-1.5 space-y-1.5">
@@ -254,6 +266,8 @@ function PasteEnterpriseList({ enterprise, onEnterprise, catalog, catalogError }
               className="rounded border border-gray-700 px-2.5 py-1 text-[12px] text-gray-300 hover:bg-gray-800 disabled:opacity-50">
               Add
             </button>
+            <CsvUploadButton disabled={!catalog} onText={addFile} onError={setFileError}
+              className="rounded border border-gray-700 px-2.5 py-1 text-[12px] text-gray-300 hover:bg-gray-800 disabled:opacity-50" />
             {result && (
               <span className="text-[11px] text-gray-500">
                 Added {result.added} piece{result.added === 1 ? '' : 's'}.
@@ -266,6 +280,7 @@ function PasteEnterpriseList({ enterprise, onEnterprise, catalog, catalogError }
           {result && result.unknown.length > 0 && (
             <p className="text-[11px] text-red-400">Not found: {result.unknown.join(', ')}</p>
           )}
+          {fileError && <p className="text-[11px] text-red-400">{fileError}</p>}
         </div>
       )}
     </div>

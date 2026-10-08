@@ -3,6 +3,7 @@ import {
   compareImportance, countByImportance, describeTargets, effectiveLabel, importanceTitle, matchesImportance,
   changedFields, parseImportanceParam, parseJsonArray, shortPieceName, sourceHealth, toPieceName, toggleImportance,
   addUpTo, findPiece, generationEstimate, parsePieceList, pickEnterprise, pickTopByUsage, watchedPieceNames, clampOffset, pageInfo,
+  parseCsv, parsePieceCsv, uploadNote,
 } from './vendorWatch';
 
 describe('vendorWatch helpers', () => {
@@ -165,6 +166,11 @@ describe('bulk selection helpers', () => {
     expect(pickEnterprise(pieces, new Set(['@activepieces/piece-oracle']))).toEqual(['@activepieces/piece-sap', '@activepieces/piece-netsuite']);
   });
 
+  it('skips built-in Enterprise pieces: they have no vendor to watch', () => {
+    const pieces = [piece('webhook', 900, { enterprise: 1, categories: ['CORE'] }), piece('sap', null, { enterprise: 1 })];
+    expect(pickEnterprise(pieces, new Set())).toEqual(['@activepieces/piece-sap']);
+  });
+
   it('adds names up to a cap, keeping the current ones and skipping duplicates', () => {
     expect(addUpTo(['a', 'b'], ['b', 'c', 'd'], 10)).toEqual(['a', 'b', 'c', 'd']);
     expect(addUpTo(['a', 'b'], ['c', 'd', 'e'], 3)).toEqual(['a', 'b', 'c']);
@@ -278,5 +284,82 @@ describe('findings paging', () => {
     expect(clampOffset(400, 250, 100)).toBe(200);
     expect(clampOffset(100, 0, 100)).toBe(0);
     expect(clampOffset(0, 0, 100)).toBe(0);
+  });
+});
+
+describe('parseCsv', () => {
+  it('splits rows and cells, keeping quoted commas, quotes and line breaks', () => {
+    expect(parseCsv('a,b\r\n"x, y","say ""hi"""\n"two\nlines",z\n')).toEqual([
+      ['a', 'b'], ['x, y', 'say "hi"'], ['two\nlines', 'z'],
+    ]);
+  });
+
+  it('uses semicolons or tabs when the first line has more of them than commas', () => {
+    expect(parseCsv('name;rank\nslack;1,5')).toEqual([['name', 'rank'], ['slack', '1,5']]);
+    expect(parseCsv('name\trank\nslack\t1')).toEqual([['name', 'rank'], ['slack', '1']]);
+  });
+
+  it('drops blank lines and a byte-order mark', () => {
+    expect(parseCsv('\uFEFFslack\n\n  \ngmail')).toEqual([['slack'], ['gmail']]);
+  });
+});
+
+describe('parsePieceCsv', () => {
+  const catalog = [
+    { name: '@activepieces/piece-slack', displayName: 'Slack' },
+    { name: '@activepieces/piece-gmail', displayName: 'Gmail' },
+    { name: '@activepieces/piece-google-sheets', displayName: 'Google Sheets' },
+    { name: '@activepieces/piece-ai', displayName: 'AI' },
+  ];
+
+  it('reads the column that holds piece names and skips its header', () => {
+    const csv = 'Rank,Piece,Category\n1,Slack,AI\n2,google-sheets,AI\n3,@activepieces/piece-gmail,Other\n4,Custom piece (customer-built),Custom\n';
+    expect(parsePieceCsv(csv, catalog)).toEqual({
+      names: ['@activepieces/piece-slack', '@activepieces/piece-google-sheets', '@activepieces/piece-gmail'],
+      unknown: ['Custom piece (customer-built)'],
+    });
+  });
+
+  it('takes API names, repo folder names and repo paths', () => {
+    const csv = 'piece_name\n@activepieces/piece-slack\npiece-gmail\npackages/pieces/community/google-sheets\n';
+    expect(parsePieceCsv(csv, catalog)).toEqual({
+      names: ['@activepieces/piece-slack', '@activepieces/piece-gmail', '@activepieces/piece-google-sheets'],
+      unknown: [],
+    });
+  });
+
+  it('keeps the first row when it is a piece, and drops blanks and duplicates', () => {
+    expect(parsePieceCsv('slack\n\nSLACK\ngmail\n,\n', catalog)).toEqual({
+      names: ['@activepieces/piece-slack', '@activepieces/piece-gmail'],
+      unknown: [],
+    });
+  });
+
+  it('returns nothing when no column has a piece', () => {
+    expect(parsePieceCsv('a,b\n1,2\n', catalog)).toEqual({ names: [], unknown: [] });
+    expect(parsePieceCsv('', catalog)).toEqual({ names: [], unknown: [] });
+  });
+});
+
+describe('uploadNote', () => {
+  const none = { found: 0, added: 0, builtIn: 0, watched: 0, capped: 0, unknown: [] as string[] };
+
+  it('says when the file named no pieces', () => {
+    expect(uploadNote('x.csv', none, 300)).toBe('No piece names found in x.csv.');
+  });
+
+  it('counts what was added, skipped as watched, capped and not found', () => {
+    expect(uploadNote('top.csv', { found: 24, added: 18, builtIn: 3, watched: 2, capped: 1, unknown: ['Foo'] }, 300))
+      .toBe('top.csv: added 18 pieces. Skipped 3 built-in pieces (no vendor to watch). 2 already have watchers. '
+        + 'A batch holds at most 300; 1 not added. Not found: Foo.');
+    expect(uploadNote('h.csv', { ...none, found: 1, builtIn: 1 }, 300)).toBe('h.csv: added 0 pieces. Skipped 1 built-in piece (no vendor to watch).');
+    expect(uploadNote('one.csv', { ...none, found: 1, added: 1 }, 300)).toBe('one.csv: added 1 piece.');
+    expect(uploadNote('w.csv', { ...none, found: 1, watched: 1 }, 300)).toBe('w.csv: added 0 pieces. 1 already has a watcher.');
+  });
+
+  it('lists at most 10 unknown entries', () => {
+    const unknown = Array.from({ length: 12 }, (_, i) => `p${i}`);
+    expect(uploadNote('u.csv', { ...none, unknown }, 300))
+      .toBe('u.csv: added 0 pieces. Not found: p0, p1, p2, p3, p4, p5, p6, p7, p8, p9 and 2 more.');
   });
 });
