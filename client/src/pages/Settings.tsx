@@ -4,8 +4,7 @@ import { CheckCircle, XCircle, Loader2, LogIn, LogOut, ShieldCheck, Brain, Trash
 import LinearBugTrendCard from '../components/LinearBugTrendCard';
 
 const AI_MODELS = [
-  { value: 'claude-sonnet-4-6', label: 'Claude Sonnet 4.6 (latest)' },
-  { value: 'claude-sonnet-4-5-20250929', label: 'Claude Sonnet 4.5' },
+  { value: 'claude-sonnet-5-5', label: 'Claude Sonnet 5.5 (latest)' },
   { value: 'claude-haiku-4-5-20251001', label: 'Claude Haiku 4.5 (faster, cheaper)' },
 ];
 
@@ -16,7 +15,7 @@ export default function Settings() {
   const [hasJwt, setHasJwt] = useState(false);
   const [hasAnthropicKey, setHasAnthropicKey] = useState(false);
   const [anthropicKeyMasked, setAnthropicKeyMasked] = useState('');
-  const [currentAiModel, setCurrentAiModel] = useState('claude-sonnet-4-6');
+  const [currentAiModel, setCurrentAiModel] = useState('claude-sonnet-5-5');
   const [hasMcpToken, setHasMcpToken] = useState(false);
   const [mcpTokenMasked, setMcpTokenMasked] = useState('');
   const [hasLinearWebhook, setHasLinearWebhook] = useState(false);
@@ -54,7 +53,7 @@ export default function Settings() {
 
   // AI config state
   const [anthropicKey, setAnthropicKey] = useState('');
-  const [aiModel, setAiModel] = useState('claude-sonnet-4-6');
+  const [aiModel, setAiModel] = useState('claude-sonnet-5-5');
   const [savingAi, setSavingAi] = useState(false);
   const [aiResult, setAiResult] = useState<{ success: boolean; message: string } | null>(null);
 
@@ -74,8 +73,8 @@ export default function Settings() {
       setJwtStatus(s.jwt_status || '');
       setHasAnthropicKey(s.has_anthropic_key);
       setAnthropicKeyMasked(s.anthropic_key_masked || '');
-      setCurrentAiModel(s.ai_model || 'claude-sonnet-4-6');
-      setAiModel(s.ai_model || 'claude-sonnet-4-6');
+      setCurrentAiModel(s.ai_model || 'claude-sonnet-5-5');
+      setAiModel(s.ai_model || 'claude-sonnet-5-5');
       setHasMcpToken(s.has_mcp_token || false);
       setMcpTokenMasked(s.mcp_token_masked || '');
       setHasLinearWebhook(s.has_linear_webhook || false);

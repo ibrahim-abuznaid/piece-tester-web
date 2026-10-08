@@ -8,7 +8,7 @@
  */
 
 import Anthropic from '@anthropic-ai/sdk';
-import { buildAnthropicClientOptions } from './anthropic-client.js';
+import { buildAnthropicClientOptions, DEFAULT_AI_MODEL, effortFor } from './anthropic-client.js';
 import {
   getSettings,
   getRecentFailures,
@@ -220,17 +220,20 @@ async function runAnalysisInBackground(analysisId: number, dateFrom?: string, da
     log('thinking', `Found ${failures.length} failures across ${pieceBreakdown.length} pieces. Sending to AI...`);
 
     const prompt = buildAnalysisPrompt(failures, pieceBreakdown, overviewStats);
-    const model = settings.ai_model || 'claude-sonnet-4-6';
+    const model = settings.ai_model || DEFAULT_AI_MODEL;
     const client = new Anthropic(buildAnthropicClientOptions(settings.anthropic_api_key));
 
     log('thinking', `Analyzing with ${model}...`);
 
     const response = await client.messages.create({
       model,
-      max_tokens: 8192,
+      max_tokens: 16000,
+      ...effortFor(model, 'low'),
       system: ANALYSIS_SYSTEM_PROMPT,
       messages: [{ role: 'user', content: prompt }],
     });
+
+    if (response.stop_reason === 'refusal') throw new Error('The model declined to analyze these failures (refusal)');
 
     const text = response.content.find(b => b.type === 'text')?.text?.trim() || '{}';
     const jsonMatch = text.match(/\{[\s\S]*\}/);

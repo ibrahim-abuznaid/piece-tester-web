@@ -7,7 +7,7 @@ import { maskedSettings } from './settings-view.js';
 import { encryptSecret, hasEncryptionKey } from '../services/crypto-vault.js';
 import { decodeJwtExp } from '../services/jwt-util.js';
 import { postDiscordMessage } from '../services/notifier.js';
-import { buildAnthropicClientOptions } from '../services/anthropic-client.js';
+import { buildAnthropicClientOptions, DEFAULT_AI_MODEL } from '../services/anthropic-client.js';
 import { fetchActiveUsers, fetchViewer } from '../services/bug-trend/linear-client.js';
 import { invalidateBugTrendCache } from '../services/bug-trend/bug-trend-service.js';
 import { seedRosterIfEmpty, validateRoster } from '../services/bug-trend/roster.js';
@@ -228,11 +228,11 @@ router.post('/save-anthropic-key', async (req, res) => {
     const Anthropic = (await import('@anthropic-ai/sdk')).default;
     const client = new Anthropic(buildAnthropicClientOptions(api_key.trim()));
     await client.messages.create({
-      model: model || 'claude-sonnet-4-6',
+      model: model || DEFAULT_AI_MODEL,
       max_tokens: 10,
       messages: [{ role: 'user', content: 'Say "ok"' }],
     });
-    updateSettings({ anthropic_api_key: api_key.trim(), ai_model: model || 'claude-sonnet-4-6' });
+    updateSettings({ anthropic_api_key: api_key.trim(), ai_model: model || DEFAULT_AI_MODEL });
     res.json({ success: true, message: 'Anthropic API key saved and verified.' });
   } catch (err: any) {
     // Still save if it might be a transient issue
@@ -240,7 +240,7 @@ router.post('/save-anthropic-key', async (req, res) => {
     if (msg.includes('401') || msg.includes('authentication') || msg.includes('invalid')) {
       res.status(400).json({ success: false, error: `Invalid API key: ${msg}` });
     } else {
-      updateSettings({ anthropic_api_key: api_key.trim(), ai_model: model || 'claude-sonnet-4-6' });
+      updateSettings({ anthropic_api_key: api_key.trim(), ai_model: model || DEFAULT_AI_MODEL });
       res.json({ success: true, message: `Key saved (verification warning: ${msg})` });
     }
   }

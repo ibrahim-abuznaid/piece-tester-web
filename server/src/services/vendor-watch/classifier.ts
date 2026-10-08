@@ -1,5 +1,5 @@
 import Anthropic from '@anthropic-ai/sdk';
-import { buildAnthropicClientOptions, type MessagesClient } from '../anthropic-client.js';
+import { buildAnthropicClientOptions, DEFAULT_AI_MODEL, effortFor, type MessagesClient } from '../anthropic-client.js';
 import { calculateCost, extractUsage, type CostTracker } from '../../agents/v2/cost-tracker.js';
 import { getSettings } from '../../db/queries.js';
 import { validateClassifierFindings } from './findings.js';
@@ -86,7 +86,8 @@ Rules:
 - If the vendor versions its API (dated or numbered versions), a change that ships only in a newer version does not break the piece, because existing callers keep their version. Report it as new_feature or other at low severity. Only the deprecation, sunset or retirement of a version the piece uses (see "API version" above) is a deprecation or breaking change.
 - Marketing posts, docs typo fixes, UI-only changes and changes to products the piece does not call are NOT findings. An empty list is the normal answer.
 - One finding per distinct change.
-- Report at most 15 findings, most severe first.`;
+- Report at most 15 findings, most severe first.
+- Always answer by calling report_findings exactly once, with an empty list when nothing matters.`;
 
 const BASELINE_NOTE = 'This is the FIRST read of this source, so the text is history, not news. Report only deprecations, sunsets, breaking changes and auth changes that are still upcoming or took effect in the last 90 days. Do not report new features or anything older.';
 
@@ -133,19 +134,20 @@ export async function classifyChange(
   const settings = getSettings();
   if (!deps.client && !settings.anthropic_api_key) throw new Error('Anthropic API key not configured. Go to Settings to add it.');
   const client: MessagesClient = deps.client ?? new Anthropic(buildAnthropicClientOptions(settings.anthropic_api_key));
-  const model = deps.model || settings.ai_model || 'claude-sonnet-4-6';
+  const model = deps.model || settings.ai_model || DEFAULT_AI_MODEL;
 
   const response = await client.messages.create({
     model,
     max_tokens: 16000,
+    ...effortFor(model, 'low'),
     system: CLASSIFIER_SYSTEM,
     tools: [REPORT_TOOL],
-    tool_choice: { type: 'tool', name: REPORT_TOOL.name },
     messages: [{ role: 'user', content: buildClassifierPrompt(input) }],
   });
   deps.costTracker?.trackResponse(model, response, 'vendor_watch_classifier');
   const costUsd = calculateCost(model, extractUsage(response));
 
+  if (response?.stop_reason === 'refusal') throw new Error('Classifier declined the request (refusal)');
   if (response?.stop_reason === 'max_tokens') throw new Error('Classifier output was truncated');
   const call = (response?.content ?? []).find(
     (b): b is Anthropic.ToolUseBlock => b?.type === 'tool_use' && b?.name === REPORT_TOOL.name,

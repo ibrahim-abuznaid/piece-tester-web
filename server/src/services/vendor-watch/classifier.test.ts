@@ -29,11 +29,13 @@ const finding = {
 };
 
 describe('classifyChange', () => {
-  it('forces the report_findings tool and returns validated findings with their cost', async () => {
+  it('offers the report_findings tool without forcing it and returns validated findings with their cost', async () => {
     const { client, calls } = fake(reply([finding]));
     const r = await classifyChange(input(), { client, model: 'claude-haiku-4-5' });
     expect(calls[0].model).toBe('claude-haiku-4-5');
-    expect(calls[0].tool_choice).toEqual({ type: 'tool', name: 'report_findings' });
+    expect(calls[0].tool_choice).toBeUndefined();
+    expect(calls[0].output_config).toBeUndefined();
+    expect(calls[0].system).toContain('Always answer by calling report_findings exactly once');
     expect(r.findings).toHaveLength(1);
     expect(r.findings[0]).toMatchObject({ kind: 'breaking', evidence_verified: true, is_baseline: false, evidence_url: 'https://acme.dev/changelog' });
     expect(r.costUsd).toBeCloseTo(0.002);
@@ -62,9 +64,16 @@ describe('classifyChange', () => {
     expect(r.findings[0].is_baseline).toBe(true);
   });
 
-  it('throws when the model does not call the tool or is cut off', async () => {
+  it('runs Sonnet 5.5 at low effort', async () => {
+    const { client, calls } = fake(reply([]));
+    await classifyChange(input(), { client, model: 'claude-sonnet-5-5' });
+    expect(calls[0].output_config).toEqual({ effort: 'low' });
+  });
+
+  it('throws when the model does not call the tool, is cut off, or declines', async () => {
     await expect(classifyChange(input(), { client: fake({ stop_reason: 'end_turn', content: [{ type: 'text', text: 'hi' }] }).client })).rejects.toThrow(/report_findings/);
     await expect(classifyChange(input(), { client: fake({ ...reply([]), stop_reason: 'max_tokens' }).client })).rejects.toThrow(/truncated/);
+    await expect(classifyChange(input(), { client: fake({ stop_reason: 'refusal', usage: { input_tokens: 10, output_tokens: 0 }, content: [] }).client })).rejects.toThrow(/refusal/);
   });
 
   it('throws on malformed report_findings input instead of reporting no findings, and still tracks the cost', async () => {

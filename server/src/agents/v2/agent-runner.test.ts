@@ -70,6 +70,33 @@ describe('runAgentLoop', () => {
     expect(feedback.content).toContain('sources: never probed');
   });
 
+  it('runs Sonnet 5.5 at medium effort with room for thinking, and passes thinking blocks back unchanged', async () => {
+    const thinking = { type: 'thinking', thinking: '', signature: 'sig-1' };
+    const { client, calls } = scripted([
+      { stop_reason: 'tool_use', usage, content: [thinking, { type: 'tool_use', id: 't1', name: 'set_watch_plan', input: { ok: false } }] },
+      { stop_reason: 'tool_use', usage, content: [{ type: 'tool_use', id: 't2', name: 'set_watch_plan', input: { ok: true } }] },
+    ]);
+    await runAgentLoop(registry(), config({ client, model: 'claude-sonnet-5-5' }), ctx());
+    expect(calls[0].output_config).toEqual({ effort: 'medium' });
+    expect(calls[0].max_tokens).toBe(16000);
+    expect(calls[1].messages[1]).toEqual({ role: 'assistant', content: [thinking, { type: 'tool_use', id: 't1', name: 'set_watch_plan', input: { ok: false } }] });
+  });
+
+  it('sends no effort to a Haiku 4.5 worker', async () => {
+    const { client, calls } = scripted([{ stop_reason: 'end_turn', usage, content: [{ type: 'text', text: 'done' }] }]);
+    await runAgentLoop(registry(), config({ client, model: 'claude-haiku-4-5' }), ctx());
+    expect(calls[0].output_config).toBeUndefined();
+  });
+
+  it('stops and logs an error on a refusal', async () => {
+    const logs: any[] = [];
+    const { client, calls } = scripted([{ stop_reason: 'refusal', usage, stop_details: { type: 'refusal', category: 'cyber' }, content: [] }]);
+    const r = await runAgentLoop(registry(), config({ client, model: 'claude-sonnet-5-5', onLog: (e) => logs.push(e) }), ctx());
+    expect(calls).toHaveLength(1);
+    expect(r.terminatedByTool).toBe(false);
+    expect(logs.some(l => l.type === 'error' && l.message.includes('refusal: cyber'))).toBe(true);
+  });
+
   it('stops without a terminal call on end_turn', async () => {
     const { client } = scripted([{ stop_reason: 'end_turn', usage, content: [{ type: 'text', text: 'done' }] }]);
     const r = await runAgentLoop(registry(), config({ client }), ctx());

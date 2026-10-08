@@ -1,5 +1,5 @@
 import Anthropic from '@anthropic-ai/sdk';
-import { buildAnthropicClientOptions } from './anthropic-client.js';
+import { buildAnthropicClientOptions, DEFAULT_AI_MODEL, effortFor } from './anthropic-client.js';
 import axios from 'axios';
 import { getSettings, getConnectionByPiece } from '../db/queries.js';
 import type { PieceMetadataFull, PieceActionMeta } from './ap-client.js';
@@ -301,7 +301,7 @@ async function runAgentLoop(
   const action = pieceMeta.actions[actionName];
   if (!action) throw new Error(`Action "${actionName}" not found in piece ${pieceMeta.name}`);
 
-  const model = settings.ai_model || 'claude-sonnet-4-6';
+  const model = settings.ai_model || DEFAULT_AI_MODEL;
   const client = new Anthropic(buildAnthropicClientOptions(settings.anthropic_api_key));
 
   function log(type: AgentLogEntry['type'], message: string, detail?: string) {
@@ -328,7 +328,7 @@ async function runAgentLoop(
 
     const activeTools = toolSet || TOOLS;
     const requestOptions = abortSignal ? { signal: abortSignal } : undefined;
-    const response = await client.messages.create({ model, max_tokens: 4096, system: systemPrompt, tools: activeTools, messages }, requestOptions);
+    const response = await client.messages.create({ model, max_tokens: 16000, ...effortFor(model, 'medium'), system: systemPrompt, tools: activeTools, messages }, requestOptions);
 
     if (costTracker) {
       const isPlanMode = toolSet?.some(t => t.name === 'set_test_plan');
@@ -341,6 +341,8 @@ async function runAgentLoop(
     for (const block of assistantContent) {
       if (block.type === 'text' && block.text.trim()) log('thinking', block.text.trim());
     }
+
+    if (response.stop_reason === 'refusal') { log('error', 'The model declined this request (refusal).'); break; }
 
     const toolUseBlocks = assistantContent.filter(b => b.type === 'tool_use') as Anthropic.Messages.ToolUseBlock[];
     if (toolUseBlocks.length === 0) { log('done', 'Agent finished.'); break; }

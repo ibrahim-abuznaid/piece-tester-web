@@ -19,6 +19,23 @@ import type Anthropic from '@anthropic-ai/sdk';
 export const ANTHROPIC_TIMEOUT_MS = 5 * 60_000;
 export const ANTHROPIC_MAX_RETRIES = 1;
 
+/** Model every LLM call uses unless Settings or a worker picks another. */
+export const DEFAULT_AI_MODEL = 'claude-sonnet-5-5';
+
+export type Effort = 'low' | 'medium' | 'high';
+
+const EFFORT_MODELS = /^claude-(opus-4-[5-9]|sonnet-4-6|(opus|sonnet|haiku|fable)-5)/;
+
+/**
+ * `output_config.effort` for models that take it, nothing for the rest.
+ * Sonnet 5.5 thinks by default and its default effort is `high`, so callers
+ * pick a lower level on purpose. Sonnet 4.5 and Haiku 4.5 (the research and
+ * verifier workers) reject the field, so it is left off for them.
+ */
+export function effortFor(model: string, effort: Effort): Pick<Anthropic.MessageCreateParamsNonStreaming, 'output_config'> {
+  return EFFORT_MODELS.test(model) ? { output_config: { effort } } : {};
+}
+
 export interface AnthropicClientOptions {
   apiKey: string;
   timeout: number;
