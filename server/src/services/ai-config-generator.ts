@@ -9,6 +9,7 @@ import { ensureFreshJwt, isAuthError } from './auth-refresh.js';
 import { buildConnectionValue, makeExternalId } from './connection-builder.js';
 import { formatLessonsForPrompt } from './lesson-extractor.js';
 import { CostTracker } from '../agents/v2/cost-tracker.js';
+import { githubApiGet } from './github-api.js';
 
 // ── Types ──
 
@@ -115,9 +116,9 @@ async function fetchPieceSourceFromGitHub(pieceName: string): Promise<string | n
   }
 
   try {
-    const apiResp = await axios.get(
+    const apiResp = await githubApiGet(
       `https://api.github.com/repos/activepieces/activepieces/contents/packages/pieces/community/${shortName}/src/lib/actions`,
-      { timeout: 10000, headers: { Accept: 'application/vnd.github.v3+json' } },
+      { timeout: 10000 },
     );
     if (Array.isArray(apiResp.data)) {
       const actionFiles = apiResp.data.filter((f: any) => f.name.endsWith('.ts') || f.name.endsWith('.js')).slice(0, 15);
@@ -128,7 +129,7 @@ async function fetchPieceSourceFromGitHub(pieceName: string): Promise<string | n
         } catch { /* skip */ }
       }
     }
-  } catch { /* no action files directory */ }
+  } catch { /* no action files directory, or rate-limited (githubApiGet logs that) */ }
 
   for (const helperPath of ['src/lib/common/props.ts', 'src/lib/common/index.ts', 'src/lib/common.ts', 'src/lib/common/common.ts']) {
     try {

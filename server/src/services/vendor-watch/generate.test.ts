@@ -1,10 +1,18 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import {
-  beginPlanGeneration, completePlanGeneration, countOpenFindings, getPlan, getSnapshot, insertFinding, listSources, saveSnapshot,
+  beginPlanGeneration, completePlanGeneration, countOpenFindings, deletePlan, getPlan, getPlanByPiece, getSnapshot,
+  insertFinding, listSources, queuePlanGeneration, saveSnapshot,
 } from '../../db/vendor-watch-queries.js';
 import { resetVendorWatch, sampleDraft, samplePlanResult } from '../../db/vendor-watch-test-utils.js';
-import { generateWatchPlan, generateWatchPlansInBackground, type GenerateDeps } from './generate.js';
+import { __resetGitHubRateLimitForTests, __setHttpForTests, githubApiGet } from '../github-api.js';
+import {
+  generateWatchPlan, generateWatchPlanInBackground, generateWatchPlansInBackground, VW_GENERATION_TIMEOUT_MS, type GenerateDeps,
+} from './generate.js';
+import { getGenerationQueueState, resetGenerationQueueForTests } from './generation-queue.js';
 import type { WatchPlanValidation } from '../../agents/v2/tools/set-watch-plan.js';
+
+const RATE_LIMIT_LINE =
+  'GitHub rate limit was hit while reading the piece source; action files may be missing. Add a GitHub token in Settings and regenerate.';
 
 const meta = (name: string) => ({
   name, displayName: 'Acme', description: '', logoUrl: '', version: '0.6.0', actions: {}, triggers: {},
@@ -33,8 +41,30 @@ function deps(over: Partial<GenerateDeps> = {}) {
   return { d, baselines };
 }
 
+function deferred() {
+  let resolve!: () => void;
+  const promise = new Promise<void>((res) => { resolve = res; });
+  return { promise, resolve };
+}
+
+async function waitFor(cond: () => boolean): Promise<void> {
+  for (let i = 0; i < 200 && !cond(); i++) await new Promise(r => setTimeout(r, 5));
+  expect(cond()).toBe(true);
+}
+
+/** Make one GitHub API call that comes back rate-limited, so github-api records a hit now. */
+async function hitGitHubRateLimit(): Promise<void> {
+  __setHttpForTests(async () => {
+    throw Object.assign(new Error('Request failed with status code 403'), {
+      response: { status: 403, data: {}, headers: { 'x-ratelimit-remaining': '0', 'x-ratelimit-reset': String(Math.floor(Date.now() / 1000) + 600) } },
+    });
+  });
+  await githubApiGet('https://api.github.com/repos/activepieces/activepieces/contents/x').catch(() => {});
+}
+
 describe('generateWatchPlan', () => {
   beforeEach(resetVendorWatch);
+  afterEach(() => { vi.restoreAllMocks(); });
 
   it('saves the plan, puts the liveness source first, and starts the baseline', async () => {
     const { d, baselines } = deps();
@@ -75,22 +105,172 @@ describe('generateWatchPlan', () => {
     expect(getSnapshot(oldLiveness.id)).toBeUndefined();
     expect(countOpenFindings(first.piece_name)).toBe(1);
   });
+
+  it('gives the agent a 20-minute timeout and fails the generation with a clear note when it fires', async () => {
+    const clock = new AbortController();
+    const timeout = vi.spyOn(AbortSignal, 'timeout').mockReturnValue(clock.signal);
+    let seen: AbortSignal | undefined;
+    const pending = generateWatchPlan('@activepieces/piece-stuck', deps({
+      runWorker: ({ abortSignal }) => new Promise((_resolve, reject) => {
+        seen = abortSignal;
+        abortSignal?.addEventListener('abort', () => reject(new Error('Agent aborted: client disconnected')));
+      }),
+    }).d);
+
+    await waitFor(() => seen !== undefined);
+    expect(VW_GENERATION_TIMEOUT_MS).toBe(20 * 60_000);
+    expect(timeout).toHaveBeenCalledWith(VW_GENERATION_TIMEOUT_MS);
+    expect(seen).toBe(clock.signal);
+    expect(getPlanByPiece('@activepieces/piece-stuck')?.status).toBe('generating');
+
+    clock.abort(new DOMException('The operation was aborted due to timeout', 'TimeoutError'));
+    expect(await pending).toMatchObject({ status: 'failed', generation_note: 'Generation timed out after 20 minutes.' });
+  });
+});
+
+describe('generateWatchPlan and the GitHub rate limit', () => {
+  beforeEach(() => {
+    resetVendorWatch();
+    __resetGitHubRateLimitForTests();
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    __setHttpForTests(null);
+    __resetGitHubRateLimitForTests();
+    vi.restoreAllMocks();
+  });
+
+  it('appends the rate-limit line when GitHub limited this generation', async () => {
+    const { d } = deps({ runWorker: async () => { await hitGitHubRateLimit(); return good; } });
+    const plan = await generateWatchPlan('@activepieces/piece-acme', d);
+    expect(plan.status).toBe('active');
+    expect(plan.generation_note).toBe(['Found an RSS changelog.', 'endpoint_inventory: dropped "ghost"', RATE_LIMIT_LINE].join('\n'));
+  });
+
+  it('appends the rate-limit line to the failure note when GitHub limited a failed generation', async () => {
+    const plan = await generateWatchPlan('@activepieces/piece-new', deps({ runWorker: async () => { await hitGitHubRateLimit(); return null; } }).d);
+    expect(plan.status).toBe('failed');
+    expect(plan.generation_note).toBe(`The agent finished without saving a watch plan.\n${RATE_LIMIT_LINE}`);
+
+    const long = await generateWatchPlan('@activepieces/piece-long', deps({
+      runWorker: async () => { await hitGitHubRateLimit(); throw new Error('x'.repeat(5000)); },
+    }).d);
+    expect(long.status).toBe('failed');
+    expect(long.generation_note.length).toBeLessThanOrEqual(2000);
+    expect(long.generation_note.endsWith(`x\n${RATE_LIMIT_LINE}`)).toBe(true);
+  });
+
+  it('leaves a failure note alone when GitHub did not limit the generation', async () => {
+    const plan = await generateWatchPlan('@activepieces/piece-new', deps({ runWorker: async () => null }).d);
+    expect(plan.generation_note).toBe('The agent finished without saving a watch plan.');
+  });
+
+  it('leaves the note alone when the only hit came before this generation started', async () => {
+    await hitGitHubRateLimit();
+    await new Promise(r => setTimeout(r, 5));
+    const plan = await generateWatchPlan('@activepieces/piece-acme', deps().d);
+    expect(plan.generation_note).toBe('Found an RSS changelog.\nendpoint_inventory: dropped "ghost"');
+  });
 });
 
 describe('generateWatchPlansInBackground', () => {
-  beforeEach(resetVendorWatch);
+  beforeEach(() => {
+    resetVendorWatch();
+    resetGenerationQueueForTests();
+    __resetGitHubRateLimitForTests();
+  });
 
-  it('dedupes names, skips plans already generating, and finishes in the background', async () => {
+  afterEach(resetGenerationQueueForTests);
+
+  it('queues the batch, then each plan goes generating → active, one at a time', async () => {
+    const gates = { '@activepieces/piece-a': deferred(), '@activepieces/piece-b': deferred() };
+    const started: string[] = [];
+    const { d, baselines } = deps({
+      runWorker: async ({ pieceMeta }) => {
+        started.push(pieceMeta.name);
+        await gates[pieceMeta.name as keyof typeof gates].promise;
+        return good;
+      },
+    });
+    const ids = generateWatchPlansInBackground(['@activepieces/piece-a', '@activepieces/piece-b'], d);
+    expect(ids.map(id => getPlan(id)!.status)).toEqual(['queued', 'queued']);
+
+    await waitFor(() => started.length === 1);
+    expect(ids.map(id => getPlan(id)!.status)).toEqual(['generating', 'queued']);
+    expect(getGenerationQueueState()).toEqual({ pending: 1, running: 1, github_wait_until: null });
+
+    gates['@activepieces/piece-a'].resolve();
+    await waitFor(() => started.length === 2);
+    expect(ids.map(id => getPlan(id)!.status)).toEqual(['active', 'generating']);
+
+    gates['@activepieces/piece-b'].resolve();
+    await waitFor(() => getPlan(ids[1])!.status === 'active');
+    expect(baselines).toEqual(ids);
+    await waitFor(() => getGenerationQueueState().running === 0);
+    expect(getGenerationQueueState()).toEqual({ pending: 0, running: 0, github_wait_until: null });
+  });
+
+  it('enqueues each piece once: dedupes names and skips plans already queued or generating', async () => {
+    const queued = queuePlanGeneration('@activepieces/piece-queued');
     const busy = beginPlanGeneration('@activepieces/piece-busy');
+    const gate = deferred();
     let calls = 0;
-    const { d } = deps({ runWorker: async () => { calls++; return good; } });
-    const ids = generateWatchPlansInBackground(['@activepieces/piece-a', '@activepieces/piece-a', '@activepieces/piece-busy'], d);
-    expect(ids).toHaveLength(2);
-    expect(ids).toContain(busy.id);
-    expect(getPlan(ids[0])!.status).toBe('generating');
-    for (let i = 0; i < 100 && getPlan(ids[0])!.status === 'generating'; i++) await new Promise(r => setTimeout(r, 10));
-    expect(getPlan(ids[0])!.status).toBe('active');
+    const { d } = deps({ runWorker: async () => { calls++; await gate.promise; return good; } });
+    const ids = generateWatchPlansInBackground(
+      ['@activepieces/piece-a', ' @activepieces/piece-a ', '@activepieces/piece-queued', '@activepieces/piece-busy', '  '], d,
+    );
+    const a = getPlanByPiece('@activepieces/piece-a')!;
+    expect(ids).toEqual([a.id, queued.id, busy.id]);
+    expect(generateWatchPlansInBackground(['@activepieces/piece-a'], d)).toEqual([a.id]);
+    expect(generateWatchPlanInBackground('@activepieces/piece-queued', d)).toBe(queued.id);
+    const state = getGenerationQueueState();
+    expect(state.pending + state.running).toBe(1);
+
+    gate.resolve();
+    await waitFor(() => getPlan(a.id)!.status === 'active');
     expect(calls).toBe(1);
+    expect(getPlan(queued.id)!.status).toBe('queued');
     expect(getPlan(busy.id)!.status).toBe('generating');
+  });
+
+  it('runs a single Generate click ahead of the rest of a batch', async () => {
+    const gate = deferred();
+    const started: string[] = [];
+    const { d } = deps({
+      runWorker: async ({ pieceMeta }) => {
+        started.push(pieceMeta.name);
+        if (started.length === 1) await gate.promise;
+        return good;
+      },
+    });
+    generateWatchPlansInBackground(['@activepieces/piece-a', '@activepieces/piece-b'], d);
+    await waitFor(() => started.length === 1);
+    const single = generateWatchPlanInBackground('@activepieces/piece-single', d);
+    expect(getPlan(single)!.status).toBe('queued');
+
+    gate.resolve();
+    await waitFor(() => started.length === 3);
+    expect(started).toEqual(['@activepieces/piece-a', '@activepieces/piece-single', '@activepieces/piece-b']);
+  });
+
+  it('skips the job of a queued plan that was deleted before its turn', async () => {
+    const gate = deferred();
+    const started: string[] = [];
+    const { d } = deps({
+      getPieceMetadata: async (name) => { started.push(name); return meta(name); },
+      runWorker: async ({ pieceMeta }) => {
+        if (pieceMeta.name === '@activepieces/piece-a') await gate.promise;
+        return good;
+      },
+    });
+    const [, b, c] = generateWatchPlansInBackground(['@activepieces/piece-a', '@activepieces/piece-b', '@activepieces/piece-c'], d);
+    await waitFor(() => started.length === 1);
+    expect(deletePlan(b)).toBe(true);
+
+    gate.resolve();
+    await waitFor(() => getPlan(c)?.status === 'active');
+    expect(started).toEqual(['@activepieces/piece-a', '@activepieces/piece-c']);
+    expect(getPlanByPiece('@activepieces/piece-b')).toBeUndefined();
   });
 });

@@ -11,6 +11,7 @@ import { buildAnthropicClientOptions, DEFAULT_AI_MODEL } from '../services/anthr
 import { fetchActiveUsers, fetchViewer } from '../services/bug-trend/linear-client.js';
 import { invalidateBugTrendCache } from '../services/bug-trend/bug-trend-service.js';
 import { seedRosterIfEmpty, validateRoster } from '../services/bug-trend/roster.js';
+import { clearGitHubRateLimit, validateGitHubToken } from '../services/github-api.js';
 
 // ── MCP OAuth constants ──
 const MCP_OAUTH_AUTHORIZE_URL = 'https://mcp.activepieces.com/authorize';
@@ -285,6 +286,30 @@ router.get('/linear-users', async (_req, res) => {
   } catch (err: any) {
     res.status(502).json({ error: err?.message || String(err) });
   }
+});
+
+/**
+ * Save the optional GitHub token used to read piece source. Validated against GitHub before saving.
+ * Clears any recorded rate-limit wait: that limit belonged to the unauthenticated calls.
+ */
+router.post('/save-github-token', async (req, res) => {
+  const token = typeof req.body?.token === 'string' ? req.body.token.trim() : '';
+  if (!token) return res.status(400).json({ error: 'Token is required' });
+  let limit: number;
+  try {
+    ({ limit } = await validateGitHubToken(token));
+  } catch (err: any) {
+    return res.status(400).json({ error: err?.message || String(err) });
+  }
+  updateSettings({ github_token: token });
+  clearGitHubRateLimit();
+  res.json({ success: true, limit });
+});
+
+/** Remove the GitHub token; piece source reads fall back to the unauthenticated 60/hour limit. */
+router.post('/remove-github-token', (_req, res) => {
+  updateSettings({ github_token: '' });
+  res.json({ success: true });
 });
 
 /** Clear the Linear reporting webhook URL */

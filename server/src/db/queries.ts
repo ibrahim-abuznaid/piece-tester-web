@@ -34,6 +34,7 @@ export interface SettingsRow {
   batch_concurrency: number;
   linear_api_key: string;
   bug_trend_roster: string;    // JSON [{ id, name }], Linear user IDs
+  github_token: string;        // optional; '' means unauthenticated GitHub API calls
   updated_at: string;
 }
 
@@ -72,6 +73,7 @@ export function updateSettings(s: Partial<Omit<SettingsRow, 'id' | 'updated_at'>
       batch_concurrency = ?,
       linear_api_key = ?,
       bug_trend_roster = ?,
+      github_token = ?,
       updated_at = datetime('now')
     WHERE id = 1
   `, [
@@ -102,6 +104,7 @@ export function updateSettings(s: Partial<Omit<SettingsRow, 'id' | 'updated_at'>
     s.batch_concurrency ?? current.batch_concurrency,
     s.linear_api_key ?? current.linear_api_key,
     s.bug_trend_roster ?? current.bug_trend_roster,
+    s.github_token ?? current.github_token,
   ]);
   return getSettings();
 }

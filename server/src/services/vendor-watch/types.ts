@@ -1,5 +1,5 @@
 export type SourceKind = 'liveness' | 'feed' | 'openapi' | 'html';
-export type PlanStatus = 'generating' | 'active' | 'paused' | 'stale' | 'failed';
+export type PlanStatus = 'queued' | 'generating' | 'active' | 'paused' | 'stale' | 'failed';
 export type RunTrigger = 'baseline' | 'scheduled' | 'manual';
 export type FindingKind = 'vendor_dead' | 'breaking' | 'deprecation' | 'auth_change' | 'new_feature' | 'other';
 export type Severity = 'critical' | 'high' | 'medium' | 'low';

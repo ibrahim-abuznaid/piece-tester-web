@@ -1045,7 +1045,7 @@ function subscribeBatchSetup(id: string, callbacks: BatchStreamCallbacks): Abort
 
 // ── Vendor watch ──
 
-export type VwPlanStatus = 'generating' | 'active' | 'paused' | 'stale' | 'failed';
+export type VwPlanStatus = 'queued' | 'generating' | 'active' | 'paused' | 'stale' | 'failed';
 export type VwSourceKind = 'liveness' | 'feed' | 'openapi' | 'html';
 export type VwFindingKind = 'vendor_dead' | 'breaking' | 'deprecation' | 'auth_change' | 'new_feature' | 'other';
 export type VwSeverity = 'critical' | 'high' | 'medium' | 'low';
@@ -1165,6 +1165,9 @@ export type VwFindingListRow = VwFinding & VwImportanceFields;
 export interface VwFindingList {
   findings: VwFindingListRow[];
   counts: Record<VwImportanceFilter, number>;
+  total: number;
+  limit: number;
+  offset: number;
 }
 
 export interface VwUsageRefresh {
@@ -1374,6 +1377,8 @@ export const api = {
   saveLinearKey: (api_key: string) => request<SaveLinearKeyResult>('POST', '/settings/save-linear-key', { api_key }),
   removeLinearKey: () => request<{ success: boolean }>('POST', '/settings/remove-linear-key'),
   getLinearUsers: () => request<LinearUser[]>('GET', '/settings/linear-users'),
+  saveGitHubToken: (token: string) => request<{ success: boolean; limit: number }>('POST', '/settings/save-github-token', { token }),
+  removeGitHubToken: () => request<{ success: boolean }>('POST', '/settings/remove-github-token'),
   getReportPieceBreakdown: (dateFrom?: string, dateTo?: string) => {
     const p = new URLSearchParams();
     if (dateFrom) p.set('date_from', dateFrom);
@@ -1477,12 +1482,20 @@ export const api = {
   vwDeletePlan: (id: number) => request<{ ok: true }>('DELETE', `/vendor-watch/plans/${id}`),
   vwSetSourceEnabled: (id: number, enabled: boolean) => request<VwSource>('PATCH', `/vendor-watch/sources/${id}`, { enabled }),
   vwRunCycle: () => request<{ started: boolean }>('POST', '/vendor-watch/run-cycle'),
-  vwFindings: (status: VwFindingStatus, piece?: string, importance: VwImportanceFilter[] = []) =>
-    request<VwFindingList>('GET', `/vendor-watch/findings?status=${status}${piece ? `&piece=${encodeURIComponent(piece)}` : ''}${importance.length ? `&importance=${importance.join(',')}` : ''}`),
+  vwFindings: (status: VwFindingStatus, piece?: string, importance: VwImportanceFilter[] = [], page = { limit: 100, offset: 0 }) =>
+    request<VwFindingList>('GET', `/vendor-watch/findings?status=${status}${piece ? `&piece=${encodeURIComponent(piece)}` : ''}${importance.length ? `&importance=${importance.join(',')}` : ''}&limit=${page.limit}&offset=${page.offset}`),
   vwFindingDraft: (id: number) => request<VwDraft>('GET', `/vendor-watch/findings/${id}/draft`),
   vwFileFinding: (id: number, body: { title: string; description: string; priority: number }) =>
     request<VwFinding>('POST', `/vendor-watch/findings/${id}/file`, body),
   vwDismissFinding: (id: number) => request<VwFinding>('POST', `/vendor-watch/findings/${id}/dismiss`),
   vwUsage: () => request<VwUsage>('GET', '/vendor-watch/usage'),
   vwRefreshUsage: (scope: 'watched' | 'catalog') => request<{ started: boolean }>('POST', '/vendor-watch/usage/refresh', { scope }),
+  vwGenerationQueue: () => request<VwGenerationQueue>('GET', '/vendor-watch/generation-queue'),
 };
+
+/** Watcher generation runs one plan at a time; `github_wait_until` is set while it waits out GitHub's rate limit. */
+export interface VwGenerationQueue {
+  pending: number;
+  running: number;
+  github_wait_until: string | null;
+}

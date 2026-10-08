@@ -2,6 +2,7 @@ import { Fragment, useState, type ReactNode } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ChevronDown, ChevronRight, Loader2, Pause, Play, RefreshCw, Trash2, Wand2 } from 'lucide-react';
 import { api, type VwImportanceFilter, type VwPlan } from '../../lib/api';
+import { formatDbTime } from '../../lib/time';
 import { PLAN_STATUS_CLASS, countByImportance, matchesImportance, shortPieceName } from '../../lib/vendorWatch';
 import GenerateWatchersModal from './GenerateWatchersModal';
 import ImportanceBadge from './ImportanceBadge';
@@ -23,8 +24,9 @@ export default function WatchersTab({ piece, importance, onImportanceChange }: {
   const plans = useQuery({
     queryKey: ['vw-plans'],
     queryFn: api.vwPlans,
-    refetchInterval: (query) => (query.state.data?.some(p => p.status === 'generating') ? 3000 : 30_000),
+    refetchInterval: (query) => (query.state.data?.some(p => p.status === 'generating') ? 10_000 : 30_000),
   });
+  const queue = useQuery({ queryKey: ['vw-generation-queue'], queryFn: api.vwGenerationQueue, refetchInterval: 30_000 });
 
   const act = useMutation({
     mutationFn: ({ action, plan }: { action: PlanAction; plan: VwPlan }): Promise<unknown> => {
@@ -38,6 +40,7 @@ export default function WatchersTab({ piece, importance, onImportanceChange }: {
       setNote(action === 'run' ? `Run started for ${shortPieceName(plan.piece_name)}.` : '');
       qc.invalidateQueries({ queryKey: ['vw-plans'] });
       qc.invalidateQueries({ queryKey: ['vw-plan', plan.id] });
+      qc.invalidateQueries({ queryKey: ['vw-generation-queue'] });
     },
     onError: (e: Error) => setNote(e.message),
   });
@@ -51,7 +54,7 @@ export default function WatchersTab({ piece, importance, onImportanceChange }: {
   const all = plans.data ?? [];
   const forPiece = all.filter(p => !piece || p.piece_name === piece);
   const rows = forPiece.filter(p => matchesImportance(p, importance));
-  const watched = new Set(all.map(p => p.piece_name));
+  const q = queue.data;
 
   return (
     <div>
@@ -65,6 +68,12 @@ export default function WatchersTab({ piece, importance, onImportanceChange }: {
         </button>
         {note && <span className="text-[12px] text-gray-400">{note}</span>}
       </div>
+      {q && (q.running > 0 || q.pending > 0) && (
+        <p className="mb-3 text-[12px] text-gray-400">
+          Generating one at a time: {q.running} running, {q.pending} queued
+          {q.github_wait_until && <span className="text-amber-300"> · waiting for GitHub rate limit until {formatDbTime(q.github_wait_until)}</span>}
+        </p>
+      )}
 
       {plans.isLoading ? (
         <div className="text-sm text-gray-400">Loading…</div>
@@ -128,7 +137,7 @@ export default function WatchersTab({ piece, importance, onImportanceChange }: {
                               {runnable && <IconButton title="Run now" onClick={() => act.mutate({ action: 'run', plan: p })}><Play size={13} /></IconButton>}
                               {runnable && <IconButton title="Pause" onClick={() => act.mutate({ action: 'pause', plan: p })}><Pause size={13} /></IconButton>}
                               {p.status === 'paused' && <IconButton title="Resume" onClick={() => act.mutate({ action: 'resume', plan: p })}><Play size={13} /></IconButton>}
-                              {p.status !== 'generating' && (
+                              {p.status !== 'generating' && p.status !== 'queued' && (
                                 <IconButton title="Regenerate" onClick={() => {
                                   const resume = p.status === 'paused' ? ' It will also resume the watcher.' : '';
                                   if (window.confirm(`Regenerate the watcher for ${p.piece_name}? This runs the AI agent again (about $0.20–0.60) and replaces its sources.${resume}`)) {
@@ -163,7 +172,7 @@ export default function WatchersTab({ piece, importance, onImportanceChange }: {
         </>
       )}
 
-      {showGenerate && <GenerateWatchersModal watched={watched} onClose={() => setShowGenerate(false)} />}
+      {showGenerate && <GenerateWatchersModal onClose={() => setShowGenerate(false)} />}
     </div>
   );
 }

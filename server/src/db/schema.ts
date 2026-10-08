@@ -135,6 +135,14 @@ function initTables(db: DatabaseAdapter): void {
     if (!c.some(x => x.name === col)) db.exec(ddl);
   }
 
+  // Migration: optional GitHub token for reading piece source (lifts the 60/hour limit)
+  for (const [col, ddl] of [
+    ['github_token', `ALTER TABLE settings ADD COLUMN github_token TEXT NOT NULL DEFAULT ''`],
+  ] as const) {
+    const c = db.pragma(`table_info(settings)`) as { name: string }[];
+    if (!c.some(x => x.name === col)) db.exec(ddl);
+  }
+
   // Migration: add ai_config_meta column to piece_connections if missing
   const connCols = db.pragma(`table_info(piece_connections)`) as { name: string }[];
   // (table may not exist yet — the CREATE TABLE below creates it; run migration only if table exists)
@@ -626,6 +634,17 @@ function initTables(db: DatabaseAdapter): void {
       updated_at TEXT DEFAULT (datetime('now')),
       UNIQUE(piece_name, signature)
     );
+  `);
+
+  // Vendor watch indexes (docs/superpowers/plans/2026-10-07-vendor-watch-bulk-safe.md)
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_watch_sources_plan ON watch_sources(plan_id);
+    CREATE INDEX IF NOT EXISTS idx_watch_runs_plan ON watch_runs(plan_id);
+    CREATE INDEX IF NOT EXISTS idx_vendor_findings_plan ON vendor_findings(plan_id);
+    CREATE INDEX IF NOT EXISTS idx_vendor_findings_status ON vendor_findings(status);
+    CREATE INDEX IF NOT EXISTS idx_vendor_findings_signature ON vendor_findings(signature);
+    CREATE INDEX IF NOT EXISTS idx_vendor_findings_source ON vendor_findings(source_id);
+    CREATE INDEX IF NOT EXISTS idx_vendor_findings_run ON vendor_findings(run_id);
   `);
 
   // Vendor watch importance (docs/superpowers/specs/2026-10-07-vendor-watch-importance-design.md)

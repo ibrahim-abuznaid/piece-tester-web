@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { api, type AiCostSummary, type AiUsageRow } from '../lib/api';
 import { CheckCircle, XCircle, Loader2, LogIn, LogOut, ShieldCheck, Brain, Trash2, DollarSign, TrendingUp, Zap, Plug } from 'lucide-react';
 import LinearBugTrendCard from '../components/LinearBugTrendCard';
+import GitHubTokenCard from '../components/GitHubTokenCard';
 
 const AI_MODELS = [
   { value: 'claude-sonnet-5-5', label: 'Claude Sonnet 5.5 (latest)' },
@@ -680,6 +681,8 @@ export default function Settings() {
       </div>
 
       <LinearBugTrendCard />
+
+      <GitHubTokenCard />
 
       {/* Discord alerts */}
       <div className="mt-6 rounded-lg border border-gray-800 bg-gray-900 p-4">

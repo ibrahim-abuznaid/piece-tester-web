@@ -2,22 +2,28 @@ import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Loader2, Search, Wand2, X } from 'lucide-react';
 import { api, type VwImportanceFields, type VwImportanceFilter } from '../../lib/api';
-import { compareImportance, countByImportance, matchesImportance, shortPieceName } from '../../lib/vendorWatch';
+import {
+  addUpTo, compareImportance, countByImportance, generationEstimate, matchesImportance, parsePieceCsv, pickEnterprise,
+  pickTopByUsage, shortPieceName, uploadNote, watchedPieceNames,
+} from '../../lib/vendorWatch';
+import CsvUploadButton from './CsvUploadButton';
 import ImportanceBadge from './ImportanceBadge';
 import ImportanceFilter from './ImportanceFilter';
 
-const MAX_BATCH = 100;
+const MAX_BATCH = 300;
 
-interface PieceSummary { name: string; displayName: string }
+interface PieceSummary { name: string; displayName: string; categories?: string[] }
 
 const UNRATED: VwImportanceFields = { importance: null, enterprise: 0, usage_projects: null, usage_fetched_at: null };
 
-export default function GenerateWatchersModal({ watched, onClose }: { watched: Set<string>; onClose: () => void }) {
+export default function GenerateWatchersModal({ onClose }: { onClose: () => void }) {
   const qc = useQueryClient();
   const [filter, setFilter] = useState('');
   const [importance, setImportance] = useState<VwImportanceFilter[]>([]);
   const [picked, setPicked] = useState<Set<string>>(new Set());
   const [err, setErr] = useState('');
+  const [topN, setTopN] = useState('50');
+  const [note, setNote] = useState('');
   const pieces = useQuery({
     queryKey: ['vw-catalog'],
     queryFn: () => api.listPieces() as Promise<PieceSummary[]>,
@@ -25,6 +31,8 @@ export default function GenerateWatchersModal({ watched, onClose }: { watched: S
   });
 
   const usage = useQuery({ queryKey: ['vw-usage'], queryFn: api.vwUsage, staleTime: 60_000 });
+  const plans = useQuery({ queryKey: ['vw-plans'], queryFn: api.vwPlans });
+  const watched = useMemo(() => watchedPieceNames(plans.data ?? []), [plans.data]);
 
   const rated = useMemo(() => {
     const byName = new Map((usage.data?.pieces ?? []).map(u => [u.piece_name, u as VwImportanceFields]));
@@ -42,7 +50,11 @@ export default function GenerateWatchersModal({ watched, onClose }: { watched: S
 
   const generate = useMutation({
     mutationFn: () => api.vwGenerateBatch([...picked]),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['vw-plans'] }); onClose(); },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['vw-plans'] });
+      qc.invalidateQueries({ queryKey: ['vw-generation-queue'] });
+      onClose();
+    },
     onError: (e: Error) => setErr(e.message),
   });
 
@@ -53,9 +65,44 @@ export default function GenerateWatchersModal({ watched, onClose }: { watched: S
     return next;
   });
 
+  const top = Number(topN);
+  const topValid = Number.isInteger(top) && top >= 1 && top <= MAX_BATCH;
+  const ready = pieces.isSuccess && usage.isSuccess && plans.isSuccess;
+  const select = (names: string[], none: string) => {
+    const next = addUpTo([...picked], names, MAX_BATCH);
+    const fresh = names.filter(n => !picked.has(n)).length;
+    const added = next.length - picked.size;
+    setPicked(new Set(next));
+    setNote(names.length === 0 ? none : added < fresh ? `Added ${added}: a batch holds at most ${MAX_BATCH} pieces.` : '');
+  };
+  const selectFromFile = (text: string, file: string) => {
+    const { names, unknown } = parsePieceCsv(text, rated);
+    const core = new Set(rated.filter(p => p.categories?.includes('CORE')).map(p => p.name));
+    const vendorPieces = names.filter(n => !core.has(n));
+    const unwatched = vendorPieces.filter(n => !watched.has(n));
+    const next = addUpTo([...picked], unwatched, MAX_BATCH);
+    const added = next.length - picked.size;
+    setPicked(new Set(next));
+    setNote(uploadNote(file, {
+      found: names.length,
+      added,
+      builtIn: names.length - vendorPieces.length,
+      watched: vendorPieces.length - unwatched.length,
+      capped: unwatched.filter(n => !picked.has(n)).length - added,
+      unknown,
+    }, MAX_BATCH));
+  };
+  const submit = () => {
+    const n = picked.size;
+    if (!window.confirm(`Generate watchers for ${n} piece${n === 1 ? '' : 's'}?\n\n${generationEstimate(n)}`)) return;
+    setErr('');
+    generate.mutate();
+  };
+  const bulkButton = 'rounded border border-gray-700 px-2 py-1 text-gray-300 hover:bg-gray-800 disabled:opacity-50';
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={onClose}>
-      <div className="flex max-h-[80vh] w-full max-w-xl flex-col rounded-lg border border-gray-800 bg-gray-900 p-4" onClick={e => e.stopPropagation()}>
+    <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/60 p-4 pt-[10vh]" onClick={onClose}>
+      <div className="flex max-h-[80vh] w-full max-w-2xl flex-col rounded-lg border border-gray-800 bg-gray-900 p-4" onClick={e => e.stopPropagation()}>
         <div className="mb-3 flex items-center justify-between">
           <h2 className="text-sm font-semibold text-gray-200">Generate watchers</h2>
           <button onClick={onClose} className="text-gray-500 hover:text-gray-300"><X size={16} /></button>
@@ -77,6 +124,27 @@ export default function GenerateWatchersModal({ watched, onClose }: { watched: S
             {unratedCount} of {rated.length} pieces have no usage yet. Refresh the whole catalog under Config → Importance to rank them all.
           </p>
         )}
+        <div className="mb-2 flex flex-wrap items-center gap-2 text-[12px]">
+          <label className="flex items-center gap-1.5 text-gray-400">
+            Top
+            <input type="number" min={1} max={MAX_BATCH} value={topN} onChange={e => setTopN(e.target.value)}
+              className="w-16 rounded border border-gray-700 bg-gray-950 px-1.5 py-1 text-gray-200" />
+            by usage
+          </label>
+          <button disabled={!ready || !topValid} className={bulkButton}
+            onClick={() => select(pickTopByUsage(rated, top, watched), `No unwatched pieces in the top ${top} by usage.`)}>
+            Select
+          </button>
+          <button disabled={!ready} className={bulkButton}
+            onClick={() => select(pickEnterprise(rated, watched), 'No unwatched Enterprise pieces left to add.')}>
+            Select all Enterprise
+          </button>
+          <CsvUploadButton disabled={!ready} className={bulkButton} onText={selectFromFile} onError={setNote} />
+          <button disabled={picked.size === 0} className={bulkButton} onClick={() => { setPicked(new Set()); setNote(''); }}>
+            Clear
+          </button>
+        </div>
+        {note && <p className="mb-2 text-[11px] text-amber-400">{note}</p>}
         <div className="mb-3 min-h-0 flex-1 overflow-auto rounded border border-gray-800">
           {pieces.isLoading ? (
             <div className="flex items-center gap-2 p-3 text-sm text-gray-400"><Loader2 size={13} className="animate-spin" /> Loading pieces…</div>
@@ -107,9 +175,12 @@ export default function GenerateWatchersModal({ watched, onClose }: { watched: S
         </div>
         {err && <p className="mb-2 text-[12px] text-red-400">{err}</p>}
         <div className="flex items-center justify-end gap-2">
-          <span className="mr-auto text-[12px] text-gray-500">{picked.size} selected (max {MAX_BATCH})</span>
+          <span className="mr-auto text-[12px] text-gray-500">
+            {generationEstimate(picked.size)}
+            {picked.size > MAX_BATCH && <span className="text-red-400"> · max {MAX_BATCH} per batch</span>}
+          </span>
           <button onClick={onClose} className="px-3 py-1.5 text-sm text-gray-400 hover:text-gray-200">Cancel</button>
-          <button onClick={() => { setErr(''); generate.mutate(); }}
+          <button onClick={submit}
             disabled={generate.isPending || picked.size === 0 || picked.size > MAX_BATCH}
             className="flex items-center gap-1.5 rounded bg-primary-600 px-3 py-1.5 text-sm text-white hover:bg-primary-500 disabled:opacity-50">
             {generate.isPending ? <Loader2 size={13} className="animate-spin" /> : <Wand2 size={13} />}

@@ -202,6 +202,16 @@ export function beginPlanGeneration(pieceName: string): WatchPlanRow {
   return getPlanByPiece(pieceName)!;
 }
 
+/** Like beginPlanGeneration, but the plan waits in the generation queue (`queued`) until its turn. */
+export function queuePlanGeneration(pieceName: string): WatchPlanRow {
+  getDb().run(
+    `INSERT INTO watch_plans (piece_name, status) VALUES (?, 'queued')
+     ON CONFLICT(piece_name) DO UPDATE SET status = 'queued', generation_note = ''`,
+    [pieceName],
+  );
+  return getPlanByPiece(pieceName)!;
+}
+
 export function completePlanGeneration(planId: number, r: PlanResult): WatchPlanRow {
   getDb().run(
     `UPDATE watch_plans SET piece_version = ?, piece_display_name = ?, vendor_name = ?, api_base_urls = ?,
@@ -216,13 +226,16 @@ export function completePlanGeneration(planId: number, r: PlanResult): WatchPlan
   return getPlan(planId)!;
 }
 
+/** Longest generation_note a failed generation keeps. */
+export const MAX_FAILURE_NOTE = 2000;
+
 /** A first generation that fails → failed. A failed regeneration → stale, so the old plan keeps running. */
 export function failPlanGeneration(planId: number, note: string, costUsd = 0): WatchPlanRow {
   getDb().run(
     `UPDATE watch_plans SET status = CASE WHEN generated_at IS NULL THEN 'failed' ELSE 'stale' END,
        generation_note = ?, generation_cost_usd = ?
      WHERE id = ?`,
-    [note.slice(0, 2000), costUsd, planId],
+    [note.slice(0, MAX_FAILURE_NOTE), costUsd, planId],
   );
   return getPlan(planId)!;
 }
@@ -407,19 +420,30 @@ export interface FindingFilter {
   sort?: 'importance' | 'newest';
 }
 
-/** Findings joined with their piece's importance. Filters run before the 500-row cap. */
-export function listFindings(f: FindingFilter = {}): FindingListRow[] {
-  const { sql, params } = findingsWithImportance(f);
-  const tiers = f.importance ?? [];
-  const anyOf: string[] = [];
-  const named = tiers.filter((t): t is Importance => t !== 'unrated');
-  if (named.length) { anyOf.push(`importance IN (${named.map(() => '?').join(', ')})`); params.push(...named); }
-  if (tiers.includes('unrated')) anyOf.push('importance IS NULL');
+export interface FindingsPage {
+  limit: number;
+  offset: number;
+}
+
+/** Missing or non-numeric → 100 rows from the start. The limit is clamped to 1..200, the offset to 0 or more. */
+export function clampFindingsPage(p: Partial<FindingsPage> = {}): FindingsPage {
+  const limit = Number.isFinite(p.limit) ? Math.min(200, Math.max(1, Math.trunc(p.limit!))) : 100;
+  const offset = Number.isFinite(p.offset) ? Math.max(0, Math.trunc(p.offset!)) : 0;
+  return { limit, offset };
+}
+
+/** One page of findings joined with their piece's importance. Filters run before paging. */
+export function listFindings(f: FindingFilter = {}, page: Partial<FindingsPage> = {}): FindingListRow[] {
+  const { sql, params } = filteredFindings(f);
+  const { limit, offset } = clampFindingsPage(page);
   const order = f.sort === 'importance' ? `${IMPORTANCE_RANK}, ${SEVERITY_RANK}, id DESC` : 'id DESC';
-  return getDb().all<FindingListRow>(
-    `SELECT * FROM (${sql}) ${anyOf.length ? `WHERE (${anyOf.join(' OR ')})` : ''} ORDER BY ${order} LIMIT 500`,
-    params,
-  );
+  return getDb().all<FindingListRow>(`${sql} ORDER BY ${order} LIMIT ? OFFSET ?`, [...params, limit, offset]);
+}
+
+/** How many findings the filter matches, importance included: the total behind `listFindings` pages. */
+export function countFindings(f: FindingFilter = {}): number {
+  const { sql, params } = filteredFindings(f);
+  return getDb().get<{ n: number }>(`SELECT COUNT(*) AS n FROM (${sql})`, params)!.n;
 }
 
 /** Per-tier totals for the status and piece, ignoring any importance filter (the inbox chips). */
@@ -431,6 +455,16 @@ export function countFindingsByImportance(f: Pick<FindingFilter, 'status' | 'pie
   const counts: Record<ImportanceFilter, number> = { high: 0, medium: 0, low: 0, unrated: 0 };
   for (const r of rows) counts[r.tier] = r.n;
   return counts;
+}
+
+function filteredFindings(f: FindingFilter): { sql: string; params: unknown[] } {
+  const { sql, params } = findingsWithImportance(f);
+  const tiers = f.importance ?? [];
+  const anyOf: string[] = [];
+  const named = tiers.filter((t): t is Importance => t !== 'unrated');
+  if (named.length) { anyOf.push(`importance IN (${named.map(() => '?').join(', ')})`); params.push(...named); }
+  if (tiers.includes('unrated')) anyOf.push('importance IS NULL');
+  return { sql: `SELECT * FROM (${sql}) ${anyOf.length ? `WHERE (${anyOf.join(' OR ')})` : ''}`, params };
 }
 
 function findingsWithImportance(f: Pick<FindingFilter, 'status' | 'piece'>): { sql: string; params: unknown[] } {
@@ -509,18 +543,26 @@ export function findMergeTarget(pieceName: string, kind: FindingKind, targets: s
 
 // ── Boot ──
 
-/** Close runs and generations a restart interrupted. A regeneration falls back to stale, a first one to failed. */
+/**
+ * Close runs and generations a restart interrupted. A regeneration falls back to stale, a first one to failed.
+ * The generation queue lives in memory, so plans still waiting in it are closed the same way.
+ */
 export function reconcileVendorWatch(): { runs: number; plans: number } {
   const runs = getDb().run(
     `UPDATE watch_runs SET status = 'failed', error = 'interrupted by restart', finished_at = datetime('now')
      WHERE status = 'running'`,
   ).changes;
-  const plans = getDb().run(
+  const generating = getDb().run(
     `UPDATE watch_plans SET status = CASE WHEN generated_at IS NULL THEN 'failed' ELSE 'stale' END,
        generation_note = 'interrupted by restart'
      WHERE status = 'generating'`,
   ).changes;
-  return { runs, plans };
+  const queued = getDb().run(
+    `UPDATE watch_plans SET status = CASE WHEN generated_at IS NULL THEN 'failed' ELSE 'stale' END,
+       generation_note = 'interrupted by restart (was queued)'
+     WHERE status = 'queued'`,
+  ).changes;
+  return { runs, plans: generating + queued };
 }
 
 // ── Piece importance ──
