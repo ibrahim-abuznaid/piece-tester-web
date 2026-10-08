@@ -8,8 +8,9 @@
 import { logAiUsage } from '../../db/queries.js';
 import { randomUUID } from 'crypto';
 
-// Pricing per million tokens (as of 2026-04)
+// Pricing per million tokens (as of 2026-10)
 const MODEL_PRICING: Record<string, { input: number; output: number; cacheWrite: number; cacheRead: number }> = {
+  'claude-sonnet-5-5':        { input: 2.0,  output: 10.0, cacheWrite: 2.50, cacheRead: 0.20 },
   'claude-sonnet-4-6':        { input: 3.0,  output: 15.0, cacheWrite: 3.75, cacheRead: 0.30 },
   'claude-sonnet-4-5-20250929': { input: 3.0,  output: 15.0, cacheWrite: 3.75, cacheRead: 0.30 },
   'claude-opus-4':            { input: 15.0, output: 75.0, cacheWrite: 18.75, cacheRead: 1.50 },

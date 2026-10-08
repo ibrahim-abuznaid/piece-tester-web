@@ -1,8 +1,10 @@
 import { describe, it, expect } from 'vitest';
 import {
   buildAnthropicClientOptions,
+  effortFor,
   ANTHROPIC_TIMEOUT_MS,
   ANTHROPIC_MAX_RETRIES,
+  DEFAULT_AI_MODEL,
 } from './anthropic-client.js';
 
 const SDK_DEFAULT_TIMEOUT_MS = 10 * 60_000; // Anthropic SDK default: 10 min/attempt
@@ -36,5 +38,24 @@ describe('bounded Anthropic client options', () => {
     const worstCaseMs = timeout * (1 + maxRetries);
     const sdkWorstCaseMs = SDK_DEFAULT_TIMEOUT_MS * (1 + SDK_DEFAULT_MAX_RETRIES); // 30 min
     expect(worstCaseMs).toBeLessThan(sdkWorstCaseMs / 2); // well under half the old ceiling
+  });
+});
+
+describe('effortFor', () => {
+  it('sets effort on the default model', () => {
+    expect(DEFAULT_AI_MODEL).toBe('claude-sonnet-5-5');
+    expect(effortFor(DEFAULT_AI_MODEL, 'medium')).toEqual({ output_config: { effort: 'medium' } });
+  });
+
+  it('sets effort on the other models that take it', () => {
+    for (const model of ['claude-sonnet-4-6', 'claude-opus-4-5', 'claude-opus-4-8', 'claude-opus-5-5', 'claude-haiku-5-5', 'claude-fable-5-1']) {
+      expect(effortFor(model, 'low')).toEqual({ output_config: { effort: 'low' } });
+    }
+  });
+
+  it('leaves effort off for models that reject it', () => {
+    for (const model of ['claude-haiku-4-5', 'claude-haiku-4-5-20251001', 'claude-sonnet-4-5-20250929', 'claude-haiku-3-5']) {
+      expect(effortFor(model, 'low')).toEqual({});
+    }
   });
 });

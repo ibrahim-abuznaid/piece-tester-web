@@ -4,7 +4,7 @@ import { ActivepiecesClient } from '../../services/ap-client.js';
 import { refreshMcpTokenIfNeeded } from '../../routes/settings.js';
 import { McpProxyClient, mcpToolToAnthropic } from './mcp-proxy-client.js';
 import { ToolRegistry } from './tool-registry.js';
-import { buildAnthropicClientOptions, type MessagesClient } from '../../services/anthropic-client.js';
+import { buildAnthropicClientOptions, DEFAULT_AI_MODEL, effortFor, type MessagesClient } from '../../services/anthropic-client.js';
 import { TERMINAL_TOOLS } from './tools/index.js';
 import type { AgentRunnerConfig, AgentRunnerResult, OnLogCallback, AgentRole, ToolContext } from './types.js';
 import { CostTracker } from './cost-tracker.js';
@@ -98,7 +98,7 @@ export async function runAgentLoop(
 
   // Per-worker model override (config.model) wins, else the configured default.
   // Lets cheap, high-volume workers (research, verifier) run on a faster model.
-  const model = config.model || settings.ai_model || 'claude-sonnet-4-6';
+  const model = config.model || settings.ai_model || DEFAULT_AI_MODEL;
   const client: MessagesClient = config.client ?? new Anthropic(buildAnthropicClientOptions(settings.anthropic_api_key));
   const { role, systemPrompt, maxIterations, toolNames, abortSignal, onLog } = config;
 
@@ -171,7 +171,7 @@ export async function runAgentLoop(
     applyMessageCacheBreakpoint(messages);
 
     const response = await client.messages.create(
-      { model, max_tokens: 8096, system: cachedSystem, tools: allTools as any, messages },
+      { model, max_tokens: 16000, ...effortFor(model, 'medium'), system: cachedSystem, tools: allTools as any, messages },
       requestOptions,
     );
 
@@ -197,6 +197,12 @@ export async function runAgentLoop(
     // on it would silently accept a corrupt plan. Stop the worker instead.
     if (response.stop_reason === 'max_tokens') {
       log('error', `[${role}] Response truncated at max_tokens — stopping without acting on a possibly-incomplete tool call.`);
+      break;
+    }
+
+    if (response.stop_reason === 'refusal') {
+      const category = (response as any).stop_details?.category;
+      log('error', `[${role}] The model declined this request (refusal${category ? `: ${category}` : ''}).`);
       break;
     }
 

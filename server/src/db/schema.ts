@@ -62,6 +62,8 @@ function initTables(db: DatabaseAdapter): void {
   db.exec(`UPDATE settings SET ai_model = 'claude-sonnet-4-6' WHERE ai_model = 'claude-sonnet-4-5-20250929'`);
   // Fix incorrect model ID saved with wrong date suffix
   db.exec(`UPDATE settings SET ai_model = 'claude-sonnet-4-6' WHERE ai_model = 'claude-sonnet-4-6-20260514'`);
+  // Upgrade to Claude Sonnet 5.5 for existing users
+  db.exec(`UPDATE settings SET ai_model = 'claude-sonnet-5-5' WHERE ai_model = 'claude-sonnet-4-6'`);
 
   // Migration: add mcp_token column if missing
   if (!cols2.some(c => c.name === 'mcp_token')) {
