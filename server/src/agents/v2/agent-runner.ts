@@ -97,7 +97,6 @@ export async function runAgentLoop(
   }
 
   // Per-worker model override (config.model) wins, else the configured default.
-  // Lets cheap, high-volume workers (research, verifier) run on a faster model.
   const model = config.model || settings.ai_model || DEFAULT_AI_MODEL;
   const client: MessagesClient = config.client ?? new Anthropic(buildAnthropicClientOptions(settings.anthropic_api_key));
   const { role, systemPrompt, maxIterations, toolNames, abortSignal, onLog } = config;
