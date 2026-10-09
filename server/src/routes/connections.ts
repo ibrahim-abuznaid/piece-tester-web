@@ -8,6 +8,12 @@ import { classify } from '../services/test-connection-matcher.js';
 
 const router = Router();
 
+// A NO_AUTH row is a placeholder with no account behind it, so changing it cannot move the
+// account-scoped resource IDs frozen into approved plans — only real credentials stale them.
+function markPlansStaleUnlessNoAuth(conn: { piece_name: string; connection_type: string }) {
+  if (conn.connection_type !== 'NO_AUTH') db.markPlansStaleByPiece(conn.piece_name);
+}
+
 // List local connections (filtered to current project, includes active + inactive)
 router.get('/', (_req, res) => {
   const connections = db.listAllProjectConnections();
@@ -99,7 +105,7 @@ router.post('/import', async (req, res) => {
       connection_value: JSON.stringify({ _imported: true, remote_id: remoteConnectionId }),
       actions_config: '{}',
     });
-    db.markPlansStaleByPiece(conn.piece_name);
+    markPlansStaleUnlessNoAuth(conn);
     res.status(201).json({ ...conn, connection_value: '***' });
   } catch (err: any) {
     res.status(400).json({ error: err.message });
@@ -111,7 +117,7 @@ router.post('/:id/activate', (req, res) => {
   const id = parseInt(req.params.id);
   const conn = db.activateConnection(id);
   if (!conn) return res.status(404).json({ error: 'Connection not found' });
-  db.markPlansStaleByPiece(conn.piece_name);
+  markPlansStaleUnlessNoAuth(conn);
   res.json({ ...conn, connection_value: '***' });
 });
 
@@ -138,7 +144,7 @@ router.post('/', (req, res) => {
       connection_value: typeof connection_value === 'string' ? connection_value : JSON.stringify(connection_value ?? {}),
       actions_config: typeof actions_config === 'string' ? actions_config : JSON.stringify(actions_config ?? {}),
     });
-    db.markPlansStaleByPiece(conn.piece_name);
+    markPlansStaleUnlessNoAuth(conn);
     res.status(201).json({ ...conn, connection_value: '***' });
   } catch (err: any) {
     res.status(400).json({ error: err.message });
@@ -162,7 +168,7 @@ router.put('/:id', (req, res) => {
   if (!conn) return res.status(404).json({ error: 'Connection not found' });
   // Only a credential change on the ACTIVE connection can invalidate approved plans.
   if (updates.connection_value !== undefined && conn.is_active) {
-    db.markPlansStaleByPiece(conn.piece_name);
+    markPlansStaleUnlessNoAuth(conn);
   }
   res.json({ ...conn, connection_value: '***' });
 });
@@ -232,7 +238,7 @@ router.delete('/:id', (req, res) => {
   if (!ok) return res.status(404).json({ error: 'Connection not found' });
   // Deleting the ACTIVE connection promotes another (or leaves none) — either way the piece's
   // active connection changed, so its approved plans are stale.
-  if (conn && conn.is_active) db.markPlansStaleByPiece(conn.piece_name);
+  if (conn && conn.is_active) markPlansStaleUnlessNoAuth(conn);
   res.json({ success: true });
 });
 

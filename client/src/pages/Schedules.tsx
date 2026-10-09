@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api';
+import { schedulablePieces } from '../lib/schedulable-pieces';
 import ScheduledRunsFeed from '../components/ScheduledRunsFeed';
 import CoverageCockpit from '../components/CoverageCockpit';
 import {
@@ -155,15 +156,6 @@ export default function Schedules() {
     queryKey: ['schedules'],
     queryFn: api.listSchedules,
   });
-  const { data: rawConnections = [] } = useQuery({
-    queryKey: ['connections'],
-    queryFn: api.listConnections,
-  });
-  // Deduplicate by piece_name (active first) so TargetPicker shows each piece once
-  const connections = (rawConnections as any[]).reduce((acc: any[], c: any) => {
-    if (!acc.some((x: any) => x.piece_name === c.piece_name)) acc.push(c);
-    return acc;
-  }, []);
 
   // Scheduled Runs feed data is now fetched inside <ScheduledRunsFeed/> as slim server-side
   // aggregates (getScheduledWaves / getWaveDetail) — no more shipping every run + step_results.
@@ -407,7 +399,6 @@ export default function Schedules() {
 
                 {/* Target picker */}
                 <TargetPicker
-                  connections={connections as any[]}
                   targets={form.targets}
                   onChange={t => setF('targets', t)}
                 />
@@ -557,11 +548,9 @@ export default function Schedules() {
 // ══════════════════════════════════════════════════════════════
 
 function TargetPicker({
-  connections,
   targets,
   onChange,
 }: {
-  connections: any[];
   targets: ScheduleTarget[];
   onChange: (targets: ScheduleTarget[]) => void;
 }) {
@@ -570,6 +559,8 @@ function TargetPicker({
     queryKey: ['test-plans-all'],
     queryFn: () => api.listTestPlans(),
   });
+  const { data: coverage = [] } = useQuery({ queryKey: ['coverage'], queryFn: api.getCoverage });
+  const pieces = schedulablePieces(coverage);
 
   const [expandedPieces, setExpandedPieces] = useState<Set<string>>(new Set());
   const allPiecesSelected = targets.length === 0;
@@ -686,34 +677,34 @@ function TargetPicker({
         </label>
 
         {/* Per-piece rows */}
-        {connections.map((conn: any) => {
-          const actions = plansByPiece[conn.piece_name] ?? [];
-          const pieceChecked = isPieceSelected(conn.piece_name);
-          const expanded = expandedPieces.has(conn.piece_name);
+        {pieces.map(piece => {
+          const actions = plansByPiece[piece.piece_name] ?? [];
+          const pieceChecked = isPieceSelected(piece.piece_name);
+          const expanded = expandedPieces.has(piece.piece_name);
 
           return (
-            <div key={conn.piece_name} className="border-b border-gray-700/30 last:border-b-0">
+            <div key={piece.piece_name} className="border-b border-gray-700/30 last:border-b-0">
               <div className="flex items-center gap-2 px-3 py-2 hover:bg-gray-800/40">
                 <input
                   type="checkbox"
                   checked={pieceChecked}
-                  onChange={() => togglePiece(conn.piece_name)}
+                  onChange={() => togglePiece(piece.piece_name)}
                   className="accent-primary-500 cursor-pointer"
                 />
                 <span
                   className="flex-1 text-sm text-gray-300 cursor-pointer select-none"
-                  onClick={() => togglePiece(conn.piece_name)}
+                  onClick={() => togglePiece(piece.piece_name)}
                 >
-                  {conn.display_name}
+                  {piece.display_name}
                 </span>
                 {actions.length > 0 && (
                   <button
                     type="button"
-                    onClick={() => toggleExpand(conn.piece_name)}
+                    onClick={() => toggleExpand(piece.piece_name)}
                     className="text-xs text-gray-500 hover:text-gray-200 flex items-center gap-1 px-1.5 py-0.5 rounded hover:bg-gray-700"
                   >
                     <ChevronRight size={12} className={`transition-transform ${expanded ? 'rotate-90' : ''}`} />
-                    {planCountLabel(conn.piece_name)}
+                    {planCountLabel(piece.piece_name)}
                   </button>
                 )}
                 {actions.length === 0 && (
@@ -723,7 +714,7 @@ function TargetPicker({
 
               {/* Target rows (actions + triggers) */}
               {expanded && actions.map(actionName => {
-                const isTrig = isTriggerTarget(conn.piece_name, actionName);
+                const isTrig = isTriggerTarget(piece.piece_name, actionName);
                 return (
                   <label
                     key={actionName}
@@ -731,8 +722,8 @@ function TargetPicker({
                   >
                     <input
                       type="checkbox"
-                      checked={isActionSelected(conn.piece_name, actionName)}
-                      onChange={() => toggleAction(conn.piece_name, actionName)}
+                      checked={isActionSelected(piece.piece_name, actionName)}
+                      onChange={() => toggleAction(piece.piece_name, actionName)}
                       className="accent-primary-500 cursor-pointer"
                     />
                     <span className="text-xs font-mono text-gray-400">

@@ -1,6 +1,9 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { getDb } from './schema.js';
-import { getTestPlan, markPlansStaleByPiece, createTestPlan, updateTestPlan, getPieceHealth, getAttentionItems } from './queries.js';
+import {
+  getTestPlan, markPlansStaleByPiece, createTestPlan, updateTestPlan, getPieceHealth, getAttentionItems,
+  createConnection, clearStaleFlagsForNoAuthPieces,
+} from './queries.js';
 
 function seedPlan(piece: string, action: string, status = 'approved'): number {
   return getDb().run(
@@ -103,5 +106,22 @@ describe('blocked backlinks guard (stale vs connection)', () => {
 
     const row = getPieceHealth().find(r => r.piece_name === 'hubspot')!;
     expect(row.backlinks?.reimport).toBe('/connections?piece=hubspot');
+  });
+});
+
+describe('clearStaleFlagsForNoAuthPieces (boot repair)', () => {
+  beforeEach(() => getDb().exec('DELETE FROM test_plan_runs; DELETE FROM test_plans; DELETE FROM piece_connections;'));
+
+  it('un-stales plans of pieces whose active connection is the NO_AUTH placeholder, nothing else', () => {
+    const ai = seedPlan('@activepieces/piece-ai', 'askAi', 'approved');
+    const slack = seedPlan('@activepieces/piece-slack', 'send_message', 'approved');
+    createConnection({ piece_name: '@activepieces/piece-ai', display_name: 'AI', connection_type: 'NO_AUTH', connection_value: '{}' });
+    createConnection({ piece_name: '@activepieces/piece-slack', display_name: 'Slack', connection_type: 'SECRET_TEXT', connection_value: '{}' });
+    markPlansStaleByPiece('@activepieces/piece-ai');
+    markPlansStaleByPiece('@activepieces/piece-slack');
+
+    expect(clearStaleFlagsForNoAuthPieces()).toBe(1);
+    expect(getTestPlan(ai)!.needs_regen).toBe(0);
+    expect(getTestPlan(slack)!.needs_regen).toBe(1);
   });
 });

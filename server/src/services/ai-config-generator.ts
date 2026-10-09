@@ -884,6 +884,12 @@ export async function fixTestPlanWithAi(
 // Prompt builders
 // ══════════════════════════════════════════════════════════════
 
+/** A no-auth piece needs no connection, so its prompt never reads "Not connected". */
+function connectionLine(piece: PieceMetadataFull, info?: { connectionType?: string; hasConnection: boolean }): string {
+  if (!piece.auth) return '**Connection:** Not needed (piece has no auth)';
+  return `**Connection:** ${info?.hasConnection ? 'Connected' : 'Not connected'} (${info?.connectionType || 'unknown'})`;
+}
+
 function buildActionPrompt(
   piece: PieceMetadataFull, actionName: string, action: PieceActionMeta,
   connectionInfo?: { connectionType?: string; hasConnection: boolean },
@@ -896,7 +902,7 @@ function buildActionPrompt(
   lines.push(`**Action:** ${action.displayName} (${actionName})`);
   lines.push(`**Description:** ${action.description || 'No description'}`);
   lines.push(`**Auth:** ${piece.auth?.type || 'None'}`);
-  lines.push(`**Connection:** ${connectionInfo?.hasConnection ? 'Connected' : 'Not connected'} (${connectionInfo?.connectionType || 'unknown'})`);
+  lines.push(connectionLine(piece, connectionInfo));
 
   if (previousMemory) {
     lines.push('');
@@ -950,7 +956,7 @@ function buildFixPrompt(
 
   lines.push(`# Fix failed test for action "${action.displayName}" (${actionName})`);
   lines.push(`**Piece:** ${piece.displayName} (${piece.name}) v${piece.version}`);
-  lines.push(`**Connection:** ${connectionInfo.hasConnection ? 'Connected' : 'Not connected'}`);
+  lines.push(connectionLine(piece, connectionInfo));
   lines.push('');
 
   lines.push(`## Test Error:`);
@@ -1004,7 +1010,7 @@ function buildPlanPrompt(
   lines.push(`**Piece:** ${piece.displayName} (${piece.name}) v${piece.version}`);
   lines.push(`**Description:** ${action.description || 'No description'}`);
   lines.push(`**Auth:** ${piece.auth?.type || 'None'}`);
-  lines.push(`**Connection:** ${connectionInfo?.hasConnection ? 'Connected' : 'Not connected'} (${connectionInfo?.connectionType || 'unknown'})`);
+  lines.push(connectionLine(piece, connectionInfo));
 
   // Inject learned lessons for this piece
   const lessonsBlock = formatLessonsForPrompt(piece.name);
@@ -1120,7 +1126,7 @@ function buildFixPlanPrompt(
 
   lines.push(`# Fix failed test plan for "${action.displayName}" (${actionName})`);
   lines.push(`**Piece:** ${piece.displayName} (${piece.name}) v${piece.version}`);
-  lines.push(`**Connection:** ${connectionInfo.hasConnection ? 'Connected' : 'Not connected'}`);
+  lines.push(connectionLine(piece, connectionInfo));
   lines.push('');
 
   // Inject learned lessons for this piece

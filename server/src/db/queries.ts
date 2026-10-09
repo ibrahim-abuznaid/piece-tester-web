@@ -515,6 +515,18 @@ export function markPlansStaleByPiece(pieceName: string): number {
   ).changes;
 }
 
+/**
+ * Boot repair: a NO_AUTH placeholder carries no account, so plans flagged stale by creating or
+ * activating one were false positives. Returns the number of plans un-flagged.
+ */
+export function clearStaleFlagsForNoAuthPieces(): number {
+  return getDb().run(
+    `UPDATE test_plans SET needs_regen = 0
+       WHERE needs_regen = 1
+         AND piece_name IN (SELECT piece_name FROM piece_connections WHERE is_active = 1 AND connection_type = 'NO_AUTH')`,
+  ).changes;
+}
+
 // ── Test Plan Runs ──
 
 export interface TestPlanRunRow {
@@ -1678,7 +1690,7 @@ export interface CoverageRow {
   piece_name: string;
   display_name: string;
   logo_url: string | null;
-  connected: boolean;
+  connected: boolean;     // has the connection it needs to run — always true for a no-auth piece
   requires_auth: boolean; // piece declares an auth/connection; if false it runs without one
   covered: boolean;
   schedule_id: number | null;
@@ -1766,12 +1778,13 @@ export function getCoverage(
     const total = (p.actions ?? 0) + (p.triggers ?? 0);
     // "N/M planned" counts only APPROVED plans — the ones that actually run on a schedule.
     const rawPlanned = planCount.get(p.name) ?? 0;
+    const requiresAuth = p.hasAuth ?? false;
     return {
       piece_name: p.name,
       display_name: p.displayName,
       logo_url: p.logoUrl ?? null,
-      connected: connected.has(p.name),
-      requires_auth: p.hasAuth ?? false,
+      connected: !requiresAuth || connected.has(p.name),
+      requires_auth: requiresAuth,
       covered,
       schedule_id: cover ? cover.schedule_id : (covered && allPiecesSchedule ? allPiecesSchedule.id : null),
       cadence: cover ? cover.cadence : (covered ? allCadence : null),

@@ -496,7 +496,7 @@ export interface CoverageRow {
   piece_name: string;
   display_name: string;
   logo_url: string | null;
-  connected: boolean;
+  connected: boolean;     // has the connection it needs to run — always true for a no-auth piece
   requires_auth: boolean;
   covered: boolean;
   schedule_id: number | null;
