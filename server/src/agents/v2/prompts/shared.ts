@@ -5,19 +5,23 @@ import { getConnectionByPiece } from '../../../db/queries.js';
 const AUTH_PROP_TYPES = ['OAUTH2', 'SECRET_TEXT', 'BASIC_AUTH', 'CUSTOM_AUTH'];
 const SKIP_PROP_TYPES = ['MARKDOWN'];
 
+/** A no-auth piece needs no connection, so its context never reads "Not connected". */
+function connectionLine(piece: PieceMetadataFull): string {
+  if (!piece.auth) return '**Connection:** Not needed (piece has no auth)';
+  const connRow = getConnectionByPiece(piece.name);
+  return `**Connection:** ${connRow ? 'Connected' : 'Not connected'} (${connRow?.connection_type || 'unknown'})`;
+}
+
 /** Build a context block describing the piece and its connection status. */
 export function buildPieceContext(piece: PieceMetadataFull, actionName: string): string {
   const action = piece.actions[actionName];
-  const connRow = getConnectionByPiece(piece.name);
-  const connected = connRow ? 'Connected' : 'Not connected';
-  const connType = connRow?.connection_type || 'unknown';
 
   const lines = [
     `**Piece:** ${piece.displayName} (${piece.name}) v${piece.version}`,
     `**Action:** ${action?.displayName || actionName} (${actionName})`,
     `**Description:** ${action?.description || 'No description'}`,
     `**Auth:** ${piece.auth?.type || 'None'}`,
-    `**Connection:** ${connected} (${connType})`,
+    connectionLine(piece),
   ];
 
   return lines.join('\n');
@@ -70,9 +74,6 @@ export function buildActionsList(piece: PieceMetadataFull): string {
 /** Build a context block describing the piece and the trigger under test. */
 export function buildTriggerContext(piece: PieceMetadataFull, triggerName: string): string {
   const trigger = piece.triggers[triggerName];
-  const connRow = getConnectionByPiece(piece.name);
-  const connected = connRow ? 'Connected' : 'Not connected';
-  const connType = connRow?.connection_type || 'unknown';
 
   const lines = [
     `**Piece:** ${piece.displayName} (${piece.name}) v${piece.version}`,
@@ -80,7 +81,7 @@ export function buildTriggerContext(piece: PieceMetadataFull, triggerName: strin
     `**Strategy:** ${trigger?.type || 'UNKNOWN'}`,
     `**Description:** ${trigger?.description || 'No description'}`,
     `**Auth:** ${piece.auth?.type || 'None'}`,
-    `**Connection:** ${connected} (${connType})`,
+    connectionLine(piece),
   ];
 
   return lines.join('\n');
