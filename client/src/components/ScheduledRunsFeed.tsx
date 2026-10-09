@@ -58,7 +58,7 @@ function CategoryBadge({ category }: { category: string | null }) {
   );
 }
 
-export default function ScheduledRunsFeed({ focusRunId }: { focusRunId?: number | null }) {
+export default function ScheduledRunsFeed({ focusRunId, focusWaveId }: { focusRunId?: number | null; focusWaveId?: string | null }) {
   const { data: waves = [], isLoading, refetch, isFetching } = useQuery({
     queryKey: ['scheduled-waves'],
     queryFn: () => api.getScheduledWaves(30),
@@ -81,6 +81,13 @@ export default function ScheduledRunsFeed({ focusRunId }: { focusRunId?: number 
       setExpandedRun(focusRunId);
     }).catch(() => { /* run gone — fall back to the latest wave */ });
   }, [focusRunId]);
+
+  // Deep-link (?wave=<id> from a setup run's first-run card): select that wave once.
+  useEffect(() => {
+    if (!focusWaveId || didFocus.current) return;
+    didFocus.current = true;
+    setSelectedWaveId(focusWaveId);
+  }, [focusWaveId]);
 
   // Default: select the most recent wave once loaded (focus, if any, wins via the effect above).
   useEffect(() => {

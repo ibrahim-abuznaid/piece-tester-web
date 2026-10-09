@@ -68,6 +68,9 @@ A cron rule that fires plan runs for one piece or the whole catalog.
 All plan runs fired by a single schedule firing; the unit the Scheduled Runs feed rolls up. Manual runs belong to no wave.
 _Avoid_: sweep (collides with the flow reaper's cleanup pass)
 
+**First run**:
+The one-off wave a setup run fires for its pieces as soon as plan generation ends, so Health has a result before the schedule's first fire. A wave with no schedule.
+
 ### Analysis & triage
 
 **Report analysis**:

@@ -281,6 +281,9 @@ function initTables(db: DatabaseAdapter): void {
       plans_skipped INTEGER NOT NULL DEFAULT 0,
       plans_errored INTEGER NOT NULL DEFAULT 0,
       schedules_created INTEGER NOT NULL DEFAULT 0,
+      first_run_wave_id TEXT,
+      first_run_total INTEGER NOT NULL DEFAULT 0,
+      first_run_completed_at TEXT,
       started_at TEXT NOT NULL DEFAULT (datetime('now')),
       completed_at TEXT,
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
@@ -303,6 +306,14 @@ function initTables(db: DatabaseAdapter): void {
   const setupItemCols = db.pragma(`table_info(setup_run_items)`) as { name: string }[];
   if (!setupItemCols.some(c => c.name === 'interruptions')) {
     db.exec(`ALTER TABLE setup_run_items ADD COLUMN interruptions INTEGER NOT NULL DEFAULT 0`);
+  }
+
+  // Migration: the tracked first run a setup run fires right after plan generation.
+  const setupRunCols = db.pragma(`table_info(setup_runs)`) as { name: string }[];
+  if (!setupRunCols.some(c => c.name === 'first_run_wave_id')) {
+    db.exec(`ALTER TABLE setup_runs ADD COLUMN first_run_wave_id TEXT`);
+    db.exec(`ALTER TABLE setup_runs ADD COLUMN first_run_total INTEGER NOT NULL DEFAULT 0`);
+    db.exec(`ALTER TABLE setup_runs ADD COLUMN first_run_completed_at TEXT`);
   }
 
   db.exec(`

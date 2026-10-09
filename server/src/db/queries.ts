@@ -1126,12 +1126,16 @@ export interface WaveSummary {
   blocked: number;
 }
 
-/** One row per schedule fire, newest first. Cheap: pure aggregate, no step_results. */
-export function getScheduledWaves(limit = 30): WaveSummary[] {
-  return getDb().all<WaveSummary>(`
+// A wave fired by a setup run has no schedule; label it after the setup run instead.
+const WAVE_LABEL = `COALESCE(s.label, 'Setup run #' || sr.id || ' — first run')`;
+const WAVE_LABEL_JOINS = `
+    LEFT JOIN schedules s ON s.id = r.schedule_id
+    LEFT JOIN setup_runs sr ON sr.first_run_wave_id = r.wave_id`;
+
+const WAVE_SUMMARY_SELECT = `
     SELECT r.wave_id AS wave_id,
            r.schedule_id AS schedule_id,
-           s.label AS schedule_label,
+           ${WAVE_LABEL} AS schedule_label,
            MIN(r.started_at) AS started_at,
            MAX(r.completed_at) AS completed_at,
            COUNT(*) AS total,
@@ -1139,13 +1143,27 @@ export function getScheduledWaves(limit = 30): WaveSummary[] {
            SUM(CASE WHEN r.status = 'failed' THEN 1 ELSE 0 END) AS failed,
            SUM(CASE WHEN r.status = 'running' THEN 1 ELSE 0 END) AS running,
            SUM(CASE WHEN r.status = 'blocked' THEN 1 ELSE 0 END) AS blocked
-    FROM test_plan_runs r
-    LEFT JOIN schedules s ON s.id = r.schedule_id
+    FROM test_plan_runs r${WAVE_LABEL_JOINS}`;
+
+/** One row per schedule fire, newest first. Cheap: pure aggregate, no step_results. */
+export function getScheduledWaves(limit = 30): WaveSummary[] {
+  return getDb().all<WaveSummary>(`
+    ${WAVE_SUMMARY_SELECT}
     WHERE r.trigger_type = 'scheduled' AND r.wave_id IS NOT NULL
     GROUP BY r.wave_id
     ORDER BY started_at DESC
     LIMIT ?
   `, [limit]);
+}
+
+/** The aggregate for one wave; null until its first run row exists. */
+export function getWaveSummary(waveId: string): WaveSummary | null {
+  const row = getDb().get<WaveSummary>(`
+    ${WAVE_SUMMARY_SELECT}
+    WHERE r.wave_id = ?
+    GROUP BY r.wave_id
+  `, [waveId]);
+  return row ?? null;
 }
 
 export interface WaveRun {
@@ -1249,9 +1267,8 @@ export function getWaveDetail(waveId: string): WaveDetail | null {
   for (const r of failingRows) failMeta.set(r.id, analyzeFailedRun(r.step_results));
 
   const meta = db.get<{ schedule_id: number | null; started_at: string; label: string | null }>(`
-    SELECT r.schedule_id AS schedule_id, MIN(r.started_at) AS started_at, s.label AS label
-    FROM test_plan_runs r
-    LEFT JOIN schedules s ON s.id = r.schedule_id
+    SELECT r.schedule_id AS schedule_id, MIN(r.started_at) AS started_at, ${WAVE_LABEL} AS label
+    FROM test_plan_runs r${WAVE_LABEL_JOINS}
     WHERE r.wave_id = ?
   `, [waveId]);
 
@@ -1898,6 +1915,9 @@ export interface SetupRunRow {
   plans_skipped: number;
   plans_errored: number;
   schedules_created: number;
+  first_run_wave_id: string | null;
+  first_run_total: number;
+  first_run_completed_at: string | null;
   started_at: string;
   completed_at: string | null;
   created_at: string;
@@ -2024,6 +2044,30 @@ export function finalizeSetupRun(
 
 // An item that dies with the server this many times is assumed to be the cause (e.g. OOM).
 export const MAX_SETUP_ITEM_INTERRUPTIONS = 3;
+
+// ── Setup first run: the one tracked wave fired right after plan generation ──
+
+export function startSetupFirstRun(id: number, p: { wave_id: string; total: number }): void {
+  getDb().run(
+    `UPDATE setup_runs SET first_run_wave_id = ?, first_run_total = ? WHERE id = ?`,
+    [p.wave_id, p.total, id],
+  );
+}
+
+export function completeSetupFirstRun(id: number): void {
+  getDb().run(
+    `UPDATE setup_runs SET first_run_completed_at = datetime('now') WHERE id = ? AND first_run_completed_at IS NULL`,
+    [id],
+  );
+}
+
+/** Boot: a first run still open belongs to a dead process (its runs were just reconciled). */
+export function closeOrphanedFirstRuns(): number {
+  return getDb().run(
+    `UPDATE setup_runs SET first_run_completed_at = datetime('now')
+      WHERE first_run_wave_id IS NOT NULL AND first_run_completed_at IS NULL`,
+  ).changes;
+}
 
 /**
  * Setup runs still 'running' at boot belong to a dead process. Re-open their unfinished

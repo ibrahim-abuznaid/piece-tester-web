@@ -36,6 +36,10 @@ export function ScheduleStep({ value, onChange }: { value: ScheduleConfigInput; 
           )}
         </div>
       )}
+      <label className="flex items-center gap-2 text-sm">
+        <input type="checkbox" checked={value.firstRun !== false} onChange={e => onChange({ ...value, firstRun: e.target.checked })} />
+        Run every approved plan once right after setup, so results show in Health without waiting for the schedule
+      </label>
     </div>
   );
 }

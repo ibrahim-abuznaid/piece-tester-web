@@ -5,7 +5,7 @@ import { fileURLToPath } from 'url';
 import { getDb } from './db/schema.js';
 import { initScheduler } from './services/scheduler.js';
 import { initFlowReaper } from './services/flow-reaper.js';
-import { reconcileOrphanedRuns, clearStaleFlagsForNoAuthPieces } from './db/queries.js';
+import { reconcileOrphanedRuns, clearStaleFlagsForNoAuthPieces, closeOrphanedFirstRuns } from './db/queries.js';
 import { reconcileVendorWatch } from './db/vendor-watch-queries.js';
 import { initVendorWatch } from './services/vendor-watch/cron.js';
 import settingsRoutes from './routes/settings.js';
@@ -91,6 +91,8 @@ function startBackgroundWork() {
   // Any run still `running` at boot is from a dead process — close it out honestly.
   const reconciled = reconcileOrphanedRuns();
   if (reconciled > 0) console.log(`[server] Reconciled ${reconciled} orphaned run(s) → interrupted`);
+  const closedFirstRuns = closeOrphanedFirstRuns();
+  if (closedFirstRuns > 0) console.log(`[server] Closed ${closedFirstRuns} setup first run(s) cut off by the restart`);
 
   const unstaled = clearStaleFlagsForNoAuthPieces();
   if (unstaled > 0) console.log(`[server] Cleared a false stale flag on ${unstaled} plan(s) of no-auth pieces`);

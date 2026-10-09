@@ -7,7 +7,7 @@ import { resolvePlanGenBudgetMs } from '../agents/v2/plan-budget.js';
 import {
   createTestPlan, updateTestPlan, listTestPlans,
   createSetupRun, addSetupRunItems, updateSetupRunItem, finalizeSetupRun,
-  getSetupRun, listSetupRuns, listSetupRunItems, getSettings, reclaimInterruptedSetupRuns,
+  getSetupRun, listSetupRuns, listSetupRunItems, getSettings, reclaimInterruptedSetupRuns, getWaveSummary,
 } from '../db/queries.js';
 import { executePlan } from '../services/plan-executor.js';
 import { boundConcurrency } from '../services/concurrency.js';
@@ -15,6 +15,7 @@ import { itemsForSelection } from '../services/batch-selection.js';
 import { extractAndStoreLessons } from '../services/lesson-extractor.js';
 import { checkPieceConnectionForPlanning } from '../services/plan-connection-gate.js';
 import { createSchedulesForRun } from '../services/setup-scheduler.js';
+import { startFirstRun } from '../services/setup-first-run.js';
 import type { Cadence } from '../services/schedule-planner.js';
 import {
   getBatch, listBatches, getBatchStatus, createBatchQueue, cancelBatch, activeBatchPieceNames,
@@ -297,29 +298,32 @@ async function runBatchInBackground(queue: BatchQueue) {
   const finalStatus = queue.cancelled ? 'cancelled' : 'done';
 
   let scheduleIds: number[] = [];
+  let firstRun: { waveId: string; total: number } | null = null;
+  let firstRunPieces: string[] = [];
   try {
-    if (!queue.cancelled && queue.setupRunId) {
-      const run = getSetupRun(queue.setupRunId);
+    const run = queue.setupRunId ? getSetupRun(queue.setupRunId) : undefined;
+    if (run && !queue.cancelled) {
       let cfg: Record<string, any> = {};
-      try { cfg = JSON.parse(run?.config ?? '{}'); } catch { /* malformed config — treat as empty */ }
-      const cadence = (run?.cadence ?? 'none') as Cadence;
+      try { cfg = JSON.parse(run.config ?? '{}'); } catch { /* malformed config — treat as empty */ }
+      const selectedPieces: string[] = cfg.pieceNames ?? [];
+      const eligible = selectedPieces.filter(p => listTestPlans(p).some(pl => pl.status === 'approved'));
       if (cfg.scheduleEnabled) {
-        const selectedPieces: string[] = cfg.pieceNames ?? [];
-        const eligible = selectedPieces.filter(p => listTestPlans(p).some(pl => pl.status === 'approved'));
         try {
           scheduleIds = createSchedulesForRun({
             pieceNames: eligible,
-            cadence,
+            cadence: (run.cadence ?? 'none') as Cadence,
             customCron: cfg.customCron || undefined,
           });
         } catch (e: any) {
           console.error('[batch-setup] auto-schedule failed:', e.message);
         }
       }
+      // A resumed batch that already fired its first run must not fire it again.
+      if (cfg.firstRunEnabled !== false && !run.first_run_wave_id) firstRunPieces = eligible;
     }
 
-    if (queue.setupRunId) {
-      finalizeSetupRun(queue.setupRunId, {
+    if (run) {
+      finalizeSetupRun(run.id, {
         status: finalStatus,
         schedule_ids: scheduleIds,
         schedules_created: scheduleIds.length,
@@ -331,7 +335,13 @@ async function runBatchInBackground(queue: BatchQueue) {
     // Always complete the batch — otherwise it stays 'running' forever and its pieces
     // stay locked out of every future batch (activeBatchPieceNames).
     completeBatchQueue(queue, finalStatus);
-    emitBatchEvent(queue, 'batch_done', { status: queue.status, setupRunId: queue.setupRunId, schedulesCreated: scheduleIds.length });
+    if (firstRunPieces.length > 0 && queue.setupRunId) {
+      try { firstRun = startFirstRun(queue.setupRunId, firstRunPieces); }
+      catch (e: any) { console.error('[batch-setup] first run failed to start:', e?.message); }
+    }
+    emitBatchEvent(queue, 'batch_done', {
+      status: queue.status, setupRunId: queue.setupRunId, schedulesCreated: scheduleIds.length, firstRun,
+    });
   }
 }
 
@@ -364,7 +374,7 @@ router.post('/start', async (req, res) => {
   const { selections: rawSelections, pieceNames, schedule } = req.body as {
     selections?: BatchSelection[];
     pieceNames?: string[];
-    schedule?: { enabled?: boolean; cadence?: Cadence; customCron?: string };
+    schedule?: { enabled?: boolean; cadence?: Cadence; customCron?: string; firstRun?: boolean };
   };
 
   const selections: BatchSelection[] =
@@ -402,7 +412,12 @@ router.post('/start', async (req, res) => {
     const run = createSetupRun({
       cadence,
       cron_template: '',
-      config: JSON.stringify({ scheduleEnabled: schedule?.enabled !== false, customCron: schedule?.customCron ?? '', pieceNames: pieceNamesDistinct }),
+      config: JSON.stringify({
+        scheduleEnabled: schedule?.enabled !== false,
+        firstRunEnabled: schedule?.firstRun !== false,
+        customCron: schedule?.customCron ?? '',
+        pieceNames: pieceNamesDistinct,
+      }),
     });
     const savedItems = addSetupRunItems(run.id, items.map(i => ({
       piece_name: i.pieceName,
@@ -439,7 +454,8 @@ router.get('/runs', (_req, res) => {
 router.get('/runs/:id', (req, res) => {
   const run = getSetupRun(parseInt(req.params.id));
   if (!run) return res.status(404).json({ error: 'Setup run not found' });
-  res.json({ run, items: listSetupRunItems(run.id) });
+  const first_run = run.first_run_wave_id ? getWaveSummary(run.first_run_wave_id) : null;
+  res.json({ run, items: listSetupRunItems(run.id), first_run });
 });
 
 // ── List all batches ── (registered before /:id/status so 'batches' isn't read as an id)
