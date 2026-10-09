@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
-import { api, type AgentLogEntry, type BatchStatus, type BatchQueueItemStatus, type ScheduleConfigInput, type SetupRunItem, type BatchSelection } from '../lib/api';
+import { api, type AgentLogEntry, type BatchStatus, type BatchQueueItemStatus, type ScheduleConfigInput, type SetupRunItem, type SetupRunSummary, type WaveSummary, type BatchSelection } from '../lib/api';
 import { ScheduleStep } from '../components/ScheduleStep';
 import { SetupRunHistory } from '../components/SetupRunHistory';
 import {
@@ -83,6 +83,7 @@ export default function BatchSetup() {
   const [schedule, setSchedule] = useState<ScheduleConfigInput>({ enabled: true, cadence: 'monthly' });
   const [openRunId, setOpenRunId] = useState<number | null>(null);
   const [schedulesCreated, setSchedulesCreated] = useState<number | null>(null);
+  const [setupRunId, setSetupRunId] = useState<number | null>(null);
   const [scheduleExpanded, setScheduleExpanded] = useState(false);
 
   // Batch state
@@ -144,6 +145,7 @@ export default function BatchSetup() {
       onBatchDone: (data) => {
         setBatchStatus(prev => prev ? { ...prev, status: data.status as any, completedAt: Date.now() } : prev);
         if (typeof data.schedulesCreated === 'number') setSchedulesCreated(data.schedulesCreated);
+        if (typeof data.setupRunId === 'number') setSetupRunId(data.setupRunId);
         if (data.status === 'done' || data.status === 'cancelled') setStep('done');
         refreshStatus(id);
         refetchRuns();
@@ -251,12 +253,14 @@ export default function BatchSetup() {
     setSkippedNotice(null);
     setBatchLogs({});
     setSchedulesCreated(null);
+    setSetupRunId(null);
     setActiveBatchId(id);
     setWizardActive(true);
     try {
       const status = await api.getBatchStatus(id);
       if (status) {
         setBatchStatus(status);
+        setSetupRunId(status.setupRunId ?? null);
         setBatchItems(status.items.map((it, i) => ({ ...it, index: i })));
         setStep(status.status === 'running' ? 'generate' : 'done');
         if (status.status === 'running') subscribeToExistingBatch(id);
@@ -273,6 +277,7 @@ export default function BatchSetup() {
     setSkippedNotice(null);
     setBatchLogs({});
     setSchedulesCreated(null);
+    setSetupRunId(null);
     try {
       const keyToTarget = (key: string) => {
         const idx = key.indexOf(':');
@@ -290,6 +295,7 @@ export default function BatchSetup() {
       });
       const res = await api.startBatchSetup(selections, schedule);
       setActiveBatchId(res.id);
+      setSetupRunId(res.setupRunId);
       if (res.skippedPieces?.length) {
         setSkippedNotice(`${res.skippedPieces.length} piece(s) skipped — already in an active batch`);
       }
@@ -332,6 +338,7 @@ export default function BatchSetup() {
     setError(null);
     setSkippedNotice(null);
     setSchedulesCreated(null);
+    setSetupRunId(null);
     setStep('connections');
     setWizardActive(true);
   }
@@ -603,6 +610,7 @@ export default function BatchSetup() {
                   <div className="flex items-center gap-2 text-sm">
                     <Calendar size={16} className="text-primary-400" />
                     Schedule after setup: <span className="text-gray-400">{schedule.enabled ? CADENCE_LABELS[schedule.cadence] : 'off'}</span>
+                    {schedule.firstRun !== false && <span className="text-gray-500">· first run now</span>}
                   </div>
                   {scheduleExpanded ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
                 </button>
@@ -691,6 +699,7 @@ export default function BatchSetup() {
               Scheduling: {schedule.enabled ? CADENCE_LABELS[schedule.cadence] : 'skipped'}
               {schedulesCreated != null && ` — ${schedulesCreated} schedule${schedulesCreated !== 1 ? 's' : ''} created`}
             </div>
+            {setupRunId != null && <FirstRunCard setupRunId={setupRunId} navigate={navigate} />}
           </div>
           <div className="flex justify-end gap-2">
             <button onClick={startNewRun} className="flex items-center gap-2 px-4 py-2.5 bg-gray-800 hover:bg-gray-700 rounded-lg text-sm font-medium transition-colors">
@@ -958,9 +967,51 @@ function BatchProgress({
   );
 }
 
+// ─── First run: the tracked wave fired right after setup ───
+function useSetupRunDetail(runId: number) {
+  return useQuery({
+    queryKey: ['setupRunDetail', runId],
+    queryFn: () => api.getSetupRunDetail(runId),
+    refetchInterval: q => (q.state.data?.run.first_run_wave_id && !q.state.data.run.first_run_completed_at ? 5000 : false),
+  });
+}
+
+function FirstRunSummary({ run, wave, navigate }: { run: SetupRunSummary; wave: WaveSummary | null; navigate: (path: string) => void }) {
+  const waveId = run.first_run_wave_id;
+  if (!waveId) return <div className="text-sm text-gray-500">First run: skipped</div>;
+  const done = run.first_run_completed_at != null;
+  const finished = wave ? wave.total - wave.running : 0;
+  return (
+    <div className="flex flex-wrap items-center justify-center gap-x-3 gap-y-1 text-sm">
+      <span className="flex items-center gap-1.5">
+        {done ? <Zap size={14} className="text-primary-400" /> : <Loader2 size={14} className="animate-spin text-blue-400" />}
+        {done ? 'First run complete' : 'First run in progress'}
+      </span>
+      <span className="text-gray-400">{finished} of {run.first_run_total} done</span>
+      <span className="text-green-400">{wave?.passed ?? 0} passed</span>
+      <span className="text-red-400">{wave?.failed ?? 0} failed</span>
+      {(wave?.blocked ?? 0) > 0 && <span className="text-yellow-400">{wave!.blocked} blocked</span>}
+      <button onClick={() => navigate('/')} className="text-primary-300 hover:underline">See in Health</button>
+      <button onClick={() => navigate(`/schedules?tab=logs&wave=${encodeURIComponent(waveId)}`)} className="text-primary-300 hover:underline">
+        Open in Scheduled Runs
+      </button>
+    </div>
+  );
+}
+
+function FirstRunCard({ setupRunId, navigate }: { setupRunId: number; navigate: (path: string) => void }) {
+  const { data } = useSetupRunDetail(setupRunId);
+  if (!data) return null;
+  return (
+    <div className="mt-4 pt-4 border-t border-gray-800">
+      <FirstRunSummary run={data.run} wave={data.first_run} navigate={navigate} />
+    </div>
+  );
+}
+
 // ─── Run-detail drawer ───
 function RunDetailDrawer({ runId, onClose, navigate }: { runId: number; onClose: () => void; navigate: (path: string) => void }) {
-  const { data, isLoading } = useQuery({ queryKey: ['setupRunDetail', runId], queryFn: () => api.getSetupRunDetail(runId) });
+  const { data, isLoading } = useSetupRunDetail(runId);
 
   const grouped = (data?.items ?? []).reduce<Record<string, SetupRunItem[]>>((acc, it) => {
     if (!acc[it.piece_name]) acc[it.piece_name] = [];
@@ -992,6 +1043,9 @@ function RunDetailDrawer({ runId, onClose, navigate }: { runId: number; onClose:
               <span className="text-yellow-400">{data.run.plans_skipped} skipped</span>
               <span className="text-red-400">{data.run.plans_errored} errors</span>
               <span className="text-primary-300">{data.run.schedules_created} schedules</span>
+            </div>
+            <div className="bg-gray-900 border border-gray-800 rounded-lg p-4 mb-4">
+              <FirstRunSummary run={data.run} wave={data.first_run} navigate={navigate} />
             </div>
 
             <div className="space-y-3">

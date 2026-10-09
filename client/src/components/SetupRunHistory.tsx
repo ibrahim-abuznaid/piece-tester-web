@@ -15,6 +15,7 @@ export function SetupRunHistory({ runs, onOpen }: { runs: SetupRunSummary[]; onO
               <div className="text-sm">{new Date(r.started_at.replace(' ', 'T') + 'Z').toLocaleString()}</div>
               <div className="text-xs text-gray-500">
                 {r.piece_count} pieces · {r.plans_created} plans · {r.plans_errored} err · {r.schedules_created} schedules
+                {r.first_run_wave_id && ` · first run ${r.first_run_completed_at ? 'done' : 'running'}`}
               </div>
             </div>
           </div>

@@ -145,6 +145,7 @@ export default function Schedules() {
   // (e.g. from the Health tab's "View run details").
   const [tab, setTab] = useState<Tab>(searchParams.get('tab') === 'logs' ? 'logs' : 'schedules');
   const focusRunId = searchParams.get('run') ? Number(searchParams.get('run')) : null;
+  const focusWaveId = searchParams.get('wave');
 
   // If the deep-link params change while already on the page, follow them.
   useEffect(() => {
@@ -373,7 +374,7 @@ export default function Schedules() {
 
       {/* ══════════════ TAB: SCHEDULED RUNS ══════════════ */}
       {tab === 'logs' && (
-        <ScheduledRunsFeed focusRunId={focusRunId} />
+        <ScheduledRunsFeed focusRunId={focusRunId} focusWaveId={focusWaveId} />
       )}
 
       {/* ══════════════ CREATE / EDIT MODAL ══════════════ */}

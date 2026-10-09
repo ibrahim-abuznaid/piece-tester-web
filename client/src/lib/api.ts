@@ -962,6 +962,9 @@ export interface SetupRunSummary {
   plans_skipped: number;
   plans_errored: number;
   schedules_created: number;
+  first_run_wave_id: string | null;
+  first_run_total: number;
+  first_run_completed_at: string | null;
   started_at: string;
   completed_at: string | null;
 }
@@ -982,6 +985,8 @@ export interface ScheduleConfigInput {
   enabled: boolean;
   cadence: 'monthly' | '6h' | 'daily' | 'weekly' | 'custom' | 'none';
   customCron?: string;
+  /** Fire one tracked run for the batch's pieces right after setup (default true). */
+  firstRun?: boolean;
 }
 
 /** A batch-setup selection. Omit `targets` to generate plans for all targets of the piece. */
@@ -998,6 +1003,7 @@ export interface BatchStatus {
   currentIndex: number;
   totalItems: number;
   resumed?: boolean;
+  setupRunId?: number | null;
   items: BatchQueueItemStatus[];
   stats: { pending: number; running: number; done: number; error: number; skipped: number };
 }
@@ -1007,7 +1013,7 @@ export interface BatchStreamCallbacks {
   onLog: (data: { index: number; pieceName: string; actionName: string; log: AgentLogEntry }) => void;
   onPlanCreated: (data: { index: number; pieceName: string; actionName: string; planId: number; steps: TestPlanStep[]; status: string }) => void;
   onPlanApproved: (data: { index: number; pieceName: string; actionName: string; planId: number }) => void;
-  onBatchDone: (data: { status: string; setupRunId?: number; schedulesCreated?: number }) => void;
+  onBatchDone: (data: { status: string; setupRunId?: number; schedulesCreated?: number; firstRun?: { waveId: string; total: number } | null }) => void;
   onError: (message: string) => void;
 }
 
@@ -1439,7 +1445,7 @@ export const api = {
   cancelBatchSetup: (id: string) => request<{ success: boolean }>('POST', `/batch-setup/${id}/cancel`),
   getSetupRuns: () => request<SetupRunSummary[]>('GET', '/batch-setup/runs'),
   getSetupRunDetail: (id: number) =>
-    request<{ run: SetupRunSummary; items: SetupRunItem[] }>('GET', `/batch-setup/runs/${id}`),
+    request<{ run: SetupRunSummary; items: SetupRunItem[]; first_run: WaveSummary | null }>('GET', `/batch-setup/runs/${id}`),
 
   // Global plan run history
   listAllPlanRuns: (options?: { pieceName?: string; limit?: number; offset?: number }) => {
