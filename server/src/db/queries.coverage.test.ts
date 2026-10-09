@@ -37,3 +37,21 @@ describe('getCoverage — planned_targets counts approved plans only', () => {
     expect(gh.has_plans).toBe(false);
   });
 });
+
+describe('getCoverage — connected means "has the connection it needs"', () => {
+  beforeEach(() => getDb().exec(
+    'DELETE FROM test_plan_runs; DELETE FROM test_plans; DELETE FROM schedules; DELETE FROM piece_connections;',
+  ));
+
+  it('a no-auth piece with no local connection row is connected', () => {
+    const rows = getCoverage([{ name: '@activepieces/piece-ai', displayName: 'AI', actions: 6, triggers: 0, hasAuth: false }]);
+    expect(rows[0].connected).toBe(true);
+    expect(rows[0].requires_auth).toBe(false);
+  });
+
+  it('an auth piece with no local connection row is not connected', () => {
+    const rows = getCoverage([{ name: '@activepieces/piece-slack', displayName: 'Slack', actions: 3, triggers: 0, hasAuth: true }]);
+    expect(rows[0].connected).toBe(false);
+    expect(rows[0].requires_auth).toBe(true);
+  });
+});
