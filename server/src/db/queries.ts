@@ -515,6 +515,18 @@ export function markPlansStaleByPiece(pieceName: string): number {
   ).changes;
 }
 
+/**
+ * Boot repair: a NO_AUTH placeholder carries no account, so plans flagged stale by creating or
+ * activating one were false positives. Returns the number of plans un-flagged.
+ */
+export function clearStaleFlagsForNoAuthPieces(): number {
+  return getDb().run(
+    `UPDATE test_plans SET needs_regen = 0
+       WHERE needs_regen = 1
+         AND piece_name IN (SELECT piece_name FROM piece_connections WHERE is_active = 1 AND connection_type = 'NO_AUTH')`,
+  ).changes;
+}
+
 // ── Test Plan Runs ──
 
 export interface TestPlanRunRow {
