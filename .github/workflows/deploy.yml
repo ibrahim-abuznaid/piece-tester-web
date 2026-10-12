@@ -40,12 +40,15 @@ jobs:
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:
-      - name: Install sshpass
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq sshpass
+      - name: Install the deploy key
+        env:
+          SSH_KEY: ${{ secrets.SSH_KEY }}
+        run: |
+          install -m 700 -d ~/.ssh
+          (umask 077 && printf '%s\n' "$SSH_KEY" > ~/.ssh/deploy_key)
 
       - name: Run deploy.sh on the droplet
         env:
-          SSHPASS: ${{ secrets.SSH_PASSWORD }}
           SSH_HOST: ${{ secrets.SSH_HOST }}
           SSH_USER: ${{ secrets.SSH_USER }}
         # Update the checkout FIRST, then run an immutable copy of the script.
@@ -55,7 +58,9 @@ jobs:
         # to /tmp also means a deploy.sh change takes effect on the run that ships
         # it, not the one after.
         run: |
-          sshpass -e ssh \
+          ssh -i ~/.ssh/deploy_key \
+            -o IdentitiesOnly=yes \
+            -o BatchMode=yes \
             -o StrictHostKeyChecking=accept-new \
             -o ConnectTimeout=20 \
             "${SSH_USER}@${SSH_HOST}" \
