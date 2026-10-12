@@ -647,6 +647,15 @@ function initTables(db: DatabaseAdapter): void {
     );
   `);
 
+  // Run-history indexes (docs/superpowers/specs/2026-10-12-slow-board-queries-design.md).
+  // After every test_plan_runs column migration above.
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_test_plan_runs_plan_id ON test_plan_runs(plan_id);
+    CREATE INDEX IF NOT EXISTS idx_test_plan_runs_wave_id ON test_plan_runs(wave_id);
+    CREATE INDEX IF NOT EXISTS idx_test_plan_runs_status ON test_plan_runs(status);
+    CREATE INDEX IF NOT EXISTS idx_ai_usage_logs_created_at ON ai_usage_logs(created_at);
+  `);
+
   // Vendor watch indexes (docs/superpowers/plans/2026-10-07-vendor-watch-bulk-safe.md)
   db.exec(`
     CREATE INDEX IF NOT EXISTS idx_watch_sources_plan ON watch_sources(plan_id);

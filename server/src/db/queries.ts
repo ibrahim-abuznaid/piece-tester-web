@@ -569,33 +569,33 @@ export function listPlanRuns(planId: number): TestPlanRunRow[] {
   );
 }
 
-export interface PlanRunWithPlan extends TestPlanRunRow {
+export interface PlanRunListItem extends Omit<TestPlanRunRow, 'step_results'> {
   piece_name: string;
   target_action: string;
+  step_statuses: string[];
 }
 
-/**
- * List all plan runs (globally, across all plans) with piece/action info.
- * Optionally filter by piece_name.
- */
-export function listAllPlanRuns(options?: { pieceName?: string; limit?: number; offset?: number }): PlanRunWithPlan[] {
+function stepStatuses(stepResultsJson: string): string[] {
+  try {
+    const steps = JSON.parse(stepResultsJson);
+    return Array.isArray(steps) ? steps.map((s: any) => String(s?.status ?? '')) : [];
+  } catch { return []; }
+}
+
+/** Global run history, newest first, optionally for one piece. Carries per-step statuses, never the step payloads. */
+export function listAllPlanRuns(options?: { pieceName?: string; limit?: number; offset?: number }): PlanRunListItem[] {
   const limit = options?.limit ?? 50;
   const offset = options?.offset ?? 0;
-  if (options?.pieceName) {
-    return getDb().all<PlanRunWithPlan>(`
-      SELECT r.*, p.piece_name, p.target_action
-      FROM test_plan_runs r
-      JOIN test_plans p ON r.plan_id = p.id
-      WHERE p.piece_name = ?
-      ORDER BY r.id DESC LIMIT ? OFFSET ?
-    `, [options.pieceName, limit, offset]);
-  }
-  return getDb().all<PlanRunWithPlan>(`
+  const where = options?.pieceName ? 'WHERE p.piece_name = ?' : '';
+  const params = options?.pieceName ? [options.pieceName, limit, offset] : [limit, offset];
+  const rows = getDb().all<TestPlanRunRow & { piece_name: string; target_action: string }>(`
     SELECT r.*, p.piece_name, p.target_action
     FROM test_plan_runs r
     JOIN test_plans p ON r.plan_id = p.id
+    ${where}
     ORDER BY r.id DESC LIMIT ? OFFSET ?
-  `, [limit, offset]);
+  `, params);
+  return rows.map(({ step_results, ...r }) => ({ ...r, step_statuses: stepStatuses(step_results) }));
 }
 
 // ── Piece Lessons ──
@@ -760,9 +760,9 @@ export interface PieceHealthRow {
 }
 
 /** Raw (untruncated, uncleaned) error string of the first failed/assert_failed step. */
-export function firstFailedStepError(stepResultsJson: string): string | null {
+export function firstFailedStepError(stepResultsJson: string | null): string | null {
   try {
-    const steps = JSON.parse(stepResultsJson);
+    const steps = JSON.parse(stepResultsJson || '[]');
     if (!Array.isArray(steps)) return null;
     const failed = steps.find((s: any) => s && (s.status === 'failed' || s.status === 'assert_failed') && s.error);
     return failed ? String(failed.error) : null;
@@ -770,7 +770,7 @@ export function firstFailedStepError(stepResultsJson: string): string | null {
 }
 
 /** 100-char cleaned preview of the first failed step's error, for the Health board. */
-export function extractFirstStepError(stepResultsJson: string): string | null {
+export function extractFirstStepError(stepResultsJson: string | null): string | null {
   const raw = firstFailedStepError(stepResultsJson);
   if (raw == null) return null;
   const msg = parseApError(raw).message;
@@ -778,17 +778,17 @@ export function extractFirstStepError(stepResultsJson: string): string | null {
 }
 
 /** First step's error message regardless of status — used for blocked runs (sole step is 'skipped'). */
-function firstStepMessage(stepResultsJson: string): string | null {
+function firstStepMessage(stepResultsJson: string | null): string | null {
   try {
-    const steps = JSON.parse(stepResultsJson);
+    const steps = JSON.parse(stepResultsJson || '[]');
     return Array.isArray(steps) && steps[0]?.error ? String(steps[0].error) : null;
   } catch { return null; }
 }
 
 /** First step's stepId — distinguishes a 'connection' block (PR #14) from a 'stale' block. */
-function firstStepId(stepResultsJson: string): string | null {
+function firstStepId(stepResultsJson: string | null): string | null {
   try {
-    const steps = JSON.parse(stepResultsJson);
+    const steps = JSON.parse(stepResultsJson || '[]');
     return Array.isArray(steps) && steps[0]?.stepId ? String(steps[0].stepId) : null;
   } catch { return null; }
 }
@@ -802,9 +802,11 @@ export function getPieceHealth(): PieceHealthRow[] {
   const db = getDb();
 
   // Latest scheduled-or-retest run per plan (= per piece+action): its current status + error.
-  const latest = db.all<{ plan_id: number; piece_name: string; target_action: string; last_status: string; last_run_at: string | null; step_results: string; run_id: number }>(`
+  // step_results only for failed/blocked rows, so the healthy majority never loads its blob.
+  const latest = db.all<{ plan_id: number; piece_name: string; target_action: string; last_status: string; last_run_at: string | null; step_results: string | null; run_id: number }>(`
     SELECT p.id AS plan_id, p.piece_name, p.target_action,
-           r.id AS run_id, r.status AS last_status, r.started_at AS last_run_at, r.step_results
+           r.id AS run_id, r.status AS last_status, r.started_at AS last_run_at,
+           CASE WHEN r.status IN ('failed', 'blocked') THEN r.step_results END AS step_results
     FROM test_plans p
     JOIN test_plan_runs r ON r.id = (
       SELECT r2.id FROM test_plan_runs r2
@@ -1006,9 +1008,9 @@ function shortenError(raw: string | null | undefined): string | null {
 }
 
 /** Classify a failed run from its step_results: a thrown step gives its errorCategory; else an assertion failure. */
-function analyzeFailedRun(stepResultsJson: string): { category: string; error: string | null } {
+function analyzeFailedRun(stepResultsJson: string | null): { category: string; error: string | null } {
   try {
-    const steps = JSON.parse(stepResultsJson);
+    const steps = JSON.parse(stepResultsJson || '[]');
     if (!Array.isArray(steps)) return { category: 'unknown', error: null };
     const thrown = steps.find((s: any) => s && s.status === 'failed');
     if (thrown) return { category: thrown.errorCategory || 'piece_error', error: shortenError(thrown.error) };

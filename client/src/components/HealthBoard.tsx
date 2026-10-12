@@ -14,9 +14,9 @@ const COLUMN_DOT: Record<ColumnKey, string> = {
 };
 
 export default function HealthBoard() {
-  const { data: items = [], isLoading } = useQuery({ queryKey: ['attention'], queryFn: api.getAttention, refetchInterval: 30_000 });
-  const { data: reports = [] } = useQuery({ queryKey: ['reported'], queryFn: api.getReported, refetchInterval: 30_000 });
-  const { data: health = [] } = useQuery({ queryKey: ['piece-health'], queryFn: api.getPieceHealth, refetchInterval: 30_000 });
+  const { data: items = [], isLoading } = useQuery({ queryKey: ['attention'], queryFn: api.getAttention, refetchInterval: 60_000 });
+  const { data: reports = [] } = useQuery({ queryKey: ['reported'], queryFn: api.getReported, refetchInterval: 60_000 });
+  const { data: health = [] } = useQuery({ queryKey: ['piece-health'], queryFn: api.getPieceHealth, refetchInterval: 60_000 });
 
   const [showHealthy, setShowHealthy] = useState(false);
   const [selectedPiece, setSelectedPiece] = useState<string | null>(null);

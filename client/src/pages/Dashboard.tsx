@@ -26,7 +26,7 @@ export default function Dashboard() {
   const { data: health } = useQuery({
     queryKey: ['piece-health'],
     queryFn: api.getPieceHealth,
-    refetchInterval: 30_000,
+    refetchInterval: 60_000,
   });
 
   const rows = health ?? [];

@@ -1,5 +1,6 @@
 import { getTestPlan, createPlanRun, updatePlanRun } from '../db/queries.js';
 import { executePlan } from './plan-executor.js';
+import { serializeStepResults } from './step-results-storage.js';
 import { runWithConcurrency } from './concurrency.js';
 
 export interface BatchPair { plan_id: number; run_id: number; }
@@ -31,7 +32,7 @@ export function runPlanBatch(
       updatePlanRun(run_id, {
         status: 'failed',
         completed_at: new Date().toISOString(),
-        step_results: JSON.stringify([{
+        step_results: serializeStepResults([{
           stepId: 'error', label: 'Run failed to start', status: 'failed',
           output: null, error: err instanceof Error ? err.message : String(err), duration_ms: 0,
         }]),
