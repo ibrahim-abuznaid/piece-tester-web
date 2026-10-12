@@ -15,6 +15,7 @@ import {
 } from './trigger-engine.js';
 import { createClient } from './test-engine.js';
 import { checkImportedConnectionHealth } from './connection-health.js';
+import { serializeStepResults } from './step-results-storage.js';
 import type { PieceMetadataFull } from './ap-client.js';
 
 // ── Types ──
@@ -361,7 +362,7 @@ export async function executePlan(
     updatePlanRun(runId, {
       status: 'blocked',
       completed_at: new Date().toISOString(),
-      step_results: JSON.stringify([blockedStep]),
+      step_results: serializeStepResults([blockedStep]),
     });
     onProgress({ type: 'plan_blocked', runId, message: health.detail, stepResults: [blockedStep] });
     cleanupEmitter(runId);
@@ -382,7 +383,7 @@ export async function executePlan(
     updatePlanRun(runId, {
       status: 'blocked',
       completed_at: new Date().toISOString(),
-      step_results: JSON.stringify([staleStep]),
+      step_results: serializeStepResults([staleStep]),
     });
     onProgress({ type: 'plan_blocked', runId, message: staleStep.error!, stepResults: [staleStep] });
     cleanupEmitter(runId);
@@ -403,7 +404,7 @@ export async function executePlan(
       updatePlanRun(runId, {
         status: 'blocked',
         completed_at: new Date().toISOString(),
-        step_results: JSON.stringify([blockedStep]),
+        step_results: serializeStepResults([blockedStep]),
       });
       onProgress({ type: 'plan_blocked', runId, message: blockedStep.error!, stepResults: [blockedStep] });
       cleanupEmitter(runId);
@@ -439,7 +440,7 @@ export async function executePlan(
 
   function saveResults() {
     const arr = steps.map(s => stepResults.get(s.id)!);
-    updatePlanRun(runId, { step_results: JSON.stringify(arr) });
+    updatePlanRun(runId, { step_results: serializeStepResults(arr) });
   }
 
   // Step types that halt the plan when they fail (thrown OR assertion failure).
@@ -477,7 +478,7 @@ export async function executePlan(
     updatePlanRun(runId, {
       status: 'failed',
       completed_at: new Date().toISOString(),
-      step_results: JSON.stringify(steps.map(s => stepResults.get(s.id)!)),
+      step_results: serializeStepResults(steps.map(s => stepResults.get(s.id)!)),
     });
 
     onProgress({
@@ -507,7 +508,7 @@ export async function executePlan(
         updatePlanRun(runId, {
           status: 'cancelled',
           completed_at: new Date().toISOString(),
-          step_results: JSON.stringify(steps.map(s => stepResults.get(s.id)!)),
+          step_results: serializeStepResults(steps.map(s => stepResults.get(s.id)!)),
         });
         onProgress({
           type: 'plan_failed',
@@ -728,7 +729,7 @@ export async function executePlan(
       status: anyFailed ? 'failed' : 'completed',
       completed_at: new Date().toISOString(),
       current_step_id: null,
-      step_results: JSON.stringify(steps.map(s => stepResults.get(s.id)!)),
+      step_results: serializeStepResults(steps.map(s => stepResults.get(s.id)!)),
     });
 
     onProgress({
@@ -741,7 +742,7 @@ export async function executePlan(
     updatePlanRun(runId, {
       status: 'failed',
       completed_at: new Date().toISOString(),
-      step_results: JSON.stringify(steps.map(s => stepResults.get(s.id)!)),
+      step_results: serializeStepResults(steps.map(s => stepResults.get(s.id)!)),
     });
 
     onProgress({

@@ -72,11 +72,7 @@ router.get('/runs/all', (req, res) => {
   const pieceName = req.query.piece as string | undefined;
   const limit = parseInt(req.query.limit as string) || 50;
   const offset = parseInt(req.query.offset as string) || 0;
-  const runs = db.listAllPlanRuns({ pieceName, limit, offset });
-  res.json(runs.map(r => ({
-    ...r,
-    step_results: safeParseJson(r.step_results),
-  })));
+  res.json(db.listAllPlanRuns({ pieceName, limit, offset }));
 });
 
 // Get plan by ID

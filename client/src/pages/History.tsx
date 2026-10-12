@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { useSearchParams, Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { api, type PlanRunRecord, type StepResult } from '../lib/api';
+import { api, type PlanRunListItem, type StepResult } from '../lib/api';
 import { runDurationSeconds, formatDbTime, parseDbTime } from '../lib/time';
 import {
   ChevronDown, ChevronRight, Clock, CheckCircle, XCircle,
@@ -229,7 +229,7 @@ function PlanRunHistory({ pieceFilter }: { pieceFilter: string }) {
 }
 
 function PlanRunCard({ run, scheduleLabels, expanded, onToggle, onDelete, isDeleting }: {
-  run: PlanRunRecord;
+  run: PlanRunListItem;
   scheduleLabels: Record<number, string>;
   expanded: boolean;
   onToggle: () => void;
@@ -255,10 +255,10 @@ function PlanRunCard({ run, scheduleLabels, expanded, onToggle, onDelete, isDele
     : run.status === 'running' ? 'border-blue-500/20'
     : 'border-gray-800';
 
-  const stepResults = run.step_results || [];
-  const stepsCompleted = stepResults.filter(s => s.status === 'completed').length;
-  const stepsFailed = stepResults.filter(s => s.status === 'failed').length;
-  const totalSteps = stepResults.length;
+  const stepStatuses = run.step_statuses || [];
+  const stepsCompleted = stepStatuses.filter(s => s === 'completed').length;
+  const stepsFailed = stepStatuses.filter(s => s === 'failed').length;
+  const totalSteps = stepStatuses.length;
 
   // Duration
   const duration = runDurationSeconds(run.started_at, run.completed_at);
@@ -289,12 +289,12 @@ function PlanRunCard({ run, scheduleLabels, expanded, onToggle, onDelete, isDele
 
         {/* Step progress mini-dots */}
         <div className="flex items-center gap-0.5">
-          {stepResults.map((sr, i) => {
-            const color = sr.status === 'completed' ? 'bg-green-500'
-              : sr.status === 'failed' ? 'bg-red-500'
-              : sr.status === 'running' ? 'bg-blue-500 animate-pulse'
-              : sr.status === 'waiting' ? 'bg-yellow-500'
-              : sr.status === 'skipped' ? 'bg-gray-600'
+          {stepStatuses.map((status, i) => {
+            const color = status === 'completed' ? 'bg-green-500'
+              : status === 'failed' ? 'bg-red-500'
+              : status === 'running' ? 'bg-blue-500 animate-pulse'
+              : status === 'waiting' ? 'bg-yellow-500'
+              : status === 'skipped' ? 'bg-gray-600'
               : 'bg-gray-700';
             return <div key={i} className={`w-2.5 h-1.5 rounded-sm ${color}`} />;
           })}
@@ -320,14 +320,24 @@ function PlanRunCard({ run, scheduleLabels, expanded, onToggle, onDelete, isDele
         {expanded ? <ChevronDown size={14} className="text-gray-500" /> : <ChevronRight size={14} className="text-gray-500" />}
       </div>
 
-      {expanded && (
-        <div className="border-t border-gray-800/50 px-4 py-3 space-y-1">
-          {stepResults.length === 0 && <p className="text-xs text-gray-500">No step results recorded.</p>}
-          {stepResults.map((sr, idx) => (
-            <StepResultRow key={sr.stepId || idx} sr={sr} idx={idx} />
-          ))}
-        </div>
+      {expanded && <RunSteps runId={run.id} />}
+    </div>
+  );
+}
+
+// Step detail loads per run on expand; the list carries only step statuses.
+function RunSteps({ runId }: { runId: number }) {
+  const { data: run, isLoading } = useQuery({ queryKey: ['plan-run', runId], queryFn: () => api.getPlanRun(runId) });
+  const steps: StepResult[] = Array.isArray(run?.step_results) ? run.step_results : [];
+  return (
+    <div className="border-t border-gray-800/50 px-4 py-3 space-y-1">
+      {isLoading && (
+        <p className="text-xs text-gray-500 flex items-center gap-2"><Loader2 size={12} className="animate-spin" /> Loading steps…</p>
       )}
+      {!isLoading && steps.length === 0 && <p className="text-xs text-gray-500">No step results recorded.</p>}
+      {steps.map((sr, idx) => (
+        <StepResultRow key={sr.stepId || idx} sr={sr} idx={idx} />
+      ))}
     </div>
   );
 }
@@ -396,8 +406,8 @@ function daysAgoISO(days: number): string {
   return d.toISOString();
 }
 
-function groupByDate(runs: PlanRunRecord[]): [string, PlanRunRecord[]][] {
-  const groups = new Map<string, PlanRunRecord[]>();
+function groupByDate(runs: PlanRunListItem[]): [string, PlanRunListItem[]][] {
+  const groups = new Map<string, PlanRunListItem[]>();
   const now = new Date();
   const todayStr = now.toDateString();
   const yesterday = new Date(now);

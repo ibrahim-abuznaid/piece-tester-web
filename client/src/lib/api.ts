@@ -584,6 +584,11 @@ export interface PlanRunRecord {
   target_action: string;
 }
 
+/** A run-history row: step statuses only. Full step results load per run through getPlanRun. */
+export interface PlanRunListItem extends Omit<PlanRunRecord, 'step_results'> {
+  step_statuses: string[];
+}
+
 /**
  * Stream AI plan creation via SSE.
  */
@@ -1454,7 +1459,7 @@ export const api = {
     if (options?.limit) params.set('limit', String(options.limit));
     if (options?.offset) params.set('offset', String(options.offset));
     const qs = params.toString();
-    return request<PlanRunRecord[]>('GET', `/test-plans/runs/all${qs ? `?${qs}` : ''}`);
+    return request<PlanRunListItem[]>('GET', `/test-plans/runs/all${qs ? `?${qs}` : ''}`);
   },
 
   // AI Cost Tracking
