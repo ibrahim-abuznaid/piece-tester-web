@@ -48,6 +48,11 @@ export function isValidPassword(input: unknown): boolean {
   return crypto.timingSafeEqual(a, b);
 }
 
+// nginx on the same host proxies every request, so the socket peer is always 127.0.0.1.
+// Trusting loopback makes req.ip the address nginx appended to X-Forwarded-For; entries a
+// client forges further left are ignored.
+export const TRUST_PROXY = 'loopback';
+
 // ── Login throttle (in-memory, per source IP) ──
 const MAX_FAILS = 5;
 const LOCK_MS = 15 * 60 * 1000; // 15 minutes

@@ -20,15 +20,16 @@ import authRoutes from './routes/auth.js';
 import alertsRoutes from './routes/alerts.js';
 import bugTrendRoutes from './routes/bug-trend.js';
 import vendorWatchRoutes from './routes/vendor-watch.js';
-import { requireAuth, assertAuthConfig } from './middleware/auth.js';
+import { requireAuth, assertAuthConfig, TRUST_PROXY } from './middleware/auth.js';
+import { rejectCrossSiteRequests } from './middleware/cross-site.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = parseInt(process.env.PORT ?? '4000');
 const HOST = process.env.HOST ?? '0.0.0.0';
 
 const app = express();
-// No reverse proxy in front of this app — treat the socket peer as the authoritative client IP.
-app.set('trust proxy', false);
+app.set('trust proxy', TRUST_PROXY);
+app.use('/api', rejectCrossSiteRequests);
 app.use(express.json({ limit: '10mb' }));
 
 // ── Health check (before all other routes) ──
