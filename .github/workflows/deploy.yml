@@ -76,7 +76,7 @@ jobs:
           SSH_HOST: ${{ secrets.SSH_HOST }}
         run: |
           for _ in $(seq 1 10); do
-            if curl -fsS -m 10 "http://${SSH_HOST}/api/health" | grep -q '"status":"ok"'; then
+            if curl -fsS -m 10 "https://${SSH_HOST}/api/health" | grep -q '"status":"ok"'; then
               echo "Public health OK"
               exit 0
             fi
