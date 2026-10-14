@@ -20,8 +20,8 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          # Matches the droplet (Node 20), not whatever is newest.
-          node-version: '20'
+          # Matches the droplet (Node 24 LTS), not whatever is newest.
+          node-version: '24'
           cache: npm
 
       - run: npm ci

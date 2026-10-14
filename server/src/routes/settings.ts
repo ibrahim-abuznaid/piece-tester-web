@@ -12,6 +12,7 @@ import { fetchActiveUsers, fetchViewer } from '../services/bug-trend/linear-clie
 import { invalidateBugTrendCache } from '../services/bug-trend/bug-trend-service.js';
 import { seedRosterIfEmpty, validateRoster } from '../services/bug-trend/roster.js';
 import { clearGitHubRateLimit, validateGitHubToken } from '../services/github-api.js';
+import { isAllowedApUrl, isAllowedDiscordWebhook, apUrlError } from '../services/url-policy.js';
 
 // ── MCP OAuth constants ──
 const MCP_OAUTH_AUTHORIZE_URL = 'https://mcp.activepieces.com/authorize';
@@ -70,6 +71,21 @@ export async function refreshMcpTokenIfNeeded(): Promise<string> {
   return data.access_token;
 }
 
+// URL fields are checked only when they change, so values saved before this policy keep working.
+const URL_FIELDS: Array<{ field: string; allowed: (url: string) => boolean; error: () => string }> = [
+  { field: 'base_url', allowed: isAllowedApUrl, error: () => apUrlError('base_url') },
+  { field: 'linear_report_webhook_url', allowed: isAllowedApUrl, error: () => apUrlError('linear_report_webhook_url') },
+  { field: 'notify_webhook_url', allowed: isAllowedDiscordWebhook, error: () => 'notify_webhook_url must be a Discord webhook URL (https://discord.com/api/webhooks/...).' },
+];
+
+function rejectedUrlChange(updates: Record<string, any>, current: Record<string, any>): string | null {
+  for (const { field, allowed, error } of URL_FIELDS) {
+    const next = updates[field];
+    if (next !== undefined && next !== current[field] && !allowed(next)) return error();
+  }
+  return null;
+}
+
 const router = Router();
 
 router.get('/', (_req, res) => {
@@ -99,6 +115,8 @@ router.put('/', (req, res) => {
       if (!roster) return res.status(400).json({ error: 'bug_trend_roster must be a list of { id, name }' });
       updates.bug_trend_roster = JSON.stringify(roster);
     }
+    const urlError = rejectedUrlChange(updates, getSettings());
+    if (urlError) return res.status(400).json({ error: urlError });
     const saved = updateSettings(updates);
     if (updates.bug_trend_roster !== undefined) invalidateBugTrendCache();
     res.json(maskedSettings(saved));
@@ -110,6 +128,9 @@ router.put('/', (req, res) => {
 // Test the connection by calling GET /v1/pieces
 router.post('/test-connection', async (req, res) => {
   const s = getSettings();
+  if (req.body.base_url !== undefined && req.body.base_url !== s.base_url && !isAllowedApUrl(req.body.base_url)) {
+    return res.status(400).json({ success: false, error: apUrlError('base_url') });
+  }
   const baseUrl = req.body.base_url ?? s.base_url;
   const apiKey = req.body.api_key ?? s.api_key;
   const projectId = req.body.project_id ?? s.project_id;
