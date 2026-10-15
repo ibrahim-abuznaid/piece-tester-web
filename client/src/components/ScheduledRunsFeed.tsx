@@ -45,6 +45,7 @@ const CATEGORY_STYLE: Record<string, string> = {
   bad_request: 'bg-blue-500/15 text-blue-300 border-blue-500/25',
   auth: 'bg-amber-500/15 text-amber-300 border-amber-500/25',
   connection_broken: 'bg-amber-500/15 text-amber-300 border-amber-500/25',
+  quota: 'bg-fuchsia-500/15 text-fuchsia-300 border-fuchsia-500/25',
   rate_limit: 'bg-gray-500/15 text-gray-300 border-gray-600/40',
   transient: 'bg-gray-500/15 text-gray-300 border-gray-600/40',
   unknown: 'bg-gray-500/15 text-gray-400 border-gray-600/40',

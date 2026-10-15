@@ -24,12 +24,19 @@ export default function PieceCard({ group, reportUrl, onOpen }: {
           </div>
 
           <div className="flex items-center flex-wrap gap-1.5 mt-2">
-            <span className="text-[10px] px-1.5 py-0.5 rounded-full border font-medium bg-red-500/15 text-red-300 border-red-500/25">
-              {n} failing
+            <span className={`text-[10px] px-1.5 py-0.5 rounded-full border font-medium ${group.lane === 'quota'
+              ? 'bg-fuchsia-500/15 text-fuchsia-300 border-fuchsia-500/25'
+              : 'bg-red-500/15 text-red-300 border-red-500/25'}`}>
+              {group.lane === 'quota' ? `${counts.quota} out of credits` : `${n} failing`}
             </span>
             {counts.connection > 0 && group.lane !== 'connection' && (
               <span className="text-[10px] px-1.5 py-0.5 rounded-full border font-medium bg-amber-500/15 text-amber-300 border-amber-500/25">
                 {counts.connection} re-auth
+              </span>
+            )}
+            {counts.quota > 0 && group.lane !== 'quota' && (
+              <span className="text-[10px] px-1.5 py-0.5 rounded-full border font-medium bg-fuchsia-500/15 text-fuchsia-300 border-fuchsia-500/25">
+                {counts.quota} credits
               </span>
             )}
             {counts.muted > 0 && group.lane !== 'muted' && (

@@ -12,6 +12,7 @@ export interface ParsedApError {
   message: string;
   code?: string;
   status?: number;
+  responseBody?: unknown;
   raw: string; // full detail, pretty-printed when JSON, for a code block
 }
 
@@ -37,6 +38,7 @@ export function parseApError(raw: string): ParsedApError {
         message: typeof nested.message === 'string' ? nested.message : firstLine(String(outer.errorMessage)),
         code: typeof nested.code === 'string' ? nested.code : undefined,
         status,
+        responseBody: nested.responseBody,
         raw: pretty(nested),
       };
     }

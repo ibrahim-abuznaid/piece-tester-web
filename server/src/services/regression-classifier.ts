@@ -1,3 +1,5 @@
+import { isQuotaError } from './error-category.js';
+
 export type Lane =
   | 'newly_broken'
   | 'degrading'
@@ -124,10 +126,11 @@ export function isAuthError(error: string): boolean {
 }
 
 export type FailureCategory =
-  | 'auth' | 'no_trigger' | 'timeout' | 'rate_limit' | 'not_found' | 'server_error' | 'other';
+  | 'auth' | 'quota' | 'no_trigger' | 'timeout' | 'rate_limit' | 'not_found' | 'server_error' | 'other';
 
 export function categorizeError(error: string): FailureCategory {
   const s = (error || '').toLowerCase();
+  if (isQuotaError(error)) return 'quota';
   if (isAuthError(error)) return 'auth';
   if (/no trigger event/.test(s)) return 'no_trigger';
   if (/timed out|timeout|etimedout|deadline exceeded/.test(s)) return 'timeout';

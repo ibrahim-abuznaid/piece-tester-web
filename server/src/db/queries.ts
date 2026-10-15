@@ -1,6 +1,7 @@
 import { getDb } from './schema.js';
 import { buildConnectionBacklinks, type ConnectionBacklinks } from '../services/connection-health.js';
 import { parseApError } from '../services/ap-error.js';
+import { categoryOfStep } from '../services/error-category.js';
 
 // ── Settings ──
 
@@ -985,7 +986,7 @@ export interface AttentionItem {
   plan_id: number;
   piece_name: string;
   action_name: string;
-  bucket: 'reauth' | 'likely_broken' | 'watching' | 'noise';
+  bucket: 'reauth' | 'likely_broken' | 'watching' | 'quota' | 'noise';
   category: string;          // errorCategory or 'assert_failed'
   fail_streak: number;       // consecutive most-recent scheduled runs that failed
   flaky: boolean;            // recent history mixes passes and fails (not a clean streak)
@@ -1001,9 +1002,8 @@ export interface AttentionItem {
 
 function shortenError(raw: string | null | undefined): string | null {
   if (!raw) return null;
-  let msg = String(raw);
-  try { const o = JSON.parse(msg); if (o && typeof o.message === 'string') msg = o.message; } catch { /* not JSON */ }
-  msg = msg.split('\n')[0].trim();
+  const firstLine = (s: string) => s.split('\n')[0].trim();
+  const msg = firstLine(parseApError(String(raw)).message) || firstLine(String(raw));
   return msg.length > 120 ? msg.slice(0, 120) + '…' : msg;
 }
 
@@ -1013,7 +1013,7 @@ function analyzeFailedRun(stepResultsJson: string | null): { category: string; e
     const steps = JSON.parse(stepResultsJson || '[]');
     if (!Array.isArray(steps)) return { category: 'unknown', error: null };
     const thrown = steps.find((s: any) => s && s.status === 'failed');
-    if (thrown) return { category: thrown.errorCategory || 'piece_error', error: shortenError(thrown.error) };
+    if (thrown) return { category: categoryOfStep(thrown), error: shortenError(thrown.error) };
     const asserted = steps.find((s: any) => s && s.status === 'assert_failed');
     if (asserted) return { category: 'assert_failed', error: shortenError(asserted.error) };
     return { category: 'unknown', error: null };
@@ -1074,6 +1074,7 @@ export function getAttentionItems(): AttentionItem[] {
 
     let bucket: AttentionItem['bucket'];
     if (isBlocked || category === 'auth') bucket = 'reauth';
+    else if (category === 'quota') bucket = 'quota';
     else if (category === 'transient' || category === 'rate_limit') bucket = 'noise';
     else bucket = streak >= 2 ? 'likely_broken' : 'watching';
 
@@ -1081,6 +1082,7 @@ export function getAttentionItems(): AttentionItem[] {
     if (isStaleBlock) reason = error || 'Connection changed — regenerate the plan';
     else if (isBlocked) reason = error || 'connection deleted/errored in Activepieces — fix it';
     else if (bucket === 'reauth') reason = 'connection auth failed — needs re-auth';
+    else if (bucket === 'quota') reason = 'out of credits — vendor account needs billing, not a piece bug';
     else if (bucket === 'noise') reason = `${category} — likely environment/flake`;
     else if (bucket === 'likely_broken') reason = `failed ${streak}× in a row · ${category}`;
     else reason = flaky ? `flaky — recently passed and failed · ${category}` : `first failure · ${category}`;
@@ -1103,7 +1105,7 @@ export function getAttentionItems(): AttentionItem[] {
     });
   }
 
-  const order: Record<string, number> = { likely_broken: 0, reauth: 1, watching: 2, noise: 3 };
+  const order: Record<string, number> = { likely_broken: 0, reauth: 1, watching: 2, quota: 3, noise: 4 };
   items.sort((a, b) =>
     (order[a.bucket] - order[b.bucket]) || (b.fail_streak - a.fail_streak) || a.piece_name.localeCompare(b.piece_name));
   return items;
@@ -1213,6 +1215,7 @@ function categorySeverity(cat: string | null): number {
     case 'not_found': return 4;
     case 'bad_request': return 3;
     case 'auth': return 2;
+    case 'quota':
     case 'rate_limit':
     case 'transient': return 1;
     default: return 0;

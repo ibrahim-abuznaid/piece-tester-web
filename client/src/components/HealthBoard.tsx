@@ -9,6 +9,7 @@ import { CheckCircle2, HelpCircle, RotateCcw } from 'lucide-react';
 const COLUMN_DOT: Record<ColumnKey, string> = {
   errors: 'bg-red-500',
   connection: 'bg-amber-500',
+  quota: 'bg-fuchsia-500',
   reported: 'bg-green-500',
   muted: 'bg-gray-500',
 };

@@ -45,7 +45,7 @@ export interface ErrorPlaybookProps {
   reportable?: boolean;
 }
 
-type Blame = 'connection' | 'piece' | 'test' | 'environment' | 'unknown';
+type Blame = 'connection' | 'piece' | 'test' | 'environment' | 'account' | 'unknown';
 
 interface NavAction {
   label: string;
@@ -65,6 +65,7 @@ const BLAME_CHIP: Record<Blame, { label: string; cls: string }> = {
   piece: { label: 'likely piece bug', cls: 'bg-red-500/15 text-red-300 border-red-500/25' },
   test: { label: 'likely test config', cls: 'bg-blue-500/15 text-blue-300 border-blue-500/25' },
   environment: { label: 'environment', cls: 'bg-gray-500/15 text-gray-300 border-gray-600/40' },
+  account: { label: 'vendor account', cls: 'bg-fuchsia-500/15 text-fuchsia-300 border-fuchsia-500/25' },
   unknown: { label: 'needs a look', cls: 'bg-gray-500/15 text-gray-400 border-gray-600/40' },
 };
 
@@ -89,6 +90,15 @@ function buildPlaybook(category: string, targets: {
         nav: [
           { label: 'Space out the schedule', to: schedules, icon: CalendarClock, primary: true },
           { label: 'View runs', to: runs, icon: ScrollText },
+        ],
+      };
+    case 'quota':
+      return {
+        blame: 'account',
+        diagnosis: 'The vendor account is out of credits or over its plan limit. Nothing to fix in the piece. Top up or upgrade the account, then retest.',
+        nav: [
+          { label: 'View run details', to: runs, icon: ScrollText, primary: true },
+          { label: 'Check connection', to: connections, icon: KeyRound },
         ],
       };
     case 'transient':
