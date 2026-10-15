@@ -43,4 +43,10 @@ describe('alert CRUD', () => {
     expect(ack?.acknowledged_by).toBe('web session');
     expect(getOpenAlert('@ap/y', 'b')?.status).toBe('acknowledged');
   });
+
+  it('does not return an account credits notice as a target alert', () => {
+    createAlert({ piece_name: '@ap/hf', target_action: 'inference', target_type: 'account', error_signature: 'quota', error_category: 'quota', error_message: 'no credits' });
+    expect(getOpenAlert('@ap/hf', 'inference')).toBeUndefined();
+    expect(listOpenAlerts().some(x => x.piece_name === '@ap/hf' && x.target_type === 'account')).toBe(true);
+  });
 });

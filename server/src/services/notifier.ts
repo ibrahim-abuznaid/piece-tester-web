@@ -32,7 +32,7 @@ export interface AlertLike {
   error_category: string | null; error_message: string | null;
   status: string; acknowledged_by?: string | null; first_seen_at?: string | null;
 }
-const COLORS = { verifying: 0xFEE75C, confirmed: 0xED4245, acknowledged: 0x5865F2, recovered: 0x57F287, storm: 0xED4245 };
+const COLORS = { verifying: 0xFEE75C, confirmed: 0xED4245, acknowledged: 0x5865F2, recovered: 0x57F287, storm: 0xED4245, account: 0xE879F9 };
 
 // Dedup key for an alert. Numbers/uuids are normalized away on purpose: the same
 // failure on a target (differing request ids, timeout durations, etc.) collapses to
@@ -73,6 +73,19 @@ export function alertEmbed(a: AlertLike, opts: { appBaseUrl: string; reproduced?
       lines = [headline, a.error_message || '', ackLinks];
   }
   return { embeds: [{ title, color, description: lines.filter(Boolean).join('\n') }] };
+}
+
+// One notice per vendor account running dry, and one when it is topped up — never per run.
+export function accountEmbed(a: AlertLike, opts: { appBaseUrl: string; recoveredNote?: string }): DiscordMessage {
+  const health = `[Open in Health](${opts.appBaseUrl}/?piece=${encodeURIComponent(a.piece_name)})`;
+  if (a.status === 'recovered') {
+    return { embeds: [{ title: `🟢 Credits restored — ${a.piece_name}`, color: COLORS.recovered, description: opts.recoveredNote || 'Tests are running again' }] };
+  }
+  return { embeds: [{
+    title: `💳 Out of credits — ${a.piece_name}`,
+    color: COLORS.account,
+    description: ['The vendor test account is out of credits or over its plan. Its tests cannot run until it is topped up — not a piece bug.', a.error_message || '', health].filter(Boolean).join('\n'),
+  }] };
 }
 
 export function stormEmbed(opts: { failing: number; suppressed: number; appBaseUrl: string }): DiscordMessage {
