@@ -2141,7 +2141,7 @@ export function getAlert(id: number): AlertRow | undefined {
 
 export function getOpenAlert(piece_name: string, target_action: string | null): AlertRow | undefined {
   return getDb().get<AlertRow>(
-    `SELECT * FROM alerts WHERE piece_name = ? AND ((target_action = ?) OR (target_action IS NULL AND ? IS NULL)) AND recovered_at IS NULL ORDER BY id DESC`,
+    `SELECT * FROM alerts WHERE piece_name = ? AND ((target_action = ?) OR (target_action IS NULL AND ? IS NULL)) AND recovered_at IS NULL AND COALESCE(target_type, '') <> 'account' ORDER BY id DESC`,
     [piece_name, target_action, target_action],
   );
 }

@@ -48,7 +48,7 @@ export async function retestTarget(planId: number, times: number, exec = execute
 
 export { ENV_NOISE };
 
-import { alertEmbed, stormEmbed, errorSignature, postDiscordMessage, editDiscordMessage, type DiscordMessage } from './notifier.js';
+import { alertEmbed, accountEmbed, stormEmbed, errorSignature, postDiscordMessage, editDiscordMessage, type DiscordMessage } from './notifier.js';
 import type { AlertRow } from '../db/queries.js';
 import { getSettings, listQuarantine, getOpenAlert, createAlert, updateAlert, recoverAlert, listOpenAlerts } from '../db/queries.js';
 
@@ -70,8 +70,31 @@ export interface WaveState {
   failures: number;
   suppressed: number;
   passedTargets: Array<{ piece: string; action: string | null }>;
+  quotaPieces: Set<string>;
 }
-export function newWaveState(): WaveState { return { failures: 0, suppressed: 0, passedTargets: [] }; }
+export function newWaveState(): WaveState { return { failures: 0, suppressed: 0, passedTargets: [], quotaPieces: new Set() }; }
+
+// An account alert is keyed by piece (target_type 'account'); target_action records the
+// first action that hit the wall, so recovery waits for a target known to need credits.
+const ACCOUNT = 'account';
+
+async function raiseAccountAlert(
+  run: { id: number }, plan: { piece_name: string; target_action: string | null },
+  wave: { wave_id?: string; schedule_id?: number }, error: string | null, webhook: string, deps: AlertDeps,
+): Promise<void> {
+  const open = deps.listOpenAlerts().find(x => x.piece_name === plan.piece_name && x.target_type === ACCOUNT);
+  if (open?.discord_message_id) {
+    deps.updateAlert(open.id, { last_seen_at: new Date().toISOString(), last_run_id: run.id, last_wave_id: wave.wave_id ?? null });
+    return;
+  }
+  const alert = open ?? deps.createAlert({ piece_name: plan.piece_name, target_action: plan.target_action, target_type: ACCOUNT, error_signature: 'quota', error_category: 'quota', error_message: error, last_run_id: run.id, last_wave_id: wave.wave_id ?? null, schedule_id: wave.schedule_id ?? null });
+  try {
+    const posted = await deps.post(webhook, accountEmbed(alert, { appBaseUrl: deps.appBaseUrl }));
+    deps.updateAlert(alert.id, { status: 'confirmed', discord_message_id: posted.id });
+  } catch (err) {
+    console.error(`[alerts] credits notice failed for ${plan.piece_name}:`, err);
+  }
+}
 
 export async function processRunAlert(
   run: { id: number; status: string; step_results?: string | null },
@@ -85,6 +108,11 @@ export async function processRunAlert(
 
   const a = analyzeRun(run);
   if (a.outcome === 'passed') { ws.passedTargets.push({ piece: plan.piece_name, action: plan.target_action }); return; }
+  if (a.category === 'quota') {
+    ws.quotaPieces.add(plan.piece_name);
+    if (!deps.isQuarantined(plan.piece_name, plan.target_action)) await raiseAccountAlert(run, plan, wave, a.error, s.notify_webhook_url, deps);
+    return;
+  }
   if (ENV_NOISE.has(a.category)) return;                 // connection/env noise → no piece ping
   if (!PIECE_IMPLICATING.has(a.category)) return;
   if (deps.isQuarantined(plan.piece_name, plan.target_action)) return;
@@ -145,8 +173,17 @@ export async function finalizeWaveAlerts(wave: { wave_id?: string; schedule_id?:
   const passed = new Set(ws.passedTargets.map(t => `${t.piece}::${t.action ?? ''}`));
   for (const alert of deps.listOpenAlerts()) {
     if (!passed.has(`${alert.piece_name}::${alert.target_action ?? ''}`)) continue;
+    const isAccount = alert.target_type === ACCOUNT;
+    if (isAccount && ws.quotaPieces.has(alert.piece_name)) continue; // another action is still out of credits
     const recovered = deps.recoverAlert(alert.id)!;
-    if (alert.discord_message_id) {
+    if (isAccount && alert.discord_message_id) {
+      const days = daysSince(alert.first_seen_at);
+      try {
+        await deps.post(s.notify_webhook_url, accountEmbed({ ...recovered, status: 'recovered' }, { appBaseUrl: deps.appBaseUrl, recoveredNote: `Tests are running again${days != null ? ` after ${days} day${days === 1 ? '' : 's'}` : ''}` }));
+      } catch (err) {
+        console.error(`[alerts] credits-restored notice failed for ${alert.piece_name}:`, err);
+      }
+    } else if (alert.discord_message_id) {
       const days = daysSince(alert.first_seen_at);
       try {
         await deps.edit(s.notify_webhook_url, alert.discord_message_id, alertEmbed({ ...recovered, status: 'recovered' }, { appBaseUrl: deps.appBaseUrl, recoveredNote: `Recovered${days != null ? ` after ${days} day${days === 1 ? '' : 's'}` : ''}` }));

@@ -77,7 +77,7 @@ function makeDeps(over: Partial<AlertDeps> & { settings?: any } = {}): { deps: A
   const deps: AlertDeps = {
     getSettings: () => settings,
     isQuarantined: () => false,
-    getOpenAlert: (p, a) => [...store.values()].find(x => x.piece_name === p && x.target_action === a && !x.recovered_at),
+    getOpenAlert: (p, a) => [...store.values()].find(x => x.piece_name === p && x.target_action === a && !x.recovered_at && x.target_type !== 'account'),
     createAlert: (x) => { const row = { id: idSeq++, status: 'verifying', fail_count: 1, recovered_at: null, first_seen_at: '2026-09-11T09:00:00.000Z', ...x } as any; store.set(String(row.id), row); return row; },
     updateAlert: (id, u) => { const row = { ...store.get(String(id)), ...u }; store.set(String(id), row); return row; },
     recoverAlert: (id) => { const row = { ...store.get(String(id)), status: 'recovered', recovered_at: 'now' }; store.set(String(id), row); return row; },
@@ -137,11 +137,6 @@ describe('processRunAlert', () => {
     expect(edits[edits.length - 1].m.embeds[0].description).toContain('chronic');
   });
 
-  it('suppresses an out-of-credits failure — no post', async () => {
-    const { deps, posts } = makeDeps();
-    await processRunAlert(schedRun('failed', [{ status: 'failed', error: 'You have no remaining credits. Purchase pre-paid credits to continue.', errorCategory: 'piece_error' }]), stripePlan, wave, newWaveState(), deps);
-    expect(posts).toHaveLength(0);
-  });
 
   it('suppresses env-noise (auth) — no post', async () => {
     const { deps, posts } = makeDeps();
@@ -186,6 +181,80 @@ describe('processRunAlert', () => {
     await processRunAlert(schedRun('failed', [{ status: 'failed', error: 'b', errorCategory: 'piece_error' }]), { ...stripePlan, target_action: 'b' }, wave, ws, deps);
     expect(posts).toHaveLength(1);          // first alerted, second suppressed
     expect(ws.suppressed).toBe(1);
+  });
+});
+
+describe('out-of-credits account notice', () => {
+  const credits = () => schedRun('failed', [{ status: 'failed', error: 'You have no remaining credits. Purchase pre-paid credits to continue.', errorCategory: 'piece_error' }]);
+  const hf: any = { id: 8, piece_name: '@ap/hugging-face', target_action: 'inference', target_type: 'action' };
+  const hfChat: any = { ...hf, id: 9, target_action: 'chat' };
+
+  it('posts one notice per account, not per action or per wave, and never retests', async () => {
+    let retests = 0;
+    const { deps, posts, store } = makeDeps({ retest: async () => { retests++; return { failed: 1, passed: 0, inconclusive: 0 }; } });
+    const ws = newWaveState();
+    await processRunAlert(credits(), hf, wave, ws, deps);
+    await processRunAlert(credits(), hfChat, wave, ws, deps);
+    await processRunAlert(credits(), hf, wave, newWaveState(), deps);
+    expect(posts).toHaveLength(1);
+    expect(posts[0].embeds[0].title).toBe('💳 Out of credits — @ap/hugging-face');
+    expect(retests).toBe(0);
+    expect(ws.failures).toBe(0);
+    const row = [...store.values()][0];
+    expect(row).toMatchObject({ target_type: 'account', target_action: 'inference', error_category: 'quota', discord_message_id: 'M1' });
+  });
+
+  it('retries the notice on the next wave when the post failed', async () => {
+    let n = 0;
+    const { deps } = makeDeps({ post: async () => { n++; if (n === 1) throw new Error('discord down'); return { id: 'M' + n }; } });
+    await processRunAlert(credits(), hf, wave, newWaveState(), deps);
+    await processRunAlert(credits(), hf, wave, newWaveState(), deps);
+    expect(n).toBe(2);
+  });
+
+  it('skips a quarantined target', async () => {
+    const { deps, posts } = makeDeps({ isQuarantined: () => true });
+    await processRunAlert(credits(), hf, wave, newWaveState(), deps);
+    expect(posts).toHaveLength(0);
+  });
+
+  it('keeps a piece bug on the same action as its own alert', async () => {
+    const { deps, posts, store } = makeDeps();
+    await processRunAlert(credits(), hf, wave, newWaveState(), deps);
+    await processRunAlert(schedRun('failed', [{ status: 'failed', error: 'boom', errorCategory: 'piece_error' }]), hf, wave, newWaveState(), deps);
+    expect(posts).toHaveLength(2);
+    expect([...store.values()].map(r => r.target_type)).toEqual(['account', 'action']);
+  });
+
+  it('posts credits restored once the action that hit the wall passes', async () => {
+    const { deps, posts, store } = makeDeps();
+    await processRunAlert(credits(), hf, wave, newWaveState(), deps);
+    const ws = newWaveState();
+    await processRunAlert(schedRun('completed', [{ status: 'completed' }]), hf, wave, ws, deps);
+    await finalizeWaveAlerts(wave, ws, deps);
+    expect(posts).toHaveLength(2);
+    expect(posts[1].embeds[0].title).toBe('🟢 Credits restored — @ap/hugging-face');
+    expect([...store.values()][0].recovered_at).toBeTruthy();
+  });
+
+  it('does not recover while another action of the piece is still out of credits', async () => {
+    const { deps, posts, store } = makeDeps();
+    await processRunAlert(credits(), hf, wave, newWaveState(), deps);
+    const ws = newWaveState();
+    await processRunAlert(schedRun('completed', [{ status: 'completed' }]), hf, wave, ws, deps);
+    await processRunAlert(credits(), hfChat, wave, ws, deps);
+    await finalizeWaveAlerts(wave, ws, deps);
+    expect(posts).toHaveLength(1);
+    expect([...store.values()][0].recovered_at).toBeFalsy();
+  });
+
+  it('does not recover when a different action of the piece passes', async () => {
+    const { deps, posts } = makeDeps();
+    await processRunAlert(credits(), hf, wave, newWaveState(), deps);
+    const ws = newWaveState();
+    await processRunAlert(schedRun('completed', [{ status: 'completed' }]), { ...hf, target_action: 'list_models' }, wave, ws, deps);
+    await finalizeWaveAlerts(wave, ws, deps);
+    expect(posts).toHaveLength(1);
   });
 });
 
