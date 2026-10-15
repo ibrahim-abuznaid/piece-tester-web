@@ -307,7 +307,7 @@ export interface TestPlanExportBundle {
   plans: TestPlan[];
 }
 
-export type ErrorCategory = 'auth' | 'rate_limit' | 'transient' | 'bad_request' | 'not_found' | 'piece_error' | 'unknown';
+export type ErrorCategory = 'auth' | 'rate_limit' | 'transient' | 'bad_request' | 'not_found' | 'piece_error' | 'quota' | 'unknown';
 
 /** The evaluated result of one output assertion against a step's output. */
 export interface AssertionResult {
@@ -454,7 +454,7 @@ export interface AttentionItem {
   plan_id: number;
   piece_name: string;
   action_name: string;
-  bucket: 'reauth' | 'likely_broken' | 'watching' | 'noise';
+  bucket: 'reauth' | 'likely_broken' | 'watching' | 'quota' | 'noise';
   category: string;
   fail_streak: number;
   flaky: boolean;

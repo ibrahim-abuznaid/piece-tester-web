@@ -32,6 +32,7 @@ const CHANGED_LANES: Record<string, { label: string; color: string }> = {
 
 const CATEGORY_META: Record<string, { label: string; color: string }> = {
   auth: { label: 'Auth / 401', color: '#f87171' },
+  quota: { label: 'Credits / quota', color: '#e879f9' },
   timeout: { label: 'Timeout', color: '#60a5fa' },
   no_trigger: { label: 'No trigger', color: '#fbbf24' },
   rate_limit: { label: 'Rate limit', color: '#a78bfa' },

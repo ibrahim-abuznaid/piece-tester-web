@@ -17,16 +17,10 @@ import { createClient } from './test-engine.js';
 import { checkImportedConnectionHealth } from './connection-health.js';
 import { serializeStepResults } from './step-results-storage.js';
 import type { PieceMetadataFull } from './ap-client.js';
+import { classifyError, type ErrorCategory } from './error-category.js';
+export type { ErrorCategory };
 
 // ── Types ──
-
-/**
- * Why a thrown step failed, classified deterministically from the error
- * (status codes + message) — NOT by an LLM. Lets a red be read honestly:
- * an expired token is `auth`, a 500 is `transient`, a real piece bug is
- * `piece_error`. Only `piece_error` (and `unknown`) implicate the piece.
- */
-export type ErrorCategory = 'auth' | 'rate_limit' | 'transient' | 'bad_request' | 'not_found' | 'piece_error' | 'unknown';
 
 /** The evaluated result of one output assertion against a step's output. */
 export interface AssertionResult {
@@ -134,17 +128,6 @@ function summarizeFailedAssertions(results: AssertionResult[]): string {
     return `${target} ${r.op}${exp} (got ${got === undefined ? 'undefined' : got.slice(0, 80)})`;
   });
   return `Output did not match ${failed.length} expectation${failed.length > 1 ? 's' : ''}: ${parts.join('; ')}`;
-}
-
-/** Deterministically classify a thrown step error from its message/status code. */
-function classifyError(message: string): ErrorCategory {
-  const m = (message || '').toLowerCase();
-  if (/\b(401|403)\b/.test(m) || /unauthor|forbidden|invalid token|token (is )?expired|expired token|credential|permission|access denied|not authenticated/.test(m)) return 'auth';
-  if (/\b429\b/.test(m) || /rate.?limit|too many requests|quota exceeded/.test(m)) return 'rate_limit';
-  if (/\b(500|502|503|504)\b/.test(m) || /timeout|timed out|econnreset|econnrefused|socket hang up|network error|temporarily unavailable|service unavailable|getaddrinfo|enotfound/.test(m)) return 'transient';
-  if (/\b(400|422)\b/.test(m) || /validation|invalid (input|value|parameter|param|request|body|argument)|is required|missing required|must be a|bad request/.test(m)) return 'bad_request';
-  if (/\b404\b/.test(m) || /not found|does not exist|no such/.test(m)) return 'not_found';
-  return 'piece_error';
 }
 
 export interface PlanProgress {

@@ -1,9 +1,10 @@
 import { executePlan } from './plan-executor.js';
+import { categoryOfStep } from './error-category.js';
 
 // 'unknown' is piece-implicating on purpose: an unclassifiable failure should be
 // surfaced, not silently swallowed.
 export const PIECE_IMPLICATING = new Set(['piece_error', 'assert_failed', 'bad_request', 'not_found', 'unknown']);
-const ENV_NOISE = new Set(['auth', 'rate_limit', 'transient']);
+const ENV_NOISE = new Set(['auth', 'rate_limit', 'transient', 'quota']);
 
 export interface RunOutcome { outcome: 'passed' | 'failed'; category: string; error: string | null; }
 
@@ -16,7 +17,7 @@ export function analyzeRun(run: { status: string; step_results?: string | null }
   let steps: any[] = [];
   try { const p = JSON.parse(run.step_results || '[]'); if (Array.isArray(p)) steps = p; } catch { /* ignore */ }
   const thrown = steps.find(s => s && s.status === 'failed');
-  if (thrown) return { outcome: 'failed', category: thrown.errorCategory || 'piece_error', error: shorten(thrown.error) };
+  if (thrown) return { outcome: 'failed', category: categoryOfStep(thrown), error: shorten(thrown.error) };
   const asserted = steps.find(s => s && s.status === 'assert_failed');
   if (asserted) return { outcome: 'failed', category: 'assert_failed', error: shorten(asserted.error) };
   if (run.status === 'completed') return { outcome: 'passed', category: 'none', error: null };

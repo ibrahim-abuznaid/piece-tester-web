@@ -1,10 +1,11 @@
 import type { AttentionItem } from './api';
 
-export type ColumnKey = 'errors' | 'connection' | 'reported' | 'muted';
+export type ColumnKey = 'errors' | 'connection' | 'quota' | 'reported' | 'muted';
 
 export const COLUMNS: { key: ColumnKey; label: string; hint: string }[] = [
   { key: 'errors', label: 'Errors', hint: 'piece or test failures — report to the piece team' },
   { key: 'connection', label: 'Connection', hint: 'auth / connection — re-auth or re-import' },
+  { key: 'quota', label: 'Credits', hint: 'vendor account out of credits or over its plan — top up, not a piece bug' },
   { key: 'reported', label: 'Reported', hint: 'handed off to the piece team' },
   { key: 'muted', label: 'Muted', hint: 'quarantined or transient noise' },
 ];
@@ -19,23 +20,25 @@ export interface PieceGroup {
 
 /**
  * Which lane a single failing action belongs to, ignoring the piece-level
- * "reported" state: muted (parked) > connection (your-side auth) > error.
+ * "reported" state: muted (parked) > connection (your-side auth) > quota (vendor account) > error.
  */
-function itemKind(item: AttentionItem): 'muted' | 'connection' | 'error' {
+function itemKind(item: AttentionItem): 'muted' | 'connection' | 'quota' | 'error' {
   if (item.quarantined || item.bucket === 'noise') return 'muted';
   if (item.bucket === 'reauth' || item.category === 'auth' || item.category === 'connection_broken') return 'connection';
+  if (item.bucket === 'quota') return 'quota';
   return 'error';
 }
 
 /**
  * Which column a failing (piece, action) belongs to. Precedence:
- * Muted (deliberately parked) > Reported (handed off) > Connection > Errors.
+ * Muted (deliberately parked) > Reported (handed off) > Connection > Credits > Errors.
  * Everything that isn't a connection/noise/reported case is a reportable error.
  */
 export function assignColumn(item: AttentionItem, reportedPieces: Set<string>): ColumnKey {
   if (item.quarantined || item.bucket === 'noise') return 'muted';
   if (reportedPieces.has(item.piece_name)) return 'reported';
   if (item.bucket === 'reauth' || item.category === 'auth' || item.category === 'connection_broken') return 'connection';
+  if (item.bucket === 'quota') return 'quota';
   return 'errors'; // piece_error, bad_request, not_found, assert_failed, unknown, and any fallthrough
 }
 
@@ -43,19 +46,20 @@ export function assignColumn(item: AttentionItem, reportedPieces: Set<string>): 
  * The single lane a whole piece sits in. Reported and Muted are terminal — they
  * win over the active lanes so a handled piece doesn't re-clutter Errors. Muted
  * requires ALL of the piece's failing actions to be muted; a live error wins.
- * Among active issues, Errors beats Connection.
+ * Among active issues, Errors beats Connection beats Credits.
  */
 export function assignPieceColumn(items: AttentionItem[], reportedPieces: Set<string>): ColumnKey {
   if (items.length === 0) return 'errors';
   const kinds = items.map(itemKind);
   if (kinds.every(k => k === 'muted')) return 'muted';
   if (reportedPieces.has(items[0].piece_name)) return 'reported';
-  return kinds.some(k => k === 'error') ? 'errors' : 'connection';
+  if (kinds.some(k => k === 'error')) return 'errors';
+  return kinds.some(k => k === 'connection') ? 'connection' : 'quota';
 }
 
 /** Per-kind counts across a piece's failing actions — drives the card summary. */
-export function pieceKindCounts(items: AttentionItem[]): { error: number; connection: number; muted: number } {
-  const counts = { error: 0, connection: 0, muted: 0 };
+export function pieceKindCounts(items: AttentionItem[]): { error: number; connection: number; quota: number; muted: number } {
+  const counts = { error: 0, connection: 0, quota: 0, muted: 0 };
   for (const it of items) counts[itemKind(it)]++;
   return counts;
 }
@@ -109,9 +113,9 @@ export function sortPieceGroups(groups: PieceGroup[]): PieceGroup[] {
   });
 }
 
-/** Group failing actions into piece cards, bucketed into the four lanes. */
+/** Group failing actions into piece cards, bucketed into the board lanes. */
 export function groupPiecesByColumn(items: AttentionItem[], reportedPieces: Set<string>): Record<ColumnKey, PieceGroup[]> {
-  const out: Record<ColumnKey, PieceGroup[]> = { errors: [], connection: [], reported: [], muted: [] };
+  const out: Record<ColumnKey, PieceGroup[]> = { errors: [], connection: [], quota: [], reported: [], muted: [] };
   for (const group of groupByPiece(items, reportedPieces)) out[group.lane].push(group);
   (Object.keys(out) as ColumnKey[]).forEach(k => { out[k] = sortPieceGroups(out[k]); });
   return out;

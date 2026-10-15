@@ -89,7 +89,7 @@ describe('pieceKindCounts', () => {
       item({ category: 'auth', bucket: 'reauth' }),
       item({ quarantined: true }),
     ]);
-    expect(counts).toEqual({ error: 2, connection: 1, muted: 1 });
+    expect(counts).toEqual({ error: 2, connection: 1, quota: 0, muted: 1 });
   });
 });
 
@@ -120,5 +120,33 @@ describe('groupPiecesByColumn', () => {
     expect(g.connection.map(x => x.piece_name)).toEqual(['@activepieces/piece-dropbox']);
     expect(g.muted.map(x => x.piece_name)).toEqual(['@activepieces/piece-noisy']);
     expect(g.reported).toEqual([]);
+  });
+});
+
+describe('quota (out of credits) lane', () => {
+  it('routes a quota-bucket action to the quota column', () => {
+    expect(assignColumn(item({ bucket: 'quota', category: 'quota' }), noReports)).toBe('quota');
+  });
+  it('muted and reported still win over quota', () => {
+    expect(assignColumn(item({ bucket: 'quota', category: 'quota', quarantined: true }), noReports)).toBe('muted');
+    expect(assignColumn(item({ bucket: 'quota', category: 'quota' }), new Set(['@activepieces/piece-x']))).toBe('reported');
+  });
+  it('a quota-only piece sits in the quota lane; a live error or connection issue wins', () => {
+    const quota = item({ bucket: 'quota', category: 'quota' });
+    expect(assignPieceColumn([quota], noReports)).toBe('quota');
+    expect(assignPieceColumn([quota, item({ category: 'piece_error' })], noReports)).toBe('errors');
+    expect(assignPieceColumn([quota, item({ category: 'auth', bucket: 'reauth' })], noReports)).toBe('connection');
+    expect(assignPieceColumn([quota, item({ quarantined: true })], noReports)).toBe('quota');
+    expect(assignPieceColumn([quota, item({ category: 'auth', bucket: 'reauth' }), item({ quarantined: true })], noReports)).toBe('connection');
+    expect(assignPieceColumn([quota], new Set(['@activepieces/piece-x']))).toBe('reported');
+  });
+  it('counts quota actions separately', () => {
+    expect(pieceKindCounts([item({ bucket: 'quota', category: 'quota' }), item({ category: 'piece_error' })]))
+      .toEqual({ error: 1, connection: 0, quota: 1, muted: 0 });
+  });
+  it('groupPiecesByColumn has a quota lane', () => {
+    const g = groupPiecesByColumn([item({ piece_name: '@activepieces/piece-hf', bucket: 'quota', category: 'quota' })], noReports);
+    expect(g.quota.map(x => x.piece_name)).toEqual(['@activepieces/piece-hf']);
+    expect(g.errors).toEqual([]);
   });
 });

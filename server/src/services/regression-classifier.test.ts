@@ -80,6 +80,12 @@ describe('categorizeError — failure buckets for the "why tests fail" chart', (
     ['Request timed out after 90s', 'timeout'],
     ['No trigger event was captured within the timeout', 'no_trigger'],
     ['Request failed with status code 429', 'rate_limit'],
+    ['You exceeded your current quota, please check your plan and billing details.', 'quota'],
+    ['Request failed with status code 402', 'quota'],
+    // Billing words in the test's own request are not the vendor's verdict.
+    [JSON.stringify({ status: 'FAILED', errorMessage: JSON.stringify({ message: 'channel_not_found', status: 404, requestBody: { text: 'Please upgrade your plan' } }) }), 'not_found'],
+    // Generic "quota exceeded" is not billing; this classifier has no per-minute rule, so it stays `other`.
+    ["Quota exceeded for quota metric 'Queries' and limit 'Queries per minute'", 'other'],
     ['Request failed with status code 404', 'not_found'],
     ['Request failed with status code 500', 'server_error'],
     ['Something totally unexpected happened', 'other'],

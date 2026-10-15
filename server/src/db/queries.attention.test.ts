@@ -76,3 +76,61 @@ describe('getAttentionItems — retest', () => {
     expect(getAttentionItems().find(i => i.piece_name === 'gmail')).toBeUndefined();
   });
 });
+
+describe('getAttentionItems — out of credits', () => {
+  beforeEach(() => getDb().exec('DELETE FROM test_plan_runs; DELETE FROM test_plans;'));
+
+  // Stored with the stale piece_error category the old classifier assigned.
+  const credits = JSON.stringify([{
+    stepId: 'test', status: 'failed', errorCategory: 'piece_error',
+    error: JSON.stringify({
+      status: 'FAILED',
+      errorMessage: JSON.stringify({ message: 'Failed to perform inference: You have no remaining credits. Purchase pre-paid credits to continue using Inference Providers.', status: 402 }),
+    }),
+  }]);
+
+  it('lands in the quota lane even with a stale stored piece_error category', () => {
+    const plan = seedPlan('hugging-face', 'inference');
+    seedScheduledRun(plan, 'failed', credits);
+    const item = getAttentionItems().find(i => i.piece_name === 'hugging-face')!;
+    expect(item.bucket).toBe('quota');
+    expect(item.category).toBe('quota');
+    expect(item.reason).toBe('out of credits — vendor account needs billing, not a piece bug');
+  });
+
+  it('shows the vendor message, not the stored wrapper JSON', () => {
+    const plan = seedPlan('hugging-face', 'inference');
+    seedScheduledRun(plan, 'failed', credits);
+    const item = getAttentionItems().find(i => i.piece_name === 'hugging-face')!;
+    expect(item.error).toMatch(/^Failed to perform inference: You have no remaining credits/);
+  });
+
+  it('keeps the hint to one line and falls back when the vendor message is empty', () => {
+    const plan = seedPlan('slack', 'send_message');
+    const err = (message: string) => JSON.stringify([{ stepId: 'test', status: 'failed', error: JSON.stringify({ status: 'FAILED', errorMessage: JSON.stringify({ message }) }) }]);
+    seedScheduledRun(plan, 'failed', err('Line one\n    at Object.run'));
+    expect(getAttentionItems().find(i => i.piece_name === 'slack')!.error).toBe('Line one');
+    seedScheduledRun(plan, 'failed', err(''));
+    expect(getAttentionItems().find(i => i.piece_name === 'slack')!.error).toMatch(/^\{"status":"FAILED"/);
+  });
+
+  it('never escalates to likely_broken on repeated failures', () => {
+    const plan = seedPlan('hugging-face', 'inference');
+    seedScheduledRun(plan, 'failed', credits);
+    seedScheduledRun(plan, 'failed', credits);
+    seedScheduledRun(plan, 'failed', credits);
+    const item = getAttentionItems().find(i => i.piece_name === 'hugging-face')!;
+    expect(item.bucket).toBe('quota');
+    expect(item.fail_streak).toBe(3);
+  });
+
+  it('sorts after watching and before noise', () => {
+    const q = seedPlan('hugging-face', 'inference');
+    seedScheduledRun(q, 'failed', credits);
+    const w = seedPlan('slack', 'send_message');
+    seedScheduledRun(w, 'failed', JSON.stringify([{ stepId: 'test', status: 'failed', error: 'boom' }]));
+    const n = seedPlan('gmail', 'send_email');
+    seedScheduledRun(n, 'failed', JSON.stringify([{ stepId: 'test', status: 'failed', error: 'Request failed with status code 503' }]));
+    expect(getAttentionItems().map(i => i.bucket)).toEqual(['watching', 'quota', 'noise']);
+  });
+});

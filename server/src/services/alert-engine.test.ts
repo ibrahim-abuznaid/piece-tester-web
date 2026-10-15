@@ -4,6 +4,11 @@ import { analyzeRun, retestTarget, PIECE_IMPLICATING, newWaveState, processRunAl
 function run(status: string, steps: any[]): any { return { id: 1, status, step_results: JSON.stringify(steps) }; }
 
 describe('analyzeRun', () => {
+  it('reclassifies a stored piece_error as quota from the error text', () => {
+    const r = analyzeRun(run('failed', [{ status: 'failed', error: 'Request failed with status code 402: no remaining credits', errorCategory: 'piece_error' }]));
+    expect(r.category).toBe('quota');
+    expect(PIECE_IMPLICATING.has(r.category)).toBe(false);
+  });
   it('reports a thrown piece_error failure', () => {
     const r = analyzeRun(run('failed', [{ status: 'completed' }, { status: 'failed', error: 'boom', errorCategory: 'piece_error' }]));
     expect(r.outcome).toBe('failed');
@@ -51,6 +56,10 @@ describe('retestTarget', () => {
   });
   it('counts an env-noise retest (auth) as inconclusive, never as passed (never swallow)', async () => {
     const r = await retestTarget(9, 1, execReturning([run('failed', [{ status: 'failed', error: '401', errorCategory: 'auth' }])]) as any);
+    expect(r).toEqual({ failed: 0, passed: 0, inconclusive: 1 });
+  });
+  it('counts an out-of-credits retest as inconclusive, never as passed', async () => {
+    const r = await retestTarget(9, 1, execReturning([run('failed', [{ status: 'failed', error: 'You have no remaining credits. Purchase pre-paid credits to continue.' }])]) as any);
     expect(r).toEqual({ failed: 0, passed: 0, inconclusive: 1 });
   });
   it('counts a thrown executor as inconclusive', async () => {
@@ -126,6 +135,12 @@ describe('processRunAlert', () => {
     expect([...store.values()][0].fail_count).toBe(2);
     expect(edits.length).toBeGreaterThan(editsAfterFirst);          // a chronic relabel edit happened
     expect(edits[edits.length - 1].m.embeds[0].description).toContain('chronic');
+  });
+
+  it('suppresses an out-of-credits failure — no post', async () => {
+    const { deps, posts } = makeDeps();
+    await processRunAlert(schedRun('failed', [{ status: 'failed', error: 'You have no remaining credits. Purchase pre-paid credits to continue.', errorCategory: 'piece_error' }]), stripePlan, wave, newWaveState(), deps);
+    expect(posts).toHaveLength(0);
   });
 
   it('suppresses env-noise (auth) — no post', async () => {
